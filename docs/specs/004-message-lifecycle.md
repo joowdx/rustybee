@@ -52,6 +52,7 @@ Runs every 60 s with `RUSTYBEE_MESSAGE_TTL_HOURS`, default 24:
 
 ### Phone number normalisation
 - Trim the input and remove spaces, `-`, `(`, `)` and `.`.
+- A local Philippine mobile number, exactly `09` followed by 9 digits (`09XXXXXXXXX`), becomes `+639XXXXXXXXX`: the leading `0` is replaced with `+63`. Nothing else is rewritten.
 - It must then match `^\+?[0-9]{3,20}$`, or it is rejected as `invalid_recipient`.
 - Alphanumeric peers are allowed for **inbound** only.
 
@@ -62,6 +63,7 @@ Runs every 60 s with `RUSTYBEE_MESSAGE_TTL_HOURS`, default 24:
 4. AC-004-04 The sweeper expires old `queued` and unacked `dispatched` messages, and fails acked ones after 24 h.
 5. AC-004-05 Segment counts are correct for a GSM-7 body of 160 characters (1 part), 161 characters (2 parts), a body containing `€` (each `€` counts as 2), an emoji (UCS-2) and a body of 70 Cyrillic characters (1 part) or 71 (2 parts).
 6. AC-004-06 Phone normalisation accepts `+1 (555) 123-4567` and rejects `abc`.
+7. AC-004-07 `0917 123 4567` normalises to `+639171234567`; `0917123456` (too short) and `+639171234567` are left as they are.
 
 ## Test plan
 | AC | Test |
@@ -71,6 +73,7 @@ Runs every 60 s with `RUSTYBEE_MESSAGE_TTL_HOURS`, default 24:
 | 04 | sweeper test with an injected clock |
 | 05 | `domain::sms` unit tests |
 | 06 | `domain::phone` unit tests |
+| 07 | `domain::phone` unit tests |
 
 ## Assumptions
 - No user-facing cancel in the first release. The `cancel` transition exists only for removing a device that still has `queued` or `dispatched` messages; history is kept (spec 003 soft delete).
