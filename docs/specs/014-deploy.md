@@ -61,6 +61,6 @@ A systemd unit for running without Docker:
 Manual checks in M7, with the figures recorded in `docs/specs/README.md`.
 
 ## Assumptions
-- The server terminates no TLS itself. A reverse proxy or tunnel is expected for anything outside the LAN.
+- The server terminates no TLS itself. A reverse proxy or tunnel is required for anything outside a trusted LAN.
 
 ## Open questions
