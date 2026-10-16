@@ -4,7 +4,7 @@
 {% if let Some(r) = result %}<p class="flash">Queued {{ r.count }} message{% if r.count != 1 %}s{% endif %}. <a href="/messages?batch_id={{ r.batch_id }}">View batch</a></p>{% endif %}
 <form method="post" action="/send" class="send">
   <div class="composer">
-    <div class="to"><label class="lbl" for="to">To</label><textarea id="to" name="to" rows="1" data-chips="to-chips" required placeholder="+15551234567, one or more numbers">{{ to }}</textarea></div>
+    <div class="to"><label class="lbl" for="to">To</label><textarea id="to" name="to" rows="1" data-chips="to-chips" required placeholder="+639171234567, one or more numbers">{{ to }}</textarea></div>
     <div id="to-chips" class="chips"></div>
     <textarea name="body" rows="6" data-counter="body-count" required maxlength="1600" placeholder="Write your message" aria-label="Message">{{ body }}</textarea>
     <div class="foot"><output id="body-count">{{ counter }}</output><button>Send message</button></div>

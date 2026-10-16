@@ -1,5 +1,5 @@
-:root{--bg:#f4f3f0;--fg:#231a13;--muted:#6b6259;--card:#fff;--sunk:#f3f1ed;--line:#e7e3dd;--line2:#d4cec5;--accent:#9a6400;--accent-fg:#fff;--tint:#fbf0d9;--ok:#1d7a3e;--bad:#b42318;--warn:#8f5600;--ring:#d08f15;--w:1120px;--r:12px;--round:ui-rounded,"SF Pro Rounded",system-ui,sans-serif;color-scheme:light dark}
-@media (prefers-color-scheme:dark){:root{--bg:#15110e;--fg:#efe9e2;--muted:#a69e95;--card:#1e1915;--sunk:#191512;--line:#2e2721;--line2:#463d34;--accent:#e9ad3f;--accent-fg:#1d1406;--tint:#3a2b12;--ok:#5cc274;--bad:#f2766d;--warn:#f0b24f;--ring:#e9ad3f}}
+:root{--bg:#f4f4f5;--fg:#18181b;--muted:#6b6b73;--card:#fff;--sunk:#f4f4f5;--line:#e4e4e7;--line2:#d4d4d8;--accent:#9a6400;--accent-fg:#fff;--tint:#fbf0d9;--ok:#1d7a3e;--bad:#b42318;--warn:#8f5600;--ring:#d08f15;--w:1120px;--r:12px;--round:ui-rounded,"SF Pro Rounded",system-ui,sans-serif;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#111113;--fg:#ececef;--muted:#a1a1aa;--card:#1b1b1e;--sunk:#161618;--line:#2a2a2e;--line2:#3f3f46;--accent:#e9ad3f;--accent-fg:#1d1406;--tint:#33290f;--ok:#5cc274;--bad:#f2766d;--warn:#f0b24f;--ring:#e9ad3f}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif;overflow-x:hidden;font-variant-numeric:tabular-nums}
@@ -43,6 +43,8 @@ main.wrap{padding-top:22px;padding-bottom:calc(92px + env(safe-area-inset-bottom
 .tabs>a,.more summary{flex:1;flex-direction:column;gap:2px;padding:6px 2px;font-size:.72rem;justify-content:center}
 .tabs>a[aria-current],.more summary[aria-current]{background:none;color:var(--accent)}
 .tabs svg{width:22px;height:22px}
+.logout span{display:none}.logout button{padding:8px}.logout svg{width:20px;height:20px}
+main.wrap:has(>.foot){min-height:calc(100dvh - 55px);padding-bottom:calc(76px + env(safe-area-inset-bottom))}
 .sec{display:none}
 .more{display:flex;flex:1;position:relative;align-self:stretch;margin:0}.more summary{width:100%}
 .more summary{list-style:none;cursor:pointer}.more summary::-webkit-details-marker{display:none}
@@ -69,7 +71,9 @@ button:hover,.btn:hover{filter:brightness(1.07)}
 .danger:hover{background:color-mix(in srgb,var(--bad) 10%,transparent);filter:none}
 .link{background:none;border:0;padding:0;height:auto;color:var(--accent);font-weight:500}
 .sm{height:32px;padding:0 12px;font-size:.85rem;border-radius:8px}
-.logout .link{color:var(--muted)}.logout .link:hover{color:var(--fg)}
+.logout button{display:flex;align-items:center;gap:7px;height:auto;padding:7px 11px;border:0;border-radius:9px;background:none;color:var(--muted);font-size:.92rem;font-weight:550}
+.logout button:hover{color:var(--fg);background:var(--sunk);filter:none}
+.logout svg{width:17px;height:17px}
 
 /* Inputs */
 input,select,textarea{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line2);border-radius:10px;width:100%;min-width:0}
@@ -203,7 +207,7 @@ h1+.group,.head+.group,.lede+.group{border-top:0;padding-top:0}.list+.group,.emp
 /* Composer */
 .composer{background:var(--card);border:1px solid var(--line2);border-radius:16px;overflow:hidden}
 .composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--tint)}
-.composer textarea{border:0;border-radius:0;box-shadow:none;padding:14px 16px;min-height:120px;resize:vertical;background:none}
+.composer textarea{border:0;border-radius:0;box-shadow:none;padding:14px 16px;min-height:160px;max-height:60vh;resize:none;field-sizing:content;background:none;display:block}
 .composer .to{display:flex;align-items:flex-start;gap:10px;border-bottom:1px solid var(--line);padding:4px 0 0 16px}
 .composer .to .lbl{margin:10px 0 0;color:var(--muted);font-weight:500}
 .composer .to textarea{min-height:44px;padding:10px 16px 10px 0}
@@ -268,6 +272,9 @@ h1+.group,.head+.group,.lede+.group{border-top:0;padding-top:0}.list+.group,.emp
 .login form{text-align:left}
 .login button{width:100%;height:42px}
 .foot{margin-top:48px;color:var(--muted);font-size:.82rem}
+/* A page footer sits at the bottom of the viewport when the page is short. */
+main.wrap:has(>.foot){display:flex;flex-direction:column;min-height:calc(100dvh - 59px);padding-bottom:20px}
+main>.foot{margin-top:auto;padding-top:48px;margin-bottom:0}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 .pop{position:relative}
 .pop summary{list-style:none}.pop summary::-webkit-details-marker{display:none}

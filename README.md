@@ -20,7 +20,7 @@ Install the APK from the latest [release](https://github.com/joowdx/rustybee/rel
 
 ```sh
 curl -H "Authorization: Bearer rbk_…" -H 'Content-Type: application/json' \
-  -d '{"to":["+15557654321"],"body":"hello"}' https://sms.example.org/api/v1/messages
+  -d '{"to":["+639171234567"],"body":"hello"}' https://sms.example.org/api/v1/messages
 ```
 
 ## Licence

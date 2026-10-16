@@ -21,7 +21,7 @@
   <details class="adv"{% if !f.peer.is_empty() || !f.since.is_empty() || !f.until.is_empty() %} open{% endif %}>
     <summary>Number and dates</summary>
     <div class="row">
-      <label><span class="lbl">Number</span><input name="peer" value="{{ f.peer }}" inputmode="tel" placeholder="+15551234567"></label>
+      <label><span class="lbl">Number</span><input name="peer" value="{{ f.peer }}" inputmode="tel" placeholder="+639171234567"></label>
       <label><span class="lbl">From</span><input type="date" name="since" value="{{ f.since }}"></label>
       <label><span class="lbl">To</span><input type="date" name="until" value="{{ f.until }}"></label>
       <a class="btn ghost" href="/messages">Clear filters</a>

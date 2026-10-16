@@ -669,7 +669,10 @@ fn browser_label(ua: &str) -> (String, bool) {
     ]
     .iter()
     .find_map(|(t, n)| ver(t).map(|v| format!("{n} {v}")))
-    .or_else(|| ua.contains("Safari/").then(|| ver("Version/").map_or("Safari".into(), |v| format!("Safari {v}"))));
+    .or_else(|| {
+        ua.contains("Safari/")
+            .then(|| ver("Version/").map_or("Safari".into(), |v| format!("Safari {v}")))
+    });
     let os = [
         ("Android", "Android"),
         ("iPhone", "iOS"),
@@ -687,7 +690,11 @@ fn browser_label(ua: &str) -> (String, bool) {
         (Some(b), Some(o)) => format!("{b} on {o}"),
         (Some(b), None) => b,
         (None, Some(o)) => format!("Browser on {o}"),
-        (None, None) => ua.split([' ', '/']).find(|s| !s.is_empty()).unwrap_or("Unknown browser").to_string(),
+        (None, None) => ua
+            .split([' ', '/'])
+            .find(|s| !s.is_empty())
+            .unwrap_or("Unknown browser")
+            .to_string(),
     };
     (label, mobile)
 }
@@ -715,14 +722,19 @@ pub async fn settings(s: Session, State(app): State<App>, Query(n): Query<Notice
                 let agent = r.user_agent.unwrap_or_default();
                 let (browser, mobile) = browser_label(&agent);
                 SessionView {
-                id: r.id,
-                agent,
-                browser,
-                mobile,
-                created: short_time(r.created_at),
-                last_seen: if r.id == s.id { "now".into() } else { ago(now, r.last_seen_at) },
-                current: r.id == s.id,
-            }})
+                    id: r.id,
+                    agent,
+                    browser,
+                    mobile,
+                    created: short_time(r.created_at),
+                    last_seen: if r.id == s.id {
+                        "now".into()
+                    } else {
+                        ago(now, r.last_seen_at)
+                    },
+                    current: r.id == s.id,
+                }
+            })
             .collect(),
         version: VERSION,
     }))
@@ -832,7 +844,10 @@ mod tests {
         let iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
         assert_eq!(browser_label(iphone), ("Safari 18 on iOS".into(), true));
         let android = "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/28.0 Chrome/130.0 Mobile Safari/537.36";
-        assert_eq!(browser_label(android), ("Samsung Internet 28 on Android".into(), true));
+        assert_eq!(
+            browser_label(android),
+            ("Samsung Internet 28 on Android".into(), true)
+        );
         assert_eq!(browser_label("curl/8.7.1").0, "curl");
         assert_eq!(browser_label("").0, "Unknown browser");
     }

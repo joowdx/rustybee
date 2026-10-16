@@ -125,7 +125,7 @@ pub async fn send_test(app: &App, hook: &WebhookRow) -> Result<u16, String> {
         "test": true,
         "data": {
             "id": crate::util::new_id(), "batch_id": null, "device_id": null, "direction": "in",
-            "peer": "+15550000000", "body": "rustybee test", "sim": null, "state": "received",
+            "peer": "+639170000000", "body": "rustybee test", "sim": null, "state": "received",
             "parts": null, "error": null, "created_at": crate::util::rfc3339(now),
             "dispatched_at": null, "sent_at": null, "delivered_at": null, "failed_at": null,
             "expired_at": null, "received_at": crate::util::rfc3339(now)
