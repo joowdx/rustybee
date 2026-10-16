@@ -41,7 +41,12 @@ struct LoginPage {
     code_sent: bool,
 }
 
-async fn login_render(app: &App, code_sent: bool, err: Option<&str>, status: StatusCode) -> Response {
+async fn login_render(
+    app: &App,
+    code_sent: bool,
+    err: Option<&str>,
+    status: StatusCode,
+) -> Response {
     let m = match otp::methods(app).await {
         Ok(m) => m,
         Err(e) => return ise(e),
@@ -149,7 +154,13 @@ pub async fn login(
         .unwrap_or(false);
     if !ok {
         record_failure(&app, ip);
-        return login_render(&app, false, Some("Wrong password."), StatusCode::UNAUTHORIZED).await;
+        return login_render(
+            &app,
+            false,
+            Some("Wrong password."),
+            StatusCode::UNAUTHORIZED,
+        )
+        .await;
     }
     start_session(&app, &headers).await
 }
@@ -193,12 +204,22 @@ pub async fn verify_code(
         otp::Verify::Wrong => {
             record_failure(&app, ip);
             let again = otp::pending(&app, otp::Purpose::Login);
-            let msg = if again { "Wrong code." } else { "Wrong code. Send a new one." };
+            let msg = if again {
+                "Wrong code."
+            } else {
+                "Wrong code. Send a new one."
+            };
             login_render(&app, again, Some(msg), StatusCode::UNAUTHORIZED).await
         }
         otp::Verify::Expired => {
             record_failure(&app, ip);
-            login_render(&app, false, Some("That code expired. Send a new one."), StatusCode::UNAUTHORIZED).await
+            login_render(
+                &app,
+                false,
+                Some("That code expired. Send a new one."),
+                StatusCode::UNAUTHORIZED,
+            )
+            .await
         }
     }
 }

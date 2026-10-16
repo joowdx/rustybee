@@ -2,21 +2,33 @@
 {% block content %}
 <h1>Settings</h1>
 <section class="group">
-  <header><h2>Login phone</h2><p>Logins use a code texted to this number through one of your devices. The password works only when every device is offline or codes keep failing to send.</p></header>
-  {% if let Some(p) = phone %}
-  <div class="list"><div class="li"><div class="grow"><div class="t">{{ p }}</div></div>
-    <form method="post" action="/settings/phone/remove"><button class="danger sm">Remove</button></form></div></div>
-  {% endif %}
-  {% if phone_pending %}
-  <form method="post" action="/settings/phone/verify" class="fields">
-    <div class="f"><label for="ph-code">Code</label><input id="ph-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required autofocus></div>
-    <div class="f-foot"><button>Confirm number</button></div>
-  </form>
-  {% endif %}
-  <form method="post" action="/settings/phone" class="fields">
-    <div class="f"><label for="ph">{% if phone.is_some() %}New number{% else %}Phone number{% endif %}<span class="hint">{% if online %}A code is texted to confirm it{% else %}Connect a device first{% endif %}</span></label><input id="ph" type="tel" name="phone" autocomplete="tel" required></div>
-    <div class="f-foot"><button{% if !online %} disabled{% endif %}>Send code</button></div>
-  </form>
+  <header><h2>Sign-in</h2><p>Logins use a one-time code texted to your phone through one of your gateway phones. The password is the fallback for when that can't work.</p></header>
+  <div class="stack">
+    <div class="fields">
+      <div class="f"><span>Login phone</span>
+        {% if let Some(p) = phone %}
+        <div class="val"><span class="mono">{{ p }}</span> <span class="badge on">Confirmed</span>
+          <form method="post" action="/settings/phone/remove" hx-confirm="Stop texting login codes to {{ p }}? The password becomes the only way in."><button class="danger sm">Remove</button></form></div>
+        {% else %}
+        <div class="val muted">Not set</div>
+        {% endif %}
+      </div>
+      <div class="f"><span>Password login</span><div class="val"><span class="st {% if password_open %}st-ok{% else %}st-muted{% endif %}">{% if password_open %}Open{% else %}Off{% endif %}</span><span class="hint">{{ password_note }}</span></div></div>
+    </div>
+    {% if phone_pending %}
+    <form method="post" action="/settings/phone/verify" class="fields">
+      <div class="f"><label for="ph-code">Code<span class="hint">Texted to the new number. It expires in 5 minutes.</span></label><input id="ph-code" class="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="••••••" required autofocus></div>
+      <div class="f-foot"><button>Confirm number</button></div>
+    </form>
+    {% endif %}
+    {% if phone.is_some() && !phone_pending %}<details class="adv">
+      <summary>Change number</summary>{% endif %}
+    <form method="post" action="/settings/phone" class="fields">
+      <div class="f"><label for="ph">{% if phone.is_some() %}New number{% else %}Your phone number{% endif %}<span class="hint">{% if online %}We text it a code to confirm it.{% else %}Connect a gateway phone first; it sends the code.{% endif %}</span></label><input id="ph" type="tel" name="phone" autocomplete="tel" placeholder="+639171234567" required></div>
+      <div class="f-foot"><button{% if !online %} disabled{% endif %}>Text a code</button></div>
+    </form>
+    {% if phone.is_some() && !phone_pending %}</details>{% endif %}
+  </div>
 </section>
 <section class="group">
   <header><h2>Password</h2><p>The one password for this dashboard. Changing it signs out every other browser.</p></header>

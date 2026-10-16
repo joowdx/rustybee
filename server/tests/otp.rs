@@ -56,7 +56,15 @@ async fn code_login_and_password_locked_while_device_online() {
     // A device can text a code, so the password is refused.
     let r = post(&s, "/login", &[("password", PASSWORD)]).await;
     assert_eq!(r.status(), 403);
-    let page = s.http.get(s.url("/login")).send().await.unwrap().text().await.unwrap();
+    let page = s
+        .http
+        .get(s.url("/login"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
     assert!(page.contains("Text me a code") && !page.contains("name=\"password\""));
 
     let (msg_id, code) = request_code(&s, &mut d).await;
@@ -69,7 +77,12 @@ async fn code_login_and_password_locked_while_device_online() {
     d.status(&msg_id, "sent").await;
     let r = post(&s, "/login/verify", &[("code", &code)]).await;
     assert_eq!(r.status(), 303);
-    assert!(r.headers()["set-cookie"].to_str().unwrap().starts_with("rb_session="));
+    assert!(
+        r.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .starts_with("rb_session=")
+    );
     // Single use.
     let r = post(&s, "/login/verify", &[("code", &code)]).await;
     assert_eq!(r.status(), 401);
@@ -209,7 +222,12 @@ async fn settings_confirms_phone_by_code() {
         .unwrap();
     assert_eq!(r.headers()["location"], "/settings?ok=phone");
     assert_eq!(
-        s.app().store.read(otp::admin_phone).await.unwrap().as_deref(),
+        s.app()
+            .store
+            .read(otp::admin_phone)
+            .await
+            .unwrap()
+            .as_deref(),
         Some(PHONE)
     );
     s.stop().await;

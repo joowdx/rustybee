@@ -322,8 +322,19 @@ async fn device_settings_keys_and_webhooks_forms() {
                 ("send_delay_ms", "1500"),
                 ("sim", "1"),
                 ("filter_mode", "block"),
-                ("rules", "sender equals +15550000009\nbody contains promo"),
-                ("ignore_case", "on"),
+                ("rule_field", "sender"),
+                ("rule_op", "equals"),
+                ("rule_value", "+15550000009"),
+                ("rule_case", "match"),
+                ("rule_field", "body"),
+                ("rule_op", "contains"),
+                ("rule_value", "promo"),
+                ("rule_case", "ignore"),
+                // The spare blank row is dropped.
+                ("rule_field", "sender"),
+                ("rule_op", "contains"),
+                ("rule_value", " "),
+                ("rule_case", "ignore"),
             ],
         )
         .await;
@@ -334,14 +345,24 @@ async fn device_settings_keys_and_webhooks_forms() {
     assert_eq!(cfg["data"]["sim"], 1);
     assert_eq!(cfg["data"]["receive_enabled"], false);
     assert_eq!(cfg["data"]["filters"]["mode"], "block");
-    assert_eq!(cfg["data"]["filters"]["rules"][1]["op"], "contains");
+    let rules = cfg["data"]["filters"]["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules[0]["ignore_case"], false);
+    assert_eq!(rules[1]["op"], "contains");
+    assert_eq!(rules[1]["ignore_case"], true);
     assert_eq!(cfg["data"]["filters_rev"], 1, "filter change bumps rev");
     let (_, page) = ui.get("/devices?ok=saved").await;
-    assert!(page.contains("Renamed") && page.contains("body contains promo"));
+    assert!(page.contains("Renamed") && page.contains(r#"name="rule_value" value="promo""#));
     let r = ui
         .post(
             &format!("/devices/{pid}"),
-            &[("name", "x"), ("rules", "nonsense")],
+            &[
+                ("name", "x"),
+                ("rule_field", "subject"),
+                ("rule_op", "contains"),
+                ("rule_value", "x"),
+                ("rule_case", "ignore"),
+            ],
         )
         .await;
     assert!(r.headers()["location"].to_str().unwrap().contains("err="));

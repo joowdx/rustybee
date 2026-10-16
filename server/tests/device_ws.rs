@@ -256,7 +256,10 @@ async fn set_filters_from_device_checks_rev() {
     assert_eq!(cfg["data"]["filters"], rules);
 
     // Stale base: refused, and the current config comes back.
-    let f = frame("set_filters", json!({"base_rev": 0, "filters": {"mode": "off", "rules": []}}));
+    let f = frame(
+        "set_filters",
+        json!({"base_rev": 0, "filters": {"mode": "off", "rules": []}}),
+    );
     d.send(&f).await;
     let n = d.recv_type("nack").await;
     assert_eq!(n["data"]["code"], "filters_conflict");
@@ -265,7 +268,10 @@ async fn set_filters_from_device_checks_rev() {
     assert_eq!(cfg["data"]["filters"]["mode"], "block");
 
     // Invalid rules are refused without a change.
-    let f = frame("set_filters", json!({"base_rev": 1, "filters": {"mode": "allow", "rules": [{"field": "body", "op": "equals", "value": " "}]}}));
+    let f = frame(
+        "set_filters",
+        json!({"base_rev": 1, "filters": {"mode": "allow", "rules": [{"field": "body", "op": "equals", "value": " "}]}}),
+    );
     d.send(&f).await;
     assert_eq!(d.recv_type("nack").await["data"]["code"], "invalid");
     s.stop().await;

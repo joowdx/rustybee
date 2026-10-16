@@ -1,4 +1,25 @@
 {% extends "base.html" %}
+{%- macro rule_row(field, op, value, ignore_case) -%}
+<div class="rule">
+  <select name="rule_field" aria-label="Field">
+    <option value="sender"{% if field == "sender" %} selected{% endif %}>Sender</option>
+    <option value="body"{% if field == "body" %} selected{% endif %}>Message</option>
+    <option value="any"{% if field == "any" %} selected{% endif %}>Sender or message</option>
+  </select>
+  <select name="rule_op" aria-label="Match">
+    <option value="contains"{% if op == "contains" %} selected{% endif %}>contains</option>
+    <option value="equals"{% if op == "equals" %} selected{% endif %}>is exactly</option>
+    <option value="starts_with"{% if op == "starts_with" %} selected{% endif %}>starts with</option>
+    <option value="ends_with"{% if op == "ends_with" %} selected{% endif %}>ends with</option>
+  </select>
+  <input name="rule_value" value="{{ value }}" maxlength="200" placeholder="Text to match" aria-label="Text to match">
+  <select name="rule_case" aria-label="Letter case">
+    <option value="ignore"{% if ignore_case %} selected{% endif %}>Any case</option>
+    <option value="match"{% if !ignore_case %} selected{% endif %}>Exact case</option>
+  </select>
+  <button type="button" class="ghost sm icon" data-rule-remove aria-label="Remove rule" title="Remove rule" hidden><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+</div>
+{%- endmacro -%}
 {% block content %}
 <div class="head">
   <h1>Devices</h1>
@@ -47,17 +68,23 @@
         </select>
       </div>
       <label class="f sw-row"><span>Forward received SMS<span class="hint">Texts that reach this phone show up in Messages</span></span><input class="sw" type="checkbox" name="receive_enabled"{% if d.receive_enabled %} checked{% endif %}></label>
-      <div class="f"><label for="fm-{{ d.id }}">Filter received SMS</label>
-        <select id="fm-{{ d.id }}" name="filter_mode">
+      <div class="f"><label for="fm-{{ d.id }}">Filter received SMS<span class="hint">The phone applies it before forwarding. It can also be edited in the app.</span></label>
+        <select id="fm-{{ d.id }}" name="filter_mode" data-filter-mode>
           <option value="off"{% if d.filter_mode == "off" %} selected{% endif %}>Forward everything</option>
           <option value="allow"{% if d.filter_mode == "allow" %} selected{% endif %}>Forward only matching</option>
           <option value="block"{% if d.filter_mode == "block" %} selected{% endif %}>Forward all except matching</option>
         </select>
       </div>
-      <div class="f wide"><label for="r-{{ d.id }}">Filter rules<span class="hint">One per line as <code>field op value</code>, for example <code>body contains promo</code>. Fields: sender, body, any. Ops: equals, contains, starts_with, ends_with.</span></label>
-        <textarea id="r-{{ d.id }}" name="rules" rows="3" class="mono">{{ d.rules }}</textarea>
-      </div>
-      <label class="f sw-row"><span>Ignore case in rules</span><input class="sw" type="checkbox" name="ignore_case"{% if d.ignore_case %} checked{% endif %}></label>
+      <fieldset class="f wide" data-rules>
+        <legend class="lbl">Rules<span class="hint" data-rules-note>{% if d.filter_mode == "off" %}Kept, but not used while everything is forwarded.{% else %}A text matches when any rule matches. Rows left blank are dropped.{% endif %}</span></legend>
+        <div class="rules" data-rule-list>
+          {% for r in d.rules %}{% call rule_row(r.field, r.op, r.value, r.ignore_case) %}{% endfor %}
+          {% call rule_row("sender", "contains", "", true) %}
+        </div>
+        <template data-rule-template>{% call rule_row("sender", "contains", "", true) %}</template>
+        <div class="actions"><button type="button" class="ghost sm" data-rule-add hidden>Add rule</button></div>
+        <p class="warn" data-rules-warn{% if !(d.filter_mode == "allow" && d.rules.is_empty()) %} hidden{% endif %}>With no rules, “Forward only matching” forwards nothing.</p>
+      </fieldset>
       <div class="f-foot"><button>Save settings</button></div>
     </form>
     <form method="post" action="/devices/{{ d.id }}/delete" class="zone" hx-confirm="Remove {{ d.name }}? Queued messages are cancelled.">

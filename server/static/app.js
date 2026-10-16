@@ -1,4 +1,4 @@
-// rustybee UI helpers: segment counter, recipient chips, copy buttons, countdowns.
+// rustybee UI helpers: segment counter, recipient chips, copy buttons, countdowns, filter rule rows.
 (function () {
   "use strict";
   var BASIC = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\u001bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
@@ -75,6 +75,62 @@
         if (s > 0 && document.body.contains(el)) setTimeout(tick, 1000);
       };
       tick();
+    });
+    root.querySelectorAll("[data-rules]").forEach(function (box) {
+      if (box.dataset.ready) return;
+      box.dataset.ready = "1";
+      var form = box.closest("form");
+      var mode = form && form.querySelector("[data-filter-mode]");
+      var list = box.querySelector("[data-rule-list]");
+      var tpl = box.querySelector("[data-rule-template]");
+      var add = box.querySelector("[data-rule-add]");
+      var warn = box.querySelector("[data-rules-warn]");
+      var note = box.querySelector("[data-rules-note]");
+      var used = function () {
+        return [].filter.call(list.querySelectorAll("input[name=rule_value]"), function (i) { return i.value.trim() !== ""; }).length;
+      };
+      var update = function () {
+        var m = mode ? mode.value : "off";
+        box.classList.toggle("off", m === "off");
+        if (warn) warn.hidden = !(m === "allow" && used() === 0);
+        if (note) note.textContent = m === "off"
+          ? "Kept, but not used while everything is forwarded."
+          : "A text matches when any rule matches. Rows left blank are dropped.";
+      };
+      var wire = function (row) {
+        var rm = row.querySelector("[data-rule-remove]");
+        if (rm) {
+          rm.hidden = false;
+          rm.addEventListener("click", function () {
+            var next = row.nextElementSibling || row.previousElementSibling;
+            row.remove();
+            if (!list.children.length) addRow();
+            update();
+            var f = next && next.querySelector("input");
+            if (f) f.focus();
+          });
+        }
+        row.querySelector("input").addEventListener("input", update);
+      };
+      var addRow = function () {
+        var row = tpl.content.firstElementChild.cloneNode(true);
+        list.appendChild(row);
+        wire(row);
+        return row;
+      };
+      // With JavaScript, rows are added on demand: drop the spare blank row unless it is the only one.
+      var rows = list.children;
+      if (rows.length > 1) {
+        var last = rows[rows.length - 1];
+        if (last.querySelector("input").value === "") last.remove();
+      }
+      [].forEach.call(list.children, wire);
+      if (add) {
+        add.hidden = false;
+        add.addEventListener("click", function () { addRow().querySelector("input").focus(); });
+      }
+      if (mode) mode.addEventListener("change", update);
+      update();
     });
   }
 

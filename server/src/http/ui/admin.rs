@@ -6,7 +6,7 @@ use super::{
     sims_of,
 };
 use crate::app::{App, VERSION};
-use crate::domain::filters::{Filters, Mode};
+use crate::domain::filters::{Filters, Mode, Rule};
 use crate::http::auth::Session;
 use crate::otp;
 use crate::store::{auth, devices, devices::DeviceRow, webhooks};
@@ -39,7 +39,13 @@ struct DeviceView {
     receive_enabled: bool,
     sims: Vec<Opt>,
     filter_mode: String,
-    rules: String,
+    rules: Vec<RuleView>,
+}
+
+struct RuleView {
+    field: &'static str,
+    op: &'static str,
+    value: String,
     ignore_case: bool,
 }
 
@@ -84,8 +90,17 @@ fn device_view(now: i64, d: &DeviceRow) -> DeviceView {
             Mode::Block => "block",
         }
         .into(),
-        rules: d.filters.rules_text(),
-        ignore_case: d.filters.rules.first().is_none_or(|r| r.ignore_case),
+        rules: d
+            .filters
+            .rules
+            .iter()
+            .map(|r| RuleView {
+                field: r.field.as_str(),
+                op: r.op.as_str(),
+                value: r.value.clone(),
+                ignore_case: r.ignore_case,
+            })
+            .collect(),
     }
 }
 
@@ -167,57 +182,86 @@ async fn device_by_public(app: &App, id: String) -> Result<DeviceRow, Response> 
         .ok_or_else(not_found)
 }
 
-#[derive(Deserialize)]
-pub struct DeviceForm {
-    #[serde(default)]
-    name: String,
-    enabled: Option<String>,
-    #[serde(default)]
-    send_delay_ms: String,
-    receive_enabled: Option<String>,
-    #[serde(default)]
-    sim: String,
-    #[serde(default)]
-    filter_mode: String,
-    #[serde(default)]
-    rules: String,
-    ignore_case: Option<String>,
+/// The device settings form. Filter rules come as parallel lists, one entry per row:
+/// `rule_field`, `rule_op`, `rule_value` and `rule_case` (`ignore` or `match`).
+struct DeviceForm(Vec<(String, String)>);
+
+impl DeviceForm {
+    fn get(&self, key: &str) -> &str {
+        self.0.iter().find(|(k, _)| k == key).map_or("", |(_, v)| v)
+    }
+
+    fn on(&self, key: &str) -> bool {
+        !matches!(self.get(key), "" | "off")
+    }
+
+    fn all(&self, key: &str) -> Vec<&str> {
+        self.0
+            .iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .collect()
+    }
+
+    fn rules(&self) -> Result<Vec<Rule>, String> {
+        let (fields, ops, values, cases) = (
+            self.all("rule_field"),
+            self.all("rule_op"),
+            self.all("rule_value"),
+            self.all("rule_case"),
+        );
+        if ops.len() != fields.len() || values.len() != fields.len() || cases.len() != fields.len()
+        {
+            return Err("the rule rows are incomplete; reload the page".into());
+        }
+        let mut rules = Vec::new();
+        for (i, field) in fields.iter().enumerate() {
+            let ignore = cases[i] != "match";
+            if let Some(r) = Rule::from_row(field, ops[i], values[i], ignore)
+                .map_err(|e| format!("rule {}: {e}", i + 1))?
+            {
+                rules.push(r);
+            }
+        }
+        Ok(rules)
+    }
 }
 
 pub async fn save_device(
     _: Session,
     State(app): State<App>,
     Path(id): Path<String>,
-    Form(f): Form<DeviceForm>,
+    Form(pairs): Form<Vec<(String, String)>>,
 ) -> Res {
+    let f = DeviceForm(pairs);
     let d = device_by_public(&app, id).await?;
-    let name = f.name.trim().to_string();
+    let name = f.get("name").trim().to_string();
     if name.is_empty() || name.chars().count() > 64 {
         return Ok(back_err("/devices", "the name needs 1 to 64 characters"));
     }
-    let delay = match f.send_delay_ms.trim() {
+    let delay = match f.get("send_delay_ms").trim() {
         "" => 0,
         s => match s.parse::<i64>() {
             Ok(v) if (0..=crate::domain::pacing::MAX_DELAY_MS).contains(&v) => v,
             _ => return Ok(back_err("/devices", "send delay must be 0 to 3600000 ms")),
         },
     };
-    let mode = match f.filter_mode.as_str() {
+    let mode = match f.get("filter_mode") {
         "" | "off" => Mode::Off,
         "allow" => Mode::Allow,
         "block" => Mode::Block,
         _ => return Ok(back_err("/devices", "unknown filter mode")),
     };
-    let rules = match Filters::parse_rules_text(&f.rules, on(&f.ignore_case)) {
+    let rules = match f.rules() {
         Ok(r) => r,
         Err(e) => return Ok(back_err("/devices", format!("filter rules: {e}"))),
     };
     let s = devices::Settings {
         name,
-        enabled: on(&f.enabled),
+        enabled: f.on("enabled"),
         send_delay_ms: delay,
-        receive_enabled: on(&f.receive_enabled),
-        sim: f.sim.trim().parse().ok(),
+        receive_enabled: f.on("receive_enabled"),
+        sim: f.get("sim").trim().parse().ok(),
         filters: Filters { mode, rules },
     };
     if let Err(e) = s.filters.validate() {
@@ -711,6 +755,9 @@ struct SettingsPage {
     phone: Option<String>,
     phone_pending: bool,
     online: bool,
+    /// Whether the password works right now, and why (spec 005).
+    password_open: bool,
+    password_note: String,
     sessions: Vec<SessionView>,
     version: &'static str,
 }
@@ -723,8 +770,31 @@ pub async fn settings(s: Session, State(app): State<App>, Query(n): Query<Notice
         .await
         .map_err(ise)?;
     let (list, phone) = list;
-    let online = otp::methods(&app).await.map_err(ise)?.online;
+    let m = otp::methods(&app).await.map_err(ise)?;
+    let max = app.cfg.otp_max_failures;
+    let password_note = if !m.has_password {
+        "No password is set. Run rustybee set-password on the server.".to_string()
+    } else if phone.is_none() {
+        "Works until a login phone is confirmed.".to_string()
+    } else if !m.online {
+        "Works now: no device is online to text a code.".to_string()
+    } else if m.failures >= max {
+        format!("Works now: the last {} codes failed to send.", m.failures)
+    } else {
+        format!(
+            "Off while a device can text a code. Opens if every device goes offline or {} codes in a row fail to send{}.",
+            max,
+            if m.failures > 0 {
+                format!(" ({} so far)", m.failures)
+            } else {
+                String::new()
+            }
+        )
+    };
+    let online = m.online;
     Ok(render(&SettingsPage {
+        password_open: m.password,
+        password_note,
         l: Layout::new("Settings", "settings").notice(&n),
         phone,
         phone_pending: otp::pending(&app, otp::Purpose::Verify),

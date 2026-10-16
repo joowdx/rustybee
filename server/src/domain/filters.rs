@@ -106,46 +106,50 @@ impl Filters {
             Mode::Block => !any(),
         }
     }
+}
 
-    /// Rules as editable text: one `field op value` per line.
-    pub fn rules_text(&self) -> String {
-        self.rules
-            .iter()
-            .map(|r| format!("{} {} {}", enum_str(&r.field), enum_str(&r.op), r.value))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    /// Parse the editor format back. Every rule gets the same `ignore_case`.
-    pub fn parse_rules_text(text: &str, ignore_case: bool) -> Result<Vec<Rule>, String> {
-        let mut rules = Vec::new();
-        for (i, line) in text.lines().enumerate() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let mut it = line.splitn(3, char::is_whitespace);
-            let (Some(f), Some(o), Some(v)) = (it.next(), it.next(), it.next()) else {
-                return Err(format!("line {}: expected `field op value`", i + 1));
-            };
-            let field: Field = from_str(f).ok_or(format!("line {}: unknown field {f:?}", i + 1))?;
-            let op: Op = from_str(o).ok_or(format!("line {}: unknown op {o:?}", i + 1))?;
-            rules.push(Rule {
-                field,
-                op,
-                value: v.trim().to_string(),
-                ignore_case,
-            });
+impl Field {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Field::Sender => "sender",
+            Field::Body => "body",
+            Field::Any => "any",
         }
-        Ok(rules)
     }
 }
 
-fn enum_str<T: Serialize>(v: &T) -> String {
-    serde_json::to_value(v)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_default()
+impl Op {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Op::Equals => "equals",
+            Op::Contains => "contains",
+            Op::StartsWith => "starts_with",
+            Op::EndsWith => "ends_with",
+        }
+    }
+}
+
+impl Rule {
+    /// One row of the web rule editor. A row with no text is unused and gives `None`.
+    pub fn from_row(
+        field: &str,
+        op: &str,
+        value: &str,
+        ignore_case: bool,
+    ) -> Result<Option<Rule>, String> {
+        let value = value.trim();
+        if value.is_empty() {
+            return Ok(None);
+        }
+        let field = from_str(field).ok_or(format!("unknown field {field:?}"))?;
+        let op = from_str(op).ok_or(format!("unknown match {op:?}"))?;
+        Ok(Some(Rule {
+            field,
+            op,
+            value: value.to_string(),
+            ignore_case,
+        }))
+    }
 }
 
 fn from_str<T: for<'de> Deserialize<'de>>(s: &str) -> Option<T> {
@@ -206,19 +210,17 @@ mod tests {
     }
 
     #[test]
-    fn rules_text_round_trip() {
-        let rules = vec![
-            rule(Field::Sender, Op::StartsWith, "+1900"),
-            rule(Field::Body, Op::Contains, "two words"),
-        ];
-        let f = Filters {
-            mode: Mode::Block,
-            rules: rules.clone(),
-        };
-        let text = f.rules_text();
-        assert_eq!(text, "sender starts_with +1900\nbody contains two words");
-        assert_eq!(Filters::parse_rules_text(&text, true).unwrap(), rules);
-        assert!(Filters::parse_rules_text("sender like x", true).is_err());
-        assert!(Filters::parse_rules_text("sender", true).is_err());
+    fn rule_rows() {
+        let r = Rule::from_row("sender", "starts_with", " +63917 ", false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (r.field, r.op, r.value.as_str(), r.ignore_case),
+            (Field::Sender, Op::StartsWith, "+63917", false)
+        );
+        assert_eq!(Rule::from_row("body", "contains", "  ", true), Ok(None));
+        assert!(Rule::from_row("sender", "like", "x", true).is_err());
+        assert!(Rule::from_row("subject", "equals", "x", true).is_err());
+        assert_eq!(Op::EndsWith.as_str(), "ends_with");
     }
 }

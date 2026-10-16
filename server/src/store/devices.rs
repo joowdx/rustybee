@@ -344,7 +344,9 @@ pub fn set_filters(
         "UPDATE devices SET filters_json=?3, filters_rev=filters_rev+1 WHERE id=?1 AND filters_rev=?2",
         params![id, base_rev, serde_json::to_string(f).unwrap_or_default()],
     )?;
-    let rev: i64 = c.query_row("SELECT filters_rev FROM devices WHERE id=?1", [id], |r| r.get(0))?;
+    let rev: i64 = c.query_row("SELECT filters_rev FROM devices WHERE id=?1", [id], |r| {
+        r.get(0)
+    })?;
     Ok(if n == 1 { Ok(rev) } else { Err(rev) })
 }
 
