@@ -15,5 +15,6 @@ android/app/src/gms/google-services.json
 *.db
 *.db-*
 .env
-data/
+/data/
+/server/data/
 .DS_Store
