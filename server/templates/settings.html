@@ -6,12 +6,14 @@
   <div class="stack">
     <div class="fields">
       <div class="f"><span>Login phones</span>
+        <div class="vals">
         {% for p in phones %}
         <div class="val"><span class="mono">{{ p }}</span> <span class="badge on">Confirmed</span>
           <form method="post" action="/settings/phone/remove" hx-confirm="Stop texting login codes to {{ p }}?{% if phones.len() == 1 %} The password becomes the only way in.{% endif %}"><input type="hidden" name="phone" value="{{ p }}"><button class="danger sm">Remove</button></form></div>
         {% else %}
         <div class="val muted">Not set</div>
         {% endfor %}
+        </div>
       </div>
       <div class="f"><span>Password login</span><div class="val"><span class="st {% if password_open %}st-ok{% else %}st-muted{% endif %}">{% if password_open %}Open{% else %}Off{% endif %}</span><span class="hint">{{ password_note }}</span></div></div>
     </div>
