@@ -11,7 +11,7 @@ Updated: 2026-10-16
 - **Front-end code:** one `app.css` (hand-written, under about 12 KB) and one `app.js` (segment counter, recipient chips, copy buttons; under about 6 KB).
 - **No external requests.** No CDN, no web fonts; the system font stack only.
 - **Themes:** light and dark through `prefers-color-scheme`.
-- **Layout:** a top bar on desktop, collapsing to a bottom tab bar under 640 px.
+- **Layout:** one centred column (max 1120 px) shared by the top bar and the page. Under 640 px the tabs move to a bottom bar with Home, Send, Messages and Devices, plus a "More" menu (a `<details>`, so it works without JavaScript) for Bulk, Keys, Webhooks and Settings.
 
 ### Pages
 All pages except `/login` require a session (spec 005).

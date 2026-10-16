@@ -1,13 +1,21 @@
-<section class="cards">
 {% if devices.is_empty() %}
-  <p>No devices yet. <a href="/devices">Pair a phone</a>.</p>
-{% endif %}
+<div class="empty">
+  <p>No phones are paired yet. Pair one to start sending and receiving SMS.</p>
+  <a class="btn" href="/devices">Pair a phone</a>
+</div>
+{% else %}
+<section class="cards" aria-label="Devices">
 {% for d in devices %}
   <article class="card">
-    <h3><span class="dot{% if d.online %} on{% endif %}"></span>{{ d.name }}</h3>
-    <div class="muted small">{{ d.model }}</div>
+    <div class="dev-top">
+      <div>
+        <h3>{{ d.name }}</h3>
+        <div class="muted small">{{ d.model }}</div>
+      </div>
+      <span class="state"><span class="dot{% if d.online %} on{% endif %}"></span>{% if d.online %}Online{% else %}Offline{% endif %}</span>
+    </div>
     <dl class="kv">
-      <dt>Battery</dt><dd>{{ d.battery }}{% if d.charging %} (charging){% endif %}</dd>
+      <dt>Battery</dt><dd>{% if let Some(p) = d.battery_pct %}<span class="meter{% if *p < 20 %} low{% endif %}"><i><b style="width:{{ p }}%"></b></i>{{ d.battery }}{% if d.charging %}, charging{% endif %}</span>{% else %}{{ d.battery }}{% endif %}</dd>
       <dt>Network</dt><dd>{{ d.network }}</dd>
       <dt>Last seen</dt><dd>{{ d.last_seen }}</dd>
       <dt>Outbox</dt><dd>{{ d.outbox }}</dd>
@@ -17,15 +25,16 @@
   </article>
 {% endfor %}
 </section>
+{% endif %}
 <h2>Today</h2>
-<section class="stats">
-  <div class="stat"><b>{{ counts.sent }}</b><span class="muted">sent</span></div>
-  <div class="stat"><b>{{ counts.delivered }}</b><span class="muted">delivered</span></div>
-  <div class="stat"><b>{{ counts.failed }}</b><span class="muted">failed</span></div>
-  <div class="stat"><b>{{ counts.received }}</b><span class="muted">received</span></div>
-  <div class="stat"><b>{{ counts.queued }}</b><span class="muted">queued</span></div>
+<section class="stats" aria-label="Today's counts">
+  <div class="stat"><b>{{ counts.sent }}</b><span>Sent</span></div>
+  <div class="stat"><b>{{ counts.delivered }}</b><span>Delivered</span></div>
+  <div class="stat{% if counts.failed > 0 %} bad{% endif %}"><b>{{ counts.failed }}</b><span>Failed</span></div>
+  <div class="stat"><b>{{ counts.received }}</b><span>Received</span></div>
+  <div class="stat"><b>{{ counts.queued }}</b><span>Queued</span></div>
 </section>
-<h2>Recent</h2>
+<div class="head sub"><h2>Recent messages</h2><a class="small" href="/messages">View all</a></div>
 {% if rows.is_empty() %}<p class="muted">No messages yet.</p>{% else %}
-<table>{% include "_table_head.html" %}<tbody>{% include "_rows.html" %}</tbody></table>
+<div class="tbl"><table>{% include "_table_head.html" %}<tbody>{% include "_rows.html" %}</tbody></table></div>
 {% endif %}

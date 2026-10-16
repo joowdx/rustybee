@@ -145,6 +145,7 @@ struct DevCard {
     model: String,
     online: bool,
     battery: String,
+    battery_pct: Option<i64>,
     charging: bool,
     network: String,
     last_seen: String,
@@ -219,6 +220,7 @@ async fn dashboard_data(
                     .battery_level()
                     .map(|b| format!("{b}%"))
                     .unwrap_or_else(|| "–".into()),
+                battery_pct: d.battery_level().map(|b| b.clamp(0, 100)),
                 charging: d.charging().unwrap_or(false),
                 network: d.network().unwrap_or_else(|| "–".into()),
                 last_seen: last_seen(now, &d),

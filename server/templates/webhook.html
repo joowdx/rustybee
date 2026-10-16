@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
-<p><a href="/webhooks">← Webhooks</a></p>
+<a class="back" href="/webhooks">← Webhooks</a>
 <h1>{{ form.name }}</h1>
 <section class="card">
-  <p class="muted small">Signing secret (header <code>X-Rustybee-Signature</code>)</p>
+  <h2>Signing secret</h2>
+  <p class="muted small">Sent in the <code>X-Rustybee-Signature</code> header so you can check each request came from rustybee.</p>
   <div class="secret"><code id="wh-secret">{{ secret }}</code><button class="ghost" data-copy="wh-secret">Copy</button></div>
   <div class="actions">
     <form method="post" action="/webhooks/{{ id }}/test"><button class="ghost">Send test</button></form>
@@ -12,13 +13,13 @@
   </div>
 </section>
 <h2>Edit</h2>
-<form method="post" action="/webhooks/{{ id }}" class="stack">
+<form method="post" action="/webhooks/{{ id }}" class="stack panel">
 {% include "_webhook_form.html" %}
-  <div><button>Save</button></div>
+  <div><button>Save changes</button></div>
 </form>
 <h2>Deliveries</h2>
 {% if deliveries.is_empty() %}<p class="muted">No deliveries.</p>{% else %}
-<table>
+<div class="tbl"><table>
   <thead><tr><th>Event</th><th style="width:7em">Status</th><th class="hide-sm" style="width:5em">Tries</th><th>Detail</th></tr></thead>
   <tbody>
   {% for d in deliveries %}
@@ -33,7 +34,7 @@
   </tr>
   {% endfor %}
   </tbody>
-</table>
+</table></div>
 {% if let Some(b) = older %}<p><a href="/webhooks/{{ id }}?before={{ b }}">Older deliveries</a></p>{% endif %}
 {% endif %}
 {% endblock %}

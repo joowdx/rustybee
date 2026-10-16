@@ -78,6 +78,14 @@
     });
   }
 
+  // Close the mobile "More" menu on an outside tap or Escape.
+  document.addEventListener("click", function (e) {
+    document.querySelectorAll("details.more[open]").forEach(function (d) { if (!d.contains(e.target)) d.open = false; });
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") document.querySelectorAll("details.more[open]").forEach(function (d) { d.open = false; d.querySelector("summary").focus(); });
+  });
+
   document.addEventListener("DOMContentLoaded", function () { init(document); });
   document.addEventListener("htmx:load", function (e) { init(e.target); });
 })();

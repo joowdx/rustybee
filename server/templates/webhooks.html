@@ -1,16 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Webhooks</h1>
-{% if hooks.is_empty() %}<p class="muted">No webhooks yet.</p>{% else %}
-<table>
+<p class="lede">Webhooks post to your URL when a message is sent, delivered, fails or arrives.</p>
+{% if hooks.is_empty() %}<div class="empty"><p>No webhooks yet. Add one below.</p></div>{% else %}
+<div class="tbl"><table>
   <thead><tr><th>Name</th><th>URL</th><th class="hide-sm">Events</th><th style="width:6em">Status</th></tr></thead>
   <tbody>
   {% for h in hooks %}<tr><td><a href="/webhooks/{{ h.id }}">{{ h.name }}</a></td><td class="small">{{ h.url }}</td><td class="small hide-sm">{{ h.events }}</td><td>{% if h.active %}<span class="st st-sent">active</span>{% else %}<span class="st">paused</span>{% endif %}</td></tr>{% endfor %}
   </tbody>
-</table>
+</table></div>
 {% endif %}
 <h2>New webhook</h2>
-<form method="post" action="/webhooks" class="stack">
+<form method="post" action="/webhooks" class="stack panel">
 {% include "_webhook_form.html" %}
   <div><button>Create webhook</button></div>
 </form>

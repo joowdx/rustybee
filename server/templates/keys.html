@@ -1,19 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>API keys</h1>
+<p class="lede">Keys let scripts and other apps send SMS through the API.</p>
 {% if let Some(k) = created %}
 <section class="card">
   <p>Key <b>{{ k.0 }}</b> created. Copy it now; it is not shown again.</p>
   <div class="secret"><code id="new-key">{{ k.1 }}</code><button class="ghost" data-copy="new-key">Copy</button></div>
 </section>
 {% endif %}
-<form method="post" action="/keys" class="row">
+<form method="post" action="/keys" class="row panel">
   <label>Name <input name="name" required maxlength="64" placeholder="e.g. home automation"></label>
   <div><button>Create key</button></div>
 </form>
-<p></p>
+<h2>Your keys</h2>
 {% if keys.is_empty() %}<p class="muted">No keys yet.</p>{% else %}
-<table>
+<div class="tbl"><table>
   <thead><tr><th>Name</th><th class="hide-sm">Prefix</th><th class="hide-sm">Last used</th><th>Status</th><th style="width:40%">Actions</th></tr></thead>
   <tbody>
   {% for k in keys %}
@@ -32,7 +33,7 @@
   </tr>
   {% endfor %}
   </tbody>
-</table>
+</table></div>
 {% endif %}
 <h2>Using the API</h2>
 <pre>curl -X POST {{ base }}/api/v1/messages \

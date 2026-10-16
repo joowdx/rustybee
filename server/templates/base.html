@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
 <title>{{ l.title }} · rustybee</title>
 <link rel="icon" href="{{ l.favicon }}" sizes="16x16 32x32">
@@ -13,25 +13,53 @@
 <script src="{{ l.js }}" defer></script>
 </head>
 <body hx-boost="true">
+{%- macro tab(nav, href, key, label, icon) -%}
+<a href="{{ href }}"{% if nav == key %} aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#i-{{ icon }}"/></svg><span>{{ label }}</span></a>
+{%- endmacro -%}
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/></symbol>
+<symbol id="i-list" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></symbol>
+<symbol id="i-bulk" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5zM3 13l9 5 9-5"/></symbol>
+<symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-4 4 3 3"/></symbol>
+<symbol id="i-hook" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></symbol>
+</svg>
 {% if l.nav != "" %}
-<nav class="bar">
-  <a class="brand" href="/">rustybee</a>
-  <div class="tabs">
-    <a href="/"{% if l.nav == "home" %} aria-current="page"{% endif %}>Home</a>
-    <a href="/send"{% if l.nav == "send" %} aria-current="page"{% endif %}>Send</a>
-    <a href="/bulk"{% if l.nav == "bulk" %} aria-current="page"{% endif %}>Bulk</a>
-    <a href="/messages"{% if l.nav == "messages" %} aria-current="page"{% endif %}>Messages</a>
-    <a href="/devices"{% if l.nav == "devices" %} aria-current="page"{% endif %}>Devices</a>
-    <a href="/keys"{% if l.nav == "keys" %} aria-current="page"{% endif %}>Keys</a>
-    <a href="/webhooks"{% if l.nav == "webhooks" %} aria-current="page"{% endif %}>Webhooks</a>
-    <a href="/settings"{% if l.nav == "settings" %} aria-current="page"{% endif %}>Settings</a>
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="/"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.5 7.4v9.2L12 21.5l-8.5-4.9V7.4z"/></svg>rustybee</a>
+    <nav class="tabs" aria-label="Main">
+      {% call tab(l.nav, "/", "home", "Home", "home") %}
+      {% call tab(l.nav, "/send", "send", "Send", "send") %}
+      {% call tab(l.nav, "/messages", "messages", "Messages", "list") %}
+      {% call tab(l.nav, "/devices", "devices", "Devices", "phone") %}
+      <span class="sec">
+      {% call tab(l.nav, "/bulk", "bulk", "Bulk", "bulk") %}
+      {% call tab(l.nav, "/keys", "keys", "Keys", "key") %}
+      {% call tab(l.nav, "/webhooks", "webhooks", "Webhooks", "hook") %}
+      {% call tab(l.nav, "/settings", "settings", "Settings", "gear") %}
+      </span>
+      <details class="more">
+        <summary{% if l.nav == "bulk" || l.nav == "keys" || l.nav == "webhooks" || l.nav == "settings" %} aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#i-more"/></svg><span>More</span></summary>
+        <div class="menu">
+          {% call tab(l.nav, "/bulk", "bulk", "Bulk send", "bulk") %}
+          {% call tab(l.nav, "/keys", "keys", "API keys", "key") %}
+          {% call tab(l.nav, "/webhooks", "webhooks", "Webhooks", "hook") %}
+          {% call tab(l.nav, "/settings", "settings", "Settings", "gear") %}
+        </div>
+      </details>
+    </nav>
+    <form method="post" action="/logout" class="logout"><button class="link">Log out</button></form>
   </div>
-  <form method="post" action="/logout" class="logout"><button class="link">Log out</button></form>
-</nav>
+</header>
 {% endif %}
-<main>
-{% if let Some(f) = l.flash %}<p class="flash">{{ f }}</p>{% endif %}
-{% if let Some(e) = l.error %}<p class="error">{{ e }}</p>{% endif %}
+<main id="main" class="wrap">
+{% if let Some(f) = l.flash %}<p class="flash" role="status">{{ f }}</p>{% endif %}
+{% if let Some(e) = l.error %}<p class="error" role="alert">{{ e }}</p>{% endif %}
 {% block content %}{% endblock %}
 </main>
 </body>

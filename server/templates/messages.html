@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Messages</h1>
+<div class="head"><h1>Messages</h1><a class="btn" href="/send">Send a message</a></div>
 <form method="get" action="/messages" class="row filters">
   <label>Direction
     <select name="direction">
@@ -26,11 +26,10 @@
   <label>From <input type="date" name="since" value="{{ f.since }}"></label>
   <label>To <input type="date" name="until" value="{{ f.until }}"></label>
   {% if !f.batch_id.is_empty() %}<input type="hidden" name="batch_id" value="{{ f.batch_id }}">{% endif %}
-  <div><button>Filter</button></div>
+  <div class="actions"><button>Apply filters</button><a class="btn ghost" href="/messages">Reset</a></div>
 </form>
-{% if !f.batch_id.is_empty() %}<p class="muted small">Batch {{ f.batch_id }} · <a href="/messages">clear</a></p>{% endif %}
-<p></p>
-{% if rows.is_empty() %}<p class="muted">No messages match.</p>{% else %}
-<table>{% include "_table_head.html" %}<tbody>{% include "_rows.html" %}{% include "_more.html" %}</tbody></table>
+{% if !f.batch_id.is_empty() %}<p class="muted small">Showing batch <code>{{ f.batch_id }}</code>. <a href="/messages">Show all messages</a></p>{% endif %}
+{% if rows.is_empty() %}<div class="empty"><p>No messages match these filters.</p></div>{% else %}
+<div class="tbl"><table>{% include "_table_head.html" %}<tbody>{% include "_rows.html" %}{% include "_more.html" %}</tbody></table></div>
 {% endif %}
 {% endblock %}

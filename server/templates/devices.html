@@ -1,29 +1,39 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Devices</h1>
+<div class="head">
+  <h1>Devices</h1>
+  {% if pair.is_none() %}<form method="post" action="/devices/pair"><button>Pair a device</button></form>{% endif %}
+</div>
 {% if let Some(p) = pair %}
 <section class="card">
-  <h2>Pair a device</h2>
-  <p>Scan this code with the rustybee app, or open the link on the phone.</p>
-  <div class="qr">{{ p.qr|safe }}</div>
-  <div class="secret"><code id="pair-link">{{ p.link }}</code><button class="ghost" data-copy="pair-link">Copy</button></div>
-  <p class="muted small">Code <code>{{ p.code }}</code> · <span data-expires="{{ p.expires }}">expires in 10:00</span></p>
+  <div class="pair">
+    <div class="qr">{{ p.qr|safe }}</div>
+    <div>
+      <h2>Pair a device</h2>
+      <p>Scan this code with the rustybee app, or open the link on the phone. This page updates once the phone is paired.</p>
+      <div class="secret"><code id="pair-link">{{ p.link }}</code><button class="ghost" data-copy="pair-link">Copy link</button></div>
+      <p class="muted small">Code <code>{{ p.code }}</code>, <span data-expires="{{ p.expires }}">expires in 10:00</span></p>
+    </div>
+  </div>
   <div hx-get="/devices/paired?n={{ p.count }}" hx-trigger="every 3s" hx-swap="none"></div>
 </section>
-{% else %}
-<form method="post" action="/devices/pair"><button>Pair a device</button></form>
 {% endif %}
-{% if devices.is_empty() %}<p class="muted">No devices paired yet.</p>{% endif %}
+{% if devices.is_empty() && pair.is_none() %}<div class="empty"><p>No devices paired yet. Install the rustybee app on an Android phone, then pair it here.</p></div>{% endif %}
 {% for d in devices %}
 <section class="card" id="d-{{ d.id }}">
-  <h3><span class="dot{% if d.online %} on{% endif %}"></span>{{ d.name }}{% if d.is_default %} <span class="st">default</span>{% endif %}{% if !d.enabled %} <span class="st st-failed">disabled</span>{% endif %}</h3>
-  <div class="muted small">{{ d.model }} · last seen {{ d.last_seen }}</div>
+  <div class="dev-top">
+    <div>
+      <h3>{{ d.name }}{% if d.is_default %} <span class="st">default</span>{% endif %}{% if !d.enabled %} <span class="st st-failed">disabled</span>{% endif %}</h3>
+      <div class="muted small">{{ d.model }}, last seen {{ d.last_seen }}</div>
+    </div>
+    <span class="state"><span class="dot{% if d.online %} on{% endif %}"></span>{% if d.online %}Online{% else %}Offline{% endif %}</span>
+  </div>
   <details>
     <summary>Settings</summary>
     <form method="post" action="/devices/{{ d.id }}" class="stack">
       <label>Name <input name="name" value="{{ d.name }}" required maxlength="64"></label>
       <label class="check"><input type="checkbox" name="enabled"{% if d.enabled %} checked{% endif %}> Enabled for sending</label>
-      <label>Send delay (ms, 0–3600000) <input type="number" name="send_delay_ms" min="0" max="3600000" value="{{ d.send_delay_ms }}"></label>
+      <label>Send delay <span class="hint">Milliseconds between messages, 0 to 3600000</span> <input type="number" name="send_delay_ms" min="0" max="3600000" value="{{ d.send_delay_ms }}"></label>
       <label class="check"><input type="checkbox" name="receive_enabled"{% if d.receive_enabled %} checked{% endif %}> Forward received SMS</label>
       <label>Preferred SIM
         <select name="sim">
@@ -38,17 +48,17 @@
           <option value="block"{% if d.filter_mode == "block" %} selected{% endif %}>Block matching</option>
         </select>
       </label>
-      <label>Rules, one per line: <code>field op value</code> (field: sender, body, any; op: equals, contains, starts_with, ends_with)
+      <label>Rules <span class="hint">One per line as <code>field op value</code>. Fields: sender, body, any. Ops: equals, contains, starts_with, ends_with.</span>
         <textarea name="rules" rows="3">{{ d.rules }}</textarea>
       </label>
       <label class="check"><input type="checkbox" name="ignore_case"{% if d.ignore_case %} checked{% endif %}> Ignore case</label>
-      <div><button>Save</button></div>
+      <div><button>Save settings</button></div>
     </form>
   </details>
   <div class="actions">
     {% if !d.is_default %}<form method="post" action="/devices/{{ d.id }}/default"><button class="ghost">Make default</button></form>{% endif %}
     <form method="post" action="/devices/{{ d.id }}/delete" class="row" hx-confirm="Remove {{ d.name }}? Queued messages are cancelled.">
-      <label class="check"><input type="checkbox" name="confirm" required> Confirm</label>
+      <label class="check"><input type="checkbox" name="confirm" required> Confirm removal</label>
       <button class="danger">Remove</button>
     </form>
   </div>
