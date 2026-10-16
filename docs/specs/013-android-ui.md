@@ -59,5 +59,7 @@ Manual checks in M7, with screenshots attached to the M7 notes.
 
 ## Assumptions
 - No in-app QR scanner. The phone's camera app opens the `rustybee://` link from the QR code, and pasting the link is the fallback.
+- A deep link with an `https://` server pairs immediately; an `http://` one waits for the insecure checkbox and the Pair button.
+- A successful pairing enables the gateway and opens `MainActivity`, which shows the permission rationale and request at once, so the deep link alone leads to a connected gateway (AC-013-01).
 
 ## Open questions

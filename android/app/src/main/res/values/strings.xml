@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">rustybee</string>
+    <string name="channel_gateway">Gateway</string>
+    <string name="channel_alerts">Alerts</string>
+    <string name="state_connected">Connected</string>
+    <string name="state_reconnecting">Reconnecting…</string>
+    <string name="sends_today">Sent today: %1$d</string>
+    <string name="gateway_stopped">Gateway stopped</string>
+    <string name="tap_to_restart">Tap to restart</string>
+</resources>

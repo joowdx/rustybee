@@ -11,9 +11,9 @@ Updated: 2026-10-16
 - **Flavors:** dimension `dist` with `foss` (the default) and `gms`. Only `gms` applies the `com.google.gms.google-services` plugin, and only if `src/gms/google-services.json` exists; otherwise the gms build fails with a clear message.
 - **Release build:**
   - `isMinifyEnabled = true`, `isShrinkResources = true`.
-  - Signing comes from `keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) or the matching environment variables. If neither exists, the build is unsigned.
+  - Signing comes from `keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) or the environment variables `RUSTYBEE_STORE_FILE`, `RUSTYBEE_STORE_PASSWORD`, `RUSTYBEE_KEY_ALIAS`, `RUSTYBEE_KEY_PASSWORD`. If neither exists, the build is unsigned.
 - **Dependencies:**
-  - `com.squareup.okhttp3:okhttp` (5.x);
+  - `com.squareup.okhttp3:okhttp` (5.x, pinned to 5.4.0: 5.5.0 requires compileSdk 37). It brings `androidx.annotation` and `androidx.startup` transitively, so `android.useAndroidX=true` is set;
   - `org.jetbrains.kotlinx:kotlinx-serialization-json`;
   - `org.jetbrains.kotlinx:kotlinx-coroutines-android`;
   - `gmsImplementation` `com.google.firebase:firebase-messaging` (without the BoM extras);
@@ -29,8 +29,8 @@ Updated: 2026-10-16
 | `data` | `Prefs` (SharedPreferences: server URL, device id, encrypted token, gateway enabled, config cache, fcm token). `Crypto` (Android Keystore AES-256-GCM key `rustybee_token`). `Db : SQLiteOpenHelper` (below). |
 | `gateway` | `GatewayService`, `Connection`, `Uplink`, `Sender`, `SmsInboundReceiver`, `SmsStatusReceiver`, `BootReceiver`, `Watchdog`, `Telemetry` |
 | `ui` | `SetupActivity`, `MainActivity`, small view helpers |
-| `gms` (flavor source set) | `WakeService` |
-| `foss` (flavor source set) | empty `Push` stub returning a null token |
+| `gms` (flavor source set) | `push.Push` (FCM token) and `push.WakeService` |
+| `foss` (flavor source set) | `push.Push` stub returning a null token |
 
 ### Local database (`rustybee.db`, version 1)
 ```sql
@@ -75,7 +75,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 ### Manifest
 - **Permissions:** `INTERNET`, `ACCESS_NETWORK_STATE`, `SEND_SMS`, `RECEIVE_SMS`, `READ_PHONE_STATE` (SIM list), `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_REMOTE_MESSAGING`, `RECEIVE_BOOT_COMPLETED`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `WAKE_LOCK`.
 - `uses-feature android.hardware.telephony required=true`.
-- **Network security:** cleartext is allowed only for local development, through a debug-only network security config. Release builds require https/wss, except for user-entered `http://` URLs when the user ticks "Allow insecure (LAN)". That is allowed with a domain-agnostic `cleartextTrafficPermitted` that is checked at runtime.
+- **Network security:** one `network_security_config.xml` with a domain-agnostic `cleartextTrafficPermitted="true"` base config that is gated at runtime: release builds require https/wss unless the user ticked "Allow insecure http (LAN)" while pairing; debug builds accept http/ws without it. A `debug-overrides` block (debug builds only) also trusts user-installed CAs for local development servers.
 
 ## Acceptance criteria
 1. AC-011-01 `assembleFossRelease` succeeds with R8. The APK is under 3 MB and contains no Firebase, AppCompat or Compose classes.
@@ -97,5 +97,9 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 ## Assumptions
 - Robolectric is not used, to keep the test toolchain light. Code that needs the Android framework is kept thin.
 - The token is encrypted with the Keystore. Other settings are stored in plain SharedPreferences.
+- The socket counts as "open" for `Uplink` only after `welcome`, so the outbox is resent once per connection (after `welcome`, as above, rather than right after `hello`).
+- If `welcome.config.ping_s` differs from the interval the socket was opened with, the app reconnects once with the new interval.
+- Pure logic (`Backoff`, `Uplink`, `Sender`, `PartAggregator`, `InboundFilter`, `InboundUid`, `FrameHandler`) lives in `gateway` behind small store/radio interfaces; `Graph` holds the process-wide `Prefs`, `Db`, `Uplink` and `Sender` shared by the service and receivers.
+- The `sends today` / `receives today` counters are kept in prefs and reset at local midnight.
 
 ## Open questions

@@ -18,7 +18,7 @@ Updated: 2026-10-16
    - action `dev.joowdx.rustybee.SMS_SENT` or `…SMS_DELIVERED`;
    - extras `msg_id` and `part`;
    - request code taken from a monotonically increasing int stored in prefs, so every part gets a unique code;
-   - flags `FLAG_IMMUTABLE or FLAG_ONE_SHOT`.
+   - flags `FLAG_ONE_SHOT` plus `FLAG_IMMUTABLE` for sent intents and `FLAG_MUTABLE` for delivered intents: the radio fills in the `pdu`/`format` extras, which an immutable PendingIntent drops. The intent is explicit, so only extras can be filled in.
 5. Call `sendMultipartTextMessage` (or `sendTextMessage` when n = 1). A `SecurityException` or `IllegalArgumentException` reports `failed` immediately.
 6. **Combining part results** (`SmsStatusReceiver` → `goAsync()` → `Sender.onPartResult`, persisted in `sent`):
    - **Sent result:** if the resultCode is `RESULT_OK`, `parts_sent++`; otherwise `parts_failed++` and the error is mapped (below).
@@ -83,5 +83,9 @@ Updated: 2026-10-16
 
 ## Assumptions
 - Delivery reports are always requested. They cost nothing in battery, and carriers that don't support them simply never report.
+- A delivered callback without a PDU counts as success when its resultCode is `RESULT_OK`, otherwise as pending.
+- A duplicate `send` for a message already `delivered` re-reports `sent` and then `delivered`, so the server never sees `dispatched → delivered`. `sent` and `failed` re-report just that state.
+- If `config.sim` is set but not active, the system default SMS subscription is used. Without `READ_PHONE_STATE` no subscription counts as active, so an explicit `sim` fails with `sim_unavailable`.
+- `hello.sims[].number` is always null: reading it needs `READ_PHONE_NUMBERS`, which is not requested.
 
 ## Open questions
