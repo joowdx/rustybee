@@ -68,12 +68,12 @@ class FiltersActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val content = vertical()
-        content.add(text("SMS filter", 24f, bold = true))
+        content.add(text("Filter", 24f, bold = true))
         content.add(text("Choose which received texts are forwarded to the server.").apply { setPadding(0, dp(8), 0, 0) })
 
         content.add(header("Mode"))
         mode = Spinner(this).apply {
-            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, MODES.map { it.second })
+            adapter = spinnerAdapter(MODES)
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) = refreshHints()
                 override fun onNothingSelected(p: AdapterView<*>?) = Unit
@@ -150,9 +150,15 @@ class FiltersActivity : Activity() {
     }
 
     private fun spinner(options: List<Pair<String, String>>, selected: String) = Spinner(this).apply {
-        adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, options.map { it.second })
+        adapter = spinnerAdapter(options)
         setSelection(options.indexOfFirst { it.first == selected }.coerceAtLeast(0))
     }
+
+    /** Closed spinners use the plain item layout; the dropdown row layout measures to zero height there. */
+    private fun spinnerAdapter(options: List<Pair<String, String>>) =
+        ArrayAdapter(this, android.R.layout.simple_spinner_item, options.map { it.second }).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
 
     private fun current(): Filters {
         val rules = (0 until rows.childCount).map { i ->

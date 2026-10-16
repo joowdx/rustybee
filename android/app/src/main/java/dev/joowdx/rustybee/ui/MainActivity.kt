@@ -4,13 +4,10 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
-import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.os.IBinder
@@ -34,7 +31,7 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
-/** Status, health checklist, SIMs, log and unpair on one scrolling screen (spec 013). */
+/** Status, health checklist, SIMs and device actions on one scrolling screen (spec 013). */
 class MainActivity : Activity() {
     private val scope = MainScope()
     private var collect: Job? = null
@@ -47,7 +44,6 @@ class MainActivity : Activity() {
     private lateinit var toggle: Switch
     private lateinit var checklist: LinearLayout
     private lateinit var sims: LinearLayout
-    private lateinit var log: TextView
 
     private var bound = false
     private var lastState = GatewayState()
@@ -106,7 +102,7 @@ class MainActivity : Activity() {
 
     private fun buildUi() {
         val content = vertical()
-        content.add(text("rustybee", 28f, bold = true))
+        content.add(text("RustyBee", 28f, bold = true))
 
         content.add(header("Status"))
         dot = text("●", 18f)
@@ -127,22 +123,11 @@ class MainActivity : Activity() {
         sims = vertical()
         content.add(sims)
 
-        content.add(header("Log"))
-        content.add(
-            horizontal()
-                .add(button("Copy") { copyLog() })
-                .add(button("Clear") { graph.db.clearLog(); refreshLog() }),
-        )
-        log = text("", 12f).apply {
-            typeface = Typeface.MONOSPACE
-            setTextIsSelectable(true)
-        }
-        content.add(log)
-
         content.add(header("Device"))
         content.add(
             horizontal()
-                .add(button("SMS filter") { startActivity(Intent(this, FiltersActivity::class.java)) })
+                .add(button("Filter") { startActivity(Intent(this, FiltersActivity::class.java)) })
+                .add(button("Logs") { startActivity(Intent(this, LogsActivity::class.java)) })
                 .add(button("Unpair") { confirmUnpair() }),
         )
         scrollingRoot(content)
@@ -155,7 +140,6 @@ class MainActivity : Activity() {
         render(lastState.takeIf { GatewayService.running } ?: GatewayState())
         refreshChecklist()
         refreshSims()
-        refreshLog()
     }
 
     private fun render(state: GatewayState) {
@@ -248,17 +232,6 @@ class MainActivity : Activity() {
         sims.add(text("The preferred SIM is set in the web UI.", 13f).apply { alpha = 0.7f })
     }
 
-    private fun refreshLog() {
-        val fmt = DateFormat.getTimeInstance(DateFormat.MEDIUM)
-        log.text = graph.db.recentLog(100).joinToString("\n") { "${fmt.format(Date(it.at))} ${it.level} ${it.msg}" }
-            .ifEmpty { "(empty)" }
-    }
-
-    private fun copyLog() {
-        getSystemService(ClipboardManager::class.java)
-            .setPrimaryClip(ClipData.newPlainText("rustybee log", log.text))
-    }
-
     // --- actions
 
     private fun enableGateway() {
@@ -272,7 +245,7 @@ class MainActivity : Activity() {
             AlertDialog.Builder(this)
                 .setTitle("Permissions")
                 .setMessage(
-                    "rustybee needs to send and receive SMS, read the SIM list, and show its status notification " +
+                    "RustyBee needs to send and receive SMS, read the SIM list, and show its status notification " +
                         "to work as your SMS gateway.",
                 )
                 .setPositiveButton("Continue") { _, _ -> requestRuntimePermissions() }
@@ -312,7 +285,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this)
             .setTitle("Battery")
             .setMessage(
-                "Letting rustybee run unrestricted keeps the gateway connection alive, so messages are sent and " +
+                "Letting RustyBee run unrestricted keeps the gateway connection alive, so messages are sent and " +
                     "received within seconds. It stays idle unless it is sending, receiving or reconnecting.",
             )
             .setPositiveButton("Continue") { _, _ ->

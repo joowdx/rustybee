@@ -39,8 +39,13 @@
         <activity
             android:name=".ui.FiltersActivity"
             android:exported="false"
-            android:label="SMS filter"
+            android:label="Filter"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".ui.LogsActivity"
+            android:exported="false"
+            android:label="Logs" />
 
         <activity
             android:name=".ui.ScanActivity"

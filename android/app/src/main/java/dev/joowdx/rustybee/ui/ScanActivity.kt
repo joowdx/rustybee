@@ -230,7 +230,7 @@ class ScanActivity : Activity() {
             }
         } ?: return
         if (!isPairLink(text)) {
-            runOnUiThread { hint.text = "That QR code isn't a rustybee pairing code. Use the one on the server's Devices page." }
+            runOnUiThread { hint.text = "That QR code isn't a RustyBee pairing code. Use the one on the server's Devices page." }
             return
         }
         done = true

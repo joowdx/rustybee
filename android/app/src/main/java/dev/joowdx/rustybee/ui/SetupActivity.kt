@@ -51,7 +51,7 @@ class SetupActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val content = vertical()
-        content.add(text("rustybee", 28f, bold = true))
+        content.add(text("RustyBee", 28f, bold = true))
         content.add(
             text(
                 "Scan the pairing QR code on the server's Devices page, or paste the pairing link below.",
