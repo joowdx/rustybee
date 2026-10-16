@@ -1,14 +1,17 @@
-"""Compose rustybee icon layers from bee.png.
+"""Compose rustybee icon layers from bee.svg (colour) and bee.png (monochrome).
 
 usage: compose.py OUT [--mode full|bg|fg|mono] [--width FRAC] [--hex-scale K] [--size PX]
   full  gradient + honeycomb + bee (the master)
   bg    gradient + honeycomb only (adaptive icon background)
   fg    bee only on transparent (adaptive icon foreground)
-  mono  white bee silhouette on transparent (notification / themed icon)
+  mono  white bee silhouette on transparent (notification / themed icon), still cut
+        from the plain bee.png so the silhouette stays free of the sticker border
 """
 import argparse
 import math
+import io
 import os
+import subprocess
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
@@ -51,8 +54,17 @@ def background():
     return Image.fromarray(bg.clip(0, 255).astype(np.uint8)).convert('RGBA')
 
 
-def bee_layer():
-    bee = Image.open(os.path.join(HERE, 'bee.png')).convert('RGBA')
+def load_bee(source):
+    if source == 'png':
+        return Image.open(os.path.join(HERE, 'bee.png')).convert('RGBA')
+    # render the vector sticker bee a little over the final size, then trim and scale down
+    png = subprocess.run(['rsvg-convert', '-w', str(max(S, 1024) * 2), os.path.join(HERE, 'bee.svg')],
+                         capture_output=True, check=True).stdout
+    return Image.open(io.BytesIO(png)).convert('RGBA')
+
+
+def bee_layer(source='svg'):
+    bee = load_bee(source)
     bee = bee.crop(bee.getchannel('A').point(lambda v: 255 if v > 8 else 0).getbbox())
     scale = S * a.width / bee.width
     bee = bee.resize((round(bee.width * scale), round(bee.height * scale)), Image.LANCZOS)
@@ -67,7 +79,7 @@ def bee_layer():
 
 
 def mono():
-    _, (ox, oy, bee) = bee_layer()
+    _, (ox, oy, bee) = bee_layer('png')
     px = np.asarray(bee).astype(np.float32)
     solid = px[..., 3] > 128
     # whole silhouette, with the dark line work inside it punched back out so the
