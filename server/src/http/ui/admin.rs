@@ -37,6 +37,7 @@ struct DeviceView {
     enabled: bool,
     send_delay_ms: i64,
     receive_enabled: bool,
+    filters_rev: i64,
     sims: Vec<Opt>,
     filter_mode: String,
     rules: Vec<RuleView>,
@@ -83,6 +84,7 @@ fn device_view(now: i64, d: &DeviceRow) -> DeviceView {
         enabled: d.enabled,
         send_delay_ms: d.send_delay_ms,
         receive_enabled: d.receive_enabled,
+        filters_rev: d.filters_rev,
         sims: sims_of(d, d.sim, false),
         filter_mode: match d.filters.mode {
             Mode::Off => "off",
@@ -264,16 +266,25 @@ pub async fn save_device(
         receive_enabled: f.on("receive_enabled"),
         sim: f.get("sim").trim().parse().ok(),
         filters: Filters { mode, rules },
+        // A form without a rev cannot show it saw the current filters.
+        base_rev: f.get("filters_rev").trim().parse().unwrap_or(-1),
     };
     if let Err(e) = s.filters.validate() {
         return Ok(back_err("/devices", format!("filter rules: {e}")));
     }
     let did = d.id;
-    app.store
+    let conflict = app
+        .store
         .write(move |c| devices::update_settings(c, did, &s))
         .await
         .map_err(ise)?;
     app.push_config(did).await.map_err(ise)?;
+    if conflict {
+        return Ok(back_err(
+            "/devices",
+            "The filters were changed on the phone. Reload to see them.",
+        ));
+    }
     Ok(see_other("/devices?ok=saved"))
 }
 

@@ -155,12 +155,14 @@ impl Ctx {
     /// Remove a device: close its socket with 4003, cancel its queued and
     /// dispatched messages and soft-delete it (spec 003).
     pub async fn remove_device(&self, device_id: i64) -> store::Result<()> {
-        self.hub
-            .close(device_id, crate::hub::CLOSE_REVOKED, "revoked");
+        // Delete first: once the row is gone the token no longer authenticates, so the
+        // phone cannot reconnect between the close and the delete.
         let now = self.clock.now_ms();
         self.store
             .write(move |c| devices::delete(c, device_id, now))
             .await?;
+        self.hub
+            .close(device_id, crate::hub::CLOSE_REVOKED, "revoked");
         self.webhook_notify.notify_one();
         self.publish(UiEvent::Device(String::new()));
         Ok(())

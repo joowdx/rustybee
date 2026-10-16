@@ -23,6 +23,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
 
+/// Largest device WebSocket message or frame accepted (spec 002).
+pub const MAX_FRAME_BYTES: usize = 256 * 1024;
+
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/api/device/pair", post(pair))
@@ -77,7 +80,10 @@ async fn ws(
         Err(e) => return ApiError::from(e).into_response(),
     };
     match upgrade {
-        Ok(u) => u.on_upgrade(move |socket| connection(app, socket, dev)),
+        Ok(u) => u
+            .max_message_size(MAX_FRAME_BYTES)
+            .max_frame_size(MAX_FRAME_BYTES)
+            .on_upgrade(move |socket| connection(app, socket, dev)),
         Err(e) => e.into_response(),
     }
 }
@@ -243,6 +249,9 @@ impl Conn {
                 Ok(vec![ack(&id), welcome.to_text()])
             }
             Frame::Status(s) => {
+                if s.parts.is_some_and(|p| p < 1) {
+                    return Ok(vec![nack(&id, "bad_frame", "parts must be at least 1")]);
+                }
                 let fid = id.clone();
                 let changed = app
                     .store
@@ -265,7 +274,9 @@ impl Conn {
                             StatusState::Failed => Event::StatusFailed,
                         };
                         let err = s.error.as_ref().map(|e| (e.code.as_str(), e.message.as_str()));
-                        messages::apply_event(c, m.id, ev, s.at, s.parts, err, now)
+                        // A phone clock can be off: never before dispatch, never in the future.
+                        let at = s.at.clamp(m.dispatched_at.unwrap_or(now).min(now), now);
+                        messages::apply_event(c, m.id, ev, at, s.parts, err, now)
                     })
                     .await?;
                 if let Some(m) = changed {
@@ -281,6 +292,16 @@ impl Conn {
                     .store
                     .write(move |c| {
                         if !first_sight(c, device_id, &fid, now)? {
+                            return Ok(None);
+                        }
+                        // Forwarding off: the phone's choice wins, even for a frame
+                        // queued before it was turned off. Acked and dropped.
+                        let on: Option<bool> = crate::store::opt(c.query_row(
+                            "SELECT receive_enabled FROM devices WHERE id=?1 AND removed_at IS NULL",
+                            [device_id],
+                            |r| r.get(0),
+                        ))?;
+                        if on != Some(true) {
                             return Ok(None);
                         }
                         messages::insert_inbound(c, device_id, &m, now)

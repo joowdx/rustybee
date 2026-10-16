@@ -1,7 +1,7 @@
 # 004 — Message lifecycle
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 
@@ -14,9 +14,11 @@ queued ──dispatch──▶ dispatched ──status sent──▶ sent ──
   ├──ttl──▶ expired    └──ttl (never acked)──▶ expired
   └──cancel──▶ failed (error_code=cancelled)
 dispatched (acked) ──no status within 24 h──▶ failed (error_code=status_timeout)
+expired ──status sent──▶ sent        expired ──status delivered──▶ delivered
 ```
 - `domain::lifecycle::transition(from, event) -> Option<State>` is a pure function and the only place transitions are decided. Any pair not in the diagram returns `None`, which means "ignore and log at debug". A late or out-of-order status therefore never moves a message backwards.
 - Terminal states are `delivered`, `failed` and `expired`. `sent` is terminal for pacing (spec 006) but can still become `delivered` or `failed`.
+- `expired` is terminal for every server-side event, but a late `sent` or `delivered` status from the phone still moves it on: the `send` reached the phone and only its ack was lost, so the phone sent the message anyway. These go through the normal transition path, so the timestamp is set and `message.sent` or `message.delivered` fires once. `expired_at` is kept. A late `failed` is ignored.
 - A transition sets the matching timestamp column and, for failures, `error_code` and `error_message`.
 - **Each applied transition** to `sent`, `delivered`, `failed` or `expired` inserts one row into `webhook_deliveries` for every active webhook subscribed to that event, in the **same transaction** (spec 008). It also publishes a `MessageChanged` event on the in-process bus (SSE).
 
@@ -64,6 +66,7 @@ Runs every 60 s with `RUSTYBEE_MESSAGE_TTL_HOURS`, default 24:
 5. AC-004-05 Segment counts are correct for a GSM-7 body of 160 characters (1 part), 161 characters (2 parts), a body containing `€` (each `€` counts as 2), an emoji (UCS-2) and a body of 70 Cyrillic characters (1 part) or 71 (2 parts).
 6. AC-004-06 Phone normalisation accepts `+1 (555) 123-4567` and rejects `abc`.
 7. AC-004-07 `0917 123 4567` normalises to `+639171234567`; `0917123456` (too short) and `+639171234567` are left as they are.
+8. AC-004-08 An `expired` message that gets a `sent` or `delivered` status moves to that state, sets its timestamp and fires its webhook once. No other event moves it.
 
 ## Test plan
 | AC | Test |
@@ -74,6 +77,7 @@ Runs every 60 s with `RUSTYBEE_MESSAGE_TTL_HOURS`, default 24:
 | 05 | `domain::sms` unit tests |
 | 06 | `domain::phone` unit tests |
 | 07 | `domain::phone` unit tests |
+| 08 | `domain::lifecycle::ac_004_08_*`; `server/tests/device_ws.rs::ac_004_08_expired_message_takes_late_sent` |
 
 ## Assumptions
 - No user-facing cancel in the first release. The `cancel` transition exists only for removing a device that still has `queued` or `dispatched` messages; history is kept (spec 003 soft delete).

@@ -318,6 +318,7 @@ async fn device_settings_keys_and_webhooks_forms() {
             &format!("/devices/{pid}"),
             &[
                 ("name", "Renamed"),
+                ("filters_rev", "0"),
                 ("enabled", "on"),
                 ("send_delay_ms", "1500"),
                 ("sim", "1"),
@@ -452,6 +453,92 @@ async fn ac_002_11_web_turns_forwarding_off_not_on() {
     let cfg = d.recv_type("config").await;
     assert_eq!(cfg["data"]["receive_enabled"], true);
     assert_eq!(cfg["data"]["filters_rev"], 2);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_002_13_web_save_keeps_newer_phone_filters() {
+    let s = server().await;
+    let (pid, token) = s.pair("Phone").await;
+    let mut d = Device::connect(&s, &token).await;
+    let ui = Ui::new(&s).await;
+    // The web form is loaded at rev 0.
+    let (_, page) = ui.get("/devices").await;
+    assert!(page.contains(r#"name="filters_rev" value="0""#));
+    // Then the phone saves new filters: rev 1.
+    let f = frame(
+        "set_forwarding",
+        serde_json::json!({"base_rev": 0, "receive_enabled": true, "filters": {"mode": "block",
+            "rules": [{"field": "body", "op": "contains", "value": "promo", "ignore_case": true}]}}),
+    );
+    d.send(&f).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
+    assert_eq!(d.recv_type("config").await["data"]["filters_rev"], 1);
+    // The stale web save keeps the phone's filters but saves everything else.
+    let stale = [
+        ("name", "Renamed"),
+        ("filters_rev", "0"),
+        ("enabled", "on"),
+        ("send_delay_ms", "1500"),
+        ("receive_enabled", "on"),
+        ("filter_mode", "allow"),
+        ("rule_field", "sender"),
+        ("rule_op", "equals"),
+        ("rule_value", "+15550000009"),
+        ("rule_case", "match"),
+    ];
+    let r = ui.post(&format!("/devices/{pid}"), &stale).await;
+    let loc = r.headers()["location"].to_str().unwrap().to_string();
+    assert!(
+        loc.contains("err=") && loc.contains("changed%20on%20the%20phone"),
+        "{loc}"
+    );
+    let cfg = d.recv_type("config").await;
+    assert_eq!(cfg["data"]["name"], "Renamed");
+    assert_eq!(cfg["data"]["receive_enabled"], true);
+    assert_eq!(cfg["data"]["filters"]["mode"], "block");
+    assert_eq!(cfg["data"]["filters_rev"], 1);
+    let (_, page) = ui.get(&loc).await;
+    assert!(page.contains("Reload to see them."));
+    assert!(page.contains(r#"name="filters_rev" value="1""#));
+    // Resubmitting the phone's own filters with a stale rev is not a conflict.
+    let same = [
+        ("name", "Renamed"),
+        ("filters_rev", "0"),
+        ("receive_enabled", "on"),
+        ("filter_mode", "block"),
+        ("rule_field", "body"),
+        ("rule_op", "contains"),
+        ("rule_value", "promo"),
+        ("rule_case", "ignore"),
+    ];
+    let r = ui.post(&format!("/devices/{pid}"), &same).await;
+    assert_eq!(r.headers()["location"], "/devices?ok=saved");
+    d.recv_type("config").await;
+    // A stale save can still turn forwarding off, and keeps the filters.
+    let mut off: Vec<_> = stale.to_vec();
+    off.retain(|(k, _)| *k != "receive_enabled");
+    let r = ui.post(&format!("/devices/{pid}"), &off).await;
+    assert_eq!(r.headers()["location"], "/devices?ok=saved");
+    let cfg = d.recv_type("config").await;
+    assert_eq!(cfg["data"]["receive_enabled"], false);
+    assert_eq!(cfg["data"]["filters"]["mode"], "block");
+    assert_eq!(cfg["data"]["filters_rev"], 2);
+    // With the current rev the web edits the filters.
+    let f = frame(
+        "set_forwarding",
+        serde_json::json!({"base_rev": 2, "receive_enabled": true, "filters": {"mode": "off", "rules": []}}),
+    );
+    d.send(&f).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
+    assert_eq!(d.recv_type("config").await["data"]["filters_rev"], 3);
+    let mut fresh: Vec<_> = stale.to_vec();
+    fresh[1] = ("filters_rev", "3");
+    let r = ui.post(&format!("/devices/{pid}"), &fresh).await;
+    assert_eq!(r.headers()["location"], "/devices?ok=saved");
+    let cfg = d.recv_type("config").await;
+    assert_eq!(cfg["data"]["filters"]["mode"], "allow");
+    assert_eq!(cfg["data"]["filters_rev"], 4);
     s.stop().await;
 }
 

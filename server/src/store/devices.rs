@@ -312,18 +312,33 @@ pub struct Settings {
     pub receive_enabled: bool,
     pub sim: Option<i64>,
     pub filters: Filters,
+    /// The `filters_rev` the web form was loaded with.
+    pub base_rev: i64,
 }
 
-pub fn update_settings(c: &Connection, id: i64, s: &Settings) -> rusqlite::Result<()> {
+/// Save the web device form. Returns `true` when the submitted filters were not
+/// stored because the phone changed forwarding after the form was loaded.
+pub fn update_settings(c: &Connection, id: i64, s: &Settings) -> rusqlite::Result<bool> {
+    let filters = serde_json::to_string(&s.filters).unwrap_or_default();
+    // The web can turn forwarding off but not on, and edits the filters only while it
+    // stays on and its `base_rev` is still the row's `filters_rev` (spec 002). Both are
+    // checked against the row in the UPDATE itself, so a phone edit made since the form
+    // was read is never undone. The writer is serialised, so the conflict check sees the
+    // same row the UPDATE does.
+    let conflict: bool = opt(c.query_row(
+        "SELECT receive_enabled AND ?2 AND filters_rev IS NOT ?3 AND filters_json IS NOT ?4
+         FROM devices WHERE id=?1",
+        params![id, s.receive_enabled, s.base_rev, filters],
+        |r| r.get(0),
+    ))?
+    .unwrap_or(false);
     c.execute(
-        // The web can turn forwarding off but not on, and edits the filters only while it
-        // stays on (spec 002). Checked against the row itself, so a phone edit made since
-        // the form was read is never undone.
         "UPDATE devices SET name=?2, enabled=?3, send_delay_ms=?4, sim=?6,
            receive_enabled=(receive_enabled AND ?5),
            filters_rev=filters_rev + ((receive_enabled AND ?5) IS NOT receive_enabled
-             OR (receive_enabled AND ?5 AND filters_json IS NOT ?7)),
-           filters_json=CASE WHEN receive_enabled AND ?5 THEN ?7 ELSE filters_json END
+             OR (receive_enabled AND ?5 AND filters_rev=?8 AND filters_json IS NOT ?7)),
+           filters_json=CASE WHEN receive_enabled AND ?5 AND filters_rev=?8
+             THEN ?7 ELSE filters_json END
          WHERE id=?1",
         params![
             id,
@@ -332,10 +347,11 @@ pub fn update_settings(c: &Connection, id: i64, s: &Settings) -> rusqlite::Resul
             crate::domain::pacing::clamp_delay_ms(s.send_delay_ms),
             s.receive_enabled,
             s.sim,
-            serde_json::to_string(&s.filters).unwrap_or_default()
+            filters,
+            s.base_rev
         ],
     )?;
-    Ok(())
+    Ok(conflict)
 }
 
 /// Save forwarding edited on the device when `base_rev` is still current.
