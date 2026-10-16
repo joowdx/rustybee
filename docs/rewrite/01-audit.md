@@ -9,7 +9,7 @@ Scope of the rewrite: personal, single-user SMS gateway. Monorepo with three par
 ## 1. Current system at a glance
 
 - Today it is NestJS + MongoDB + Redis/Bull + Mosquitto (dynamic-security) + firebase-admin, plus a Next.js 16 standalone server (NextAuth, SSR) and a mixed Java/Kotlin Android app (minSdk 24, targetSdk 34, AGP 7.4, R8 off).
-- Running it takes 6 containers: mongo, mongo-express, api, web, redis, mosquitto. Idle RAM is several hundred MB: Node ×2 at roughly 80–150 MB each, plus Mongo.
+- Running it takes 6 containers: mongo, mongo-express, api, web, redis, mosquitto. Idle RAM is several hundred MB: Node ×2 at roughly 80–150 MB each, plus Mongo. Measured by the user on 2026-10-16 with `docker stats`: mongo 357 MB and ~1.1 % CPU, api 192 MB and ~0.2 % CPU; the whole stack totals ~640 MB and ~1.8 % CPU at idle. Images take ~4.8 GB on disk (~1 GB compressed).
 - Only a small core does real work: device registry, an outbound send pipeline with pacing and status, inbound SMS, API keys, webhooks, and a dashboard with about 7 screens.
 
 ---
