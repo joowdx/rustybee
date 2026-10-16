@@ -8,11 +8,12 @@ use rustybee::store::messages;
 use serde_json::Value;
 
 const PHONE: &str = "+15550001111";
+const OTHER: &str = "+15550002222";
 
 async fn set_phone(s: &Server) {
     s.app()
         .store
-        .write(|c| otp::set_admin_phone(c, Some(PHONE)))
+        .write(|c| otp::add_admin_phone(c, PHONE))
         .await
         .unwrap();
 }
@@ -29,7 +30,7 @@ async fn post(s: &Server, path: &str, form: &[(&str, &str)]) -> reqwest::Respons
 
 /// Ask for a code and read it off the device's `send` frame.
 async fn request_code(s: &Server, d: &mut Device) -> (String, String) {
-    let r = post(s, "/login/code", &[]).await;
+    let r = post(s, "/login/code", &[("last4", "1111")]).await;
     assert_eq!(r.status(), 200);
     let f = d.recv_type("send").await;
     d.ack(&f["id"]).await;
@@ -66,6 +67,7 @@ async fn code_login_and_password_locked_while_device_online() {
         .await
         .unwrap();
     assert!(page.contains("Text me a code") && !page.contains("name=\"password\""));
+    assert!(page.contains("name=\"last4\""));
 
     let (msg_id, code) = request_code(&s, &mut d).await;
     // Hidden from the public API while it carries the code.
@@ -157,7 +159,7 @@ async fn password_allowed_when_no_device_online_or_no_phone() {
     s.pair("A").await;
     let r = post(&s, "/login", &[("password", PASSWORD)]).await;
     assert_eq!(r.status(), 303);
-    let r = post(&s, "/login/code", &[]).await;
+    let r = post(&s, "/login/code", &[("last4", "1111")]).await;
     assert_eq!(r.status(), 409);
     s.stop().await;
 }
@@ -170,7 +172,7 @@ async fn code_dies_after_five_wrong_tries_and_sends_are_spaced() {
     let mut d = Device::connect(&s, &token).await;
     let (_, code) = request_code(&s, &mut d).await;
     // A second send right away is refused.
-    let r = post(&s, "/login/code", &[]).await;
+    let r = post(&s, "/login/code", &[("last4", "1111")]).await;
     assert_eq!(r.status(), 429);
     let wrong = if code == "000000" { "111111" } else { "000000" };
     for _ in 0..otp::MAX_ATTEMPTS {
@@ -210,7 +212,14 @@ async fn settings_confirms_phone_by_code() {
         .filter(char::is_ascii_digit)
         .take(6)
         .collect();
-    assert_eq!(s.app().store.read(otp::admin_phone).await.unwrap(), None);
+    assert!(
+        s.app()
+            .store
+            .read(otp::admin_phones)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let r = s
         .http
         .post(s.url("/settings/phone/verify"))
@@ -221,14 +230,148 @@ async fn settings_confirms_phone_by_code() {
         .await
         .unwrap();
     assert_eq!(r.headers()["location"], "/settings?ok=phone");
+    assert_eq!(phones(&s).await, [PHONE]);
+    s.stop().await;
+}
+
+async fn phones(s: &Server) -> Vec<String> {
+    s.app().store.read(otp::admin_phones).await.unwrap()
+}
+
+async fn settings_post(s: &Server, cookie: &str, path: &str, form: &[(&str, &str)]) -> String {
+    let r = s
+        .http
+        .post(s.url(path))
+        .header("Origin", &s.base)
+        .header("Cookie", cookie)
+        .form(form)
+        .send()
+        .await
+        .unwrap();
+    r.headers()["location"].to_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn ac_005_12_second_phone_adds_and_remove_keeps_others() {
+    let s = server().await;
+    let cookie = s.login().await;
+    set_phone(&s).await;
+    let (_, token) = s.pair("A").await;
+    let mut d = Device::connect(&s, &token).await;
+
+    // A duplicate is refused before anything is texted.
+    let loc = settings_post(&s, &cookie, "/settings/phone", &[("phone", PHONE)]).await;
+    assert!(loc.starts_with("/settings?err="), "{loc}");
+
+    let loc = settings_post(&s, &cookie, "/settings/phone", &[("phone", OTHER)]).await;
+    assert_eq!(loc, "/settings?ok=phone_code");
+    let f: Value = d.recv_type("send").await;
+    assert_eq!(f["data"]["to"], OTHER);
+    let code: String = f["data"]["body"]
+        .as_str()
+        .unwrap()
+        .chars()
+        .filter(char::is_ascii_digit)
+        .take(6)
+        .collect();
+    let loc = settings_post(&s, &cookie, "/settings/phone/verify", &[("code", &code)]).await;
+    assert_eq!(loc, "/settings?ok=phone");
+    assert_eq!(phones(&s).await, [PHONE, OTHER]);
+
+    let page = s
+        .http
+        .get(s.url("/settings"))
+        .header("Cookie", &cookie)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(page.contains(PHONE) && page.contains(OTHER));
+
+    let loc = settings_post(&s, &cookie, "/settings/phone/remove", &[("phone", PHONE)]).await;
+    assert_eq!(loc, "/settings?ok=phone_removed");
+    assert_eq!(phones(&s).await, [OTHER]);
+    s.stop().await;
+}
+
+async fn message_count(s: &Server) -> i64 {
+    s.app()
+        .store
+        .read(|c| c.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0)))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn ac_005_16_unknown_last4_sends_nothing_and_is_throttled() {
+    let s = server().await;
+    set_phone(&s).await;
+    s.app()
+        .store
+        .write(|c| otp::add_admin_phone(c, OTHER))
+        .await
+        .unwrap();
+    let (_, token) = s.pair("A").await;
+    let _d = Device::connect(&s, &token).await;
+
+    let r = post(&s, "/login/code", &[("last4", "9999")]).await;
+    assert_eq!(r.status(), 404);
+    assert!(r.text().await.unwrap().contains("that number isn"));
+    for _ in 0..4 {
+        assert_eq!(
+            post(&s, "/login/code", &[("last4", "9999")]).await.status(),
+            404
+        );
+    }
     assert_eq!(
-        s.app()
-            .store
-            .read(otp::admin_phone)
-            .await
-            .unwrap()
-            .as_deref(),
-        Some(PHONE)
+        post(&s, "/login/code", &[("last4", "2222")]).await.status(),
+        429
     );
+    assert_eq!(
+        post(&s, "/login/code", &[("last4", "12")]).await.status(),
+        429
+    );
+
+    assert_eq!(message_count(&s).await, 0);
+
+    // A matching number gets the code, and only that number.
+    let s2 = server().await;
+    set_phone(&s2).await;
+    s2.app()
+        .store
+        .write(|c| otp::add_admin_phone(c, OTHER))
+        .await
+        .unwrap();
+    let (_, token2) = s2.pair("A").await;
+    let mut d2 = Device::connect(&s2, &token2).await;
+    let r = post(&s2, "/login/code", &[("last4", "2222")]).await;
+    assert_eq!(r.status(), 200);
+    assert!(r.text().await.unwrap().contains("•••• 2222"));
+    let f = d2.recv_type("send").await;
+    assert_eq!(f["data"]["to"], OTHER);
+    assert_eq!(message_count(&s2).await, 1);
+    s.stop().await;
+    s2.stop().await;
+}
+
+#[tokio::test]
+async fn ac_005_17_login_page_shows_no_phone_digits() {
+    let s = server().await;
+    set_phone(&s).await;
+    let (_, token) = s.pair("A").await;
+    let _d = Device::connect(&s, &token).await;
+    let page = s
+        .http
+        .get(s.url("/login"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(page.contains("Text me a code"));
+    assert!(!page.contains("1111") && !page.contains("•••• "), "{page}");
     s.stop().await;
 }

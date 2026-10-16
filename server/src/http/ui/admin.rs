@@ -752,7 +752,7 @@ fn browser_label(ua: &str) -> (String, bool) {
 #[template(path = "settings.html")]
 struct SettingsPage {
     l: Layout,
-    phone: Option<String>,
+    phones: Vec<String>,
     phone_pending: bool,
     online: bool,
     /// Whether the password works right now, and why (spec 005).
@@ -766,15 +766,15 @@ pub async fn settings(s: Session, State(app): State<App>, Query(n): Query<Notice
     let now = app.clock.now_ms();
     let list = app
         .store
-        .read(move |c| Ok((auth::list_sessions(c, now)?, otp::admin_phone(c)?)))
+        .read(move |c| Ok((auth::list_sessions(c, now)?, otp::admin_phones(c)?)))
         .await
         .map_err(ise)?;
-    let (list, phone) = list;
+    let (list, phones) = list;
     let m = otp::methods(&app).await.map_err(ise)?;
     let max = app.cfg.otp_max_failures;
     let password_note = if !m.has_password {
         "No password is set. Run rustybee set-password on the server.".to_string()
-    } else if phone.is_none() {
+    } else if phones.is_empty() {
         "Works until a login phone is confirmed.".to_string()
     } else if !m.online {
         "Works now: no device is online to text a code.".to_string()
@@ -796,7 +796,7 @@ pub async fn settings(s: Session, State(app): State<App>, Query(n): Query<Notice
         password_open: m.password,
         password_note,
         l: Layout::new("Settings", "settings").notice(&n),
-        phone,
+        phones,
         phone_pending: otp::pending(&app, otp::Purpose::Verify),
         online,
         sessions: list
@@ -892,7 +892,7 @@ pub async fn send_phone_code(
     Form(f): Form<PhoneForm>,
 ) -> Res {
     let ip = crate::http::client_ip(&app, &headers, Some(peer));
-    match otp::send(&app, otp::Purpose::Verify, Some(&f.phone), ip).await {
+    match otp::send(&app, otp::Purpose::Verify, &f.phone, ip).await {
         Ok(()) => Ok(see_other("/settings?ok=phone_code")),
         Err(otp::SendError::Store(e)) => Err(ise(e)),
         Err(e) => Ok(back_err("/settings", e)),
@@ -910,8 +910,9 @@ pub async fn verify_phone(_: Session, State(app): State<App>, Form(f): Form<Code
         otp::Verify::Ok(phone) => {
             app.store
                 .write(move |c| {
-                    otp::set_admin_phone(c, Some(&phone))?;
-                    otp::reset_failures(c)
+                    let added = otp::add_admin_phone(c, &phone)?;
+                    otp::reset_failures(c)?;
+                    Ok(added)
                 })
                 .await
                 .map_err(ise)?;
@@ -922,9 +923,9 @@ pub async fn verify_phone(_: Session, State(app): State<App>, Form(f): Form<Code
     }
 }
 
-pub async fn remove_phone(_: Session, State(app): State<App>) -> Res {
+pub async fn remove_phone(_: Session, State(app): State<App>, Form(f): Form<PhoneForm>) -> Res {
     app.store
-        .write(|c| otp::set_admin_phone(c, None))
+        .write(move |c| otp::remove_admin_phone(c, &f.phone))
         .await
         .map_err(ise)?;
     Ok(see_other("/settings?ok=phone_removed"))

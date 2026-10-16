@@ -40,6 +40,8 @@ struct LoginPage {
     l: Layout,
     m: otp::Methods,
     code_sent: bool,
+    /// Last four digits of the number the pending code went to.
+    sent_to: Option<String>,
     turnstile: Option<String>,
 }
 
@@ -58,9 +60,11 @@ async fn login_render(
     if let Some(e) = err {
         l = l.err(e);
     }
+    let code_sent = code_sent && m.otp;
     let mut r = render(&LoginPage {
         l,
-        code_sent: code_sent && m.otp,
+        sent_to: code_sent.then(|| otp::pending_last4(app)).flatten(),
+        code_sent,
         m,
         turnstile: crate::turnstile::site_key(app, headers).map(str::to_string),
     });
@@ -131,6 +135,8 @@ pub struct LoginForm {
 
 #[derive(Deserialize, Default)]
 pub struct CodeSendForm {
+    #[serde(default)]
+    last4: String,
     #[serde(default, rename = "cf-turnstile-response")]
     turnstile: String,
 }
@@ -204,6 +210,17 @@ pub async fn send_code(
 ) -> Response {
     let ip = crate::http::client_ip(&app, &headers, Some(peer));
     let form = form.map(|f| f.0).unwrap_or_default();
+    if throttled(&app, ip) {
+        let pending = otp::pending(&app, otp::Purpose::Login);
+        return login_render(
+            &app,
+            &headers,
+            pending,
+            Some(TOO_MANY),
+            StatusCode::TOO_MANY_REQUESTS,
+        )
+        .await;
+    }
     if !crate::turnstile::passes(&app, &headers, &form.turnstile, ip).await {
         let pending = otp::pending(&app, otp::Purpose::Login);
         return login_render(
@@ -215,9 +232,31 @@ pub async fn send_code(
         )
         .await;
     }
-    match otp::send(&app, otp::Purpose::Login, None, ip).await {
+    match otp::send(&app, otp::Purpose::Login, &form.last4, ip).await {
         Ok(()) => login_render(&app, &headers, true, None, StatusCode::OK).await,
         Err(otp::SendError::Store(e)) => ise(e),
+        Err(e @ otp::SendError::NotRegistered) => {
+            // A miss counts toward the login throttle so the digits can't be guessed.
+            record_failure(&app, ip);
+            login_render(
+                &app,
+                &headers,
+                false,
+                Some(&e.to_string()),
+                StatusCode::NOT_FOUND,
+            )
+            .await
+        }
+        Err(e @ otp::SendError::BadDigits) => {
+            login_render(
+                &app,
+                &headers,
+                false,
+                Some(&e.to_string()),
+                StatusCode::BAD_REQUEST,
+            )
+            .await
+        }
         Err(otp::SendError::TooSoon) => {
             let pending = otp::pending(&app, otp::Purpose::Login);
             let msg = otp::SendError::TooSoon.to_string();
