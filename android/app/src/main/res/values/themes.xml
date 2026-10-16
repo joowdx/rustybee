@@ -2,5 +2,8 @@
 <resources>
     <style name="Theme.Rustybee" parent="android:Theme.DeviceDefault.DayNight">
         <item name="android:colorAccent">@color/amber</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:textColor">?android:attr/textColorPrimary</item>
     </style>
 </resources>
