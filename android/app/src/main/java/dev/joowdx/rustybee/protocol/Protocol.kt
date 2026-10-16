@@ -26,8 +26,9 @@ object FrameType {
     const val SEND = "send"
     const val ACK = "ack"
     const val NACK = "nack"
+    const val SET_FILTERS = "set_filters"
 
-    val ALL = setOf(HELLO, STATUS, INBOUND, HEALTH, WELCOME, CONFIG, SEND, ACK, NACK)
+    val ALL = setOf(HELLO, STATUS, INBOUND, HEALTH, WELCOME, CONFIG, SEND, ACK, NACK, SET_FILTERS)
 }
 
 @Serializable
@@ -125,11 +126,19 @@ data class Config(
     @SerialName("receive_enabled") val receiveEnabled: Boolean = true,
     val sim: Int? = null,
     val filters: Filters = Filters(),
+    @SerialName("filters_rev") val filtersRev: Long = 0,
 ) {
     companion object {
         const val DEFAULT_PING_S = 270
     }
 }
+
+/** Filters edited on the phone; [baseRev] is the `filters_rev` they were based on. */
+@Serializable
+data class SetFilters(
+    @SerialName("base_rev") val baseRev: Long,
+    val filters: Filters,
+)
 
 @Serializable
 data class Welcome(
@@ -195,6 +204,7 @@ object Frames {
         FrameType.SEND -> Send.serializer()
         FrameType.ACK -> Ack.serializer()
         FrameType.NACK -> Nack.serializer()
+        FrameType.SET_FILTERS -> SetFilters.serializer()
         else -> null
     }
 }

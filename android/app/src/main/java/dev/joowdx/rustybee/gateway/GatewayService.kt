@@ -21,6 +21,10 @@ import dev.joowdx.rustybee.protocol.Hello
 import dev.joowdx.rustybee.protocol.Permissions
 import dev.joowdx.rustybee.protocol.Welcome
 import kotlinx.coroutines.CoroutineScope
+import dev.joowdx.rustybee.protocol.Filters
+import dev.joowdx.rustybee.protocol.Nack
+import dev.joowdx.rustybee.protocol.SetFilters
+import dev.joowdx.rustybee.protocol.Ulid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -55,9 +59,15 @@ class GatewayService : Service() {
     private var lastNetwork: Network? = null
     private var lastPermissions: Permissions? = null
     private var stopping = false
+    private var pendingFilters: String? = null
 
     inner class LocalBinder : Binder() {
         val state: StateFlow<GatewayState> get() = stateFlow.asStateFlow()
+
+        /** Send filters edited on the phone; the result shows in [GatewayState.filtersSave]. */
+        fun saveFilters(filters: Filters, baseRev: Long) {
+            events.trySend(GatewayEvent.SaveFilters(filters, baseRev))
+        }
     }
 
     private val binder = LocalBinder()
@@ -92,7 +102,12 @@ class GatewayService : Service() {
             uplink = graph.uplink,
             sender = graph.sender,
             onWelcome = ::onWelcome,
-            onConfig = { graph.prefs.config = it; graph.log("config updated") },
+            onConfig = {
+                graph.prefs.config = it
+                graph.log("config updated")
+                setState { s -> s.copy(filtersRev = it.filtersRev) }
+            },
+            onReply = ::onReply,
             log = { graph.log(it) },
         )
         Notifications.ensureChannels(this)
@@ -164,6 +179,7 @@ class GatewayService : Service() {
                 connect()
             }
             GatewayEvent.HealthTick -> sendHealth()
+            is GatewayEvent.SaveFilters -> saveFilters(ev.filters, ev.baseRev)
             is GatewayEvent.Opened -> if (ev.gen == connection.generation) onOpened()
             is GatewayEvent.Message -> if (ev.gen == connection.generation) {
                 handler.handle(ev.text) { connection.send(it) }
@@ -214,7 +230,7 @@ class GatewayService : Service() {
             return
         }
         welcomed = true
-        setState { it.copy(connection = ConnectionState.CONNECTED, lastError = null) }
+        setState { it.copy(connection = ConnectionState.CONNECTED, lastError = null, filtersRev = w.config.filtersRev) }
         graph.uplink.attach { connection.send(it) }
         healthJob?.cancel()
         healthJob = scope.launch {
@@ -227,7 +243,34 @@ class GatewayService : Service() {
         publish()
     }
 
+    private fun saveFilters(filters: Filters, baseRev: Long) {
+        if (!welcomed) {
+            setState { it.copy(filtersSave = FiltersSave.Failed("Not connected to the server")) }
+            return
+        }
+        val id = Ulid.next()
+        pendingFilters = id
+        connection.send(Frames.encode(FrameType.SET_FILTERS, SetFilters.serializer(), SetFilters(baseRev, filters), id))
+        setState { it.copy(filtersSave = FiltersSave.Saving) }
+    }
+
+    private fun onReply(ref: String, nack: Nack?) {
+        if (ref != pendingFilters) return
+        pendingFilters = null
+        val result = when {
+            nack == null -> FiltersSave.Saved
+            nack.code == "filters_conflict" -> FiltersSave.Conflict
+            else -> FiltersSave.Failed(nack.message ?: nack.code)
+        }
+        graph.log("filters save: ${result.javaClass.simpleName}")
+        setState { it.copy(filtersSave = result) }
+    }
+
     private fun onClosed(code: Int, reason: String) {
+        if (pendingFilters != null) {
+            pendingFilters = null
+            setState { it.copy(filtersSave = FiltersSave.Failed("Connection lost before the server answered")) }
+        }
         graph.uplink.detach()
         healthJob?.cancel()
         welcomed = false
@@ -271,6 +314,7 @@ class GatewayService : Service() {
                 outbox = graph.uplink.size(),
                 sendsToday = graph.prefs.today("sends"),
                 receivesToday = graph.prefs.today("receives"),
+                filtersRev = graph.prefs.config.filtersRev,
             )
         }
         if (!stopping) {

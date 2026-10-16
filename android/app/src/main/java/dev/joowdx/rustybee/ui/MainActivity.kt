@@ -140,7 +140,11 @@ class MainActivity : Activity() {
         content.add(log)
 
         content.add(header("Device"))
-        content.add(button("Unpair") { confirmUnpair() })
+        content.add(
+            horizontal()
+                .add(button("SMS filter") { startActivity(Intent(this, FiltersActivity::class.java)) })
+                .add(button("Unpair") { confirmUnpair() }),
+        )
         scrollingRoot(content)
     }
 

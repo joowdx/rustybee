@@ -1,5 +1,6 @@
 package dev.joowdx.rustybee.gateway
 
+import dev.joowdx.rustybee.protocol.Filters
 import kotlinx.coroutines.channels.SendChannel
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -72,4 +73,5 @@ sealed interface GatewayEvent {
     data object NetworkChanged : GatewayEvent
     data object Nudge : GatewayEvent
     data object HealthTick : GatewayEvent
+    data class SaveFilters(val filters: Filters, val baseRev: Long) : GatewayEvent
 }

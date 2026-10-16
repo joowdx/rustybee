@@ -47,7 +47,13 @@ class ManifestTest {
         listOf(
             "INTERNET", "ACCESS_NETWORK_STATE", "SEND_SMS", "RECEIVE_SMS", "READ_PHONE_STATE", "POST_NOTIFICATIONS",
             "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_REMOTE_MESSAGING", "RECEIVE_BOOT_COMPLETED",
-            "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", "WAKE_LOCK",
+            "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", "WAKE_LOCK", "CAMERA",
         ).forEach { assertTrue(it, "android.permission.$it" in perms) }
+    }
+
+    @Test
+    fun camera_is_optional() {
+        val camera = elements("uses-feature").single { it.getAttributeNS(ns, "name") == "android.hardware.camera.any" }
+        assertEquals("false", camera.getAttributeNS(ns, "required"))
     }
 }

@@ -25,6 +25,8 @@ class FrameHandler(
     private val sender: Sender,
     private val onWelcome: (Welcome) -> Unit,
     private val onConfig: (Config) -> Unit,
+    /** The server answered one of our frames: [nack] is null for an ack. */
+    private val onReply: (ref: String, nack: Nack?) -> Unit = { _, _ -> },
     private val clock: () -> Long = System::currentTimeMillis,
     private val log: (String) -> Unit = {},
 ) {
@@ -48,11 +50,16 @@ class FrameHandler(
 
         try {
             when (type) {
-                FrameType.ACK -> uplink.onAck(ProtocolJson.decodeFromJsonElement(Ack.serializer(), data).ref)
+                FrameType.ACK -> {
+                    val ref = ProtocolJson.decodeFromJsonElement(Ack.serializer(), data).ref
+                    uplink.onAck(ref)
+                    onReply(ref, null)
+                }
                 FrameType.NACK -> {
                     val n = ProtocolJson.decodeFromJsonElement(Nack.serializer(), data)
                     log("server nacked ${n.ref}: ${n.code} ${n.message ?: ""}")
                     uplink.onAck(n.ref)
+                    onReply(n.ref, n)
                 }
                 FrameType.WELCOME -> {
                     val w = ProtocolJson.decodeFromJsonElement(Welcome.serializer(), data)

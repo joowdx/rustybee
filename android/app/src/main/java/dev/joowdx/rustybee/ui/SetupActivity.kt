@@ -36,7 +36,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
-/** Pairing via the `rustybee://pair?u=…&c=…` deep link or a pasted link (spec 013). */
+/** Pairing via the in-app QR scanner, the `rustybee://pair?u=…&c=…` deep link, or a pasted link (spec 013). */
 class SetupActivity : Activity() {
     private val scope: CoroutineScope = MainScope()
     private var pairing: Job? = null
@@ -54,9 +54,11 @@ class SetupActivity : Activity() {
         content.add(text("rustybee", 28f, bold = true))
         content.add(
             text(
-                "Open the pairing QR code from the server's web UI with your camera, or paste the pairing link below.",
+                "Scan the pairing QR code on the server's Devices page, or paste the pairing link below.",
             ).apply { setPadding(0, dp(8), 0, dp(16)) },
         )
+        content.add(button("Scan QR code") { startActivityForResult(Intent(this, ScanActivity::class.java), REQ_SCAN) })
+        content.add(header("Or paste the link"))
         link = EditText(this).apply {
             hint = "rustybee://pair?u=…&c=…"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
@@ -81,6 +83,17 @@ class SetupActivity : Activity() {
             override fun afterTextChanged(s: Editable?) = updateInsecureVisibility()
         })
         handle(intent)
+    }
+
+    @Deprecated("Platform Activity result API; the app avoids AndroidX activity.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_SCAN) return
+        when (resultCode) {
+            RESULT_OK -> handle(data)
+            ScanActivity.RESULT_DENIED ->
+                showError("Camera access was refused. Allow it in the app's settings, or paste the link instead.")
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -168,6 +181,10 @@ class SetupActivity : Activity() {
                 onBackInvokedDispatcher.unregisterOnBackInvokedCallback(cancelPairing)
             }
         }
+    }
+
+    private companion object {
+        const val REQ_SCAN = 1
     }
 
     private class PairingException(message: String) : Exception(message)
