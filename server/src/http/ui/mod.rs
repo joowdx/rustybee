@@ -98,9 +98,9 @@ impl Layout {
             js: assets::url("app.js"),
             htmx: assets::url("htmx.min.js"),
             sse: assets::url("sse.js"),
-            favicon: assets::url("favicon.ico"),
+            favicon: assets::url("bee.svg"),
             touch_icon: assets::url("apple-touch-icon.png"),
-            logo: assets::url("bee.png"),
+            logo: assets::url("bee.svg"),
             flash: None,
             error: None,
         }
