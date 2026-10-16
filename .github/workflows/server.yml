@@ -9,7 +9,8 @@ on:
     paths: ["server/**", "protocol/**", "deploy/**", ".github/workflows/server.yml"]
   push:
     branches: [master]
-    paths: ["server/**", "protocol/**", "deploy/**", ".github/workflows/server.yml"]
+    # Only what goes into the image publishes it; docs, compose and env examples don't.
+    paths: ["server/**", "deploy/Dockerfile", "deploy/Dockerfile.dockerignore"]
   workflow_dispatch:
 
 permissions:

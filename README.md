@@ -1,4 +1,15 @@
-# rustybee
+<p align="center">
+  <img src="branding/icon-squircle.png" alt="rustybee" width="128" height="128">
+</p>
+
+<h1 align="center">rustybee</h1>
+
+<p align="center">A tiny, self-hosted SMS gateway: your Android phone, your server, a simple API.</p>
+
+<p align="center">
+  <a href="https://github.com/joowdx/rustybee/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/joowdx/rustybee"></a>
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-blue"></a>
+</p>
 
 Turn an Android phone into your own SMS gateway. You run a small server, the phone connects to it, and from then on you can send and receive text messages with a simple HTTP API, a web dashboard, or webhooks. You host all of it yourself.
 
