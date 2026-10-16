@@ -34,7 +34,7 @@ The rewrite lives on the orphan branch `master`, which shares no history with th
   - Releases are the Android app only. `.github/scripts/next-version.sh` bumps the last `vX.Y.Z` tag by the commits since it that touch `android/` or `protocol/`: a breaking change (`type!:` or a `BREAKING CHANGE:` footer) bumps major, a `feat` bumps minor, anything else bumps patch. Nothing is committed back; the tag is the record.
   - The repository-root `VERSION` file is a floor: the release is the higher of it and the bumped tag, so raising it in a PR forces a jump, and with no tag yet `VERSION` itself is released. Local builds read it; CI passes the release version in `RUSTYBEE_VERSION`. The app sets `versionName` to the version and `versionCode = major×10000 + minor×100 + patch`.
   - `server/Cargo.toml` versions the server on its own; only its major goes into the image tag.
-- Branding: the legacy bee icons are not carried over. The rusty bee in `branding/` is the source for every icon: the Android adaptive and notification icons, the web UI favicon and the header and login logo. `branding/generate-icons.sh` regenerates them.
+- Branding: the legacy bee icons are not carried over. The rusty bee in `branding/` is the source for every icon: the Android adaptive and notification icons, the web UI favicon and the header and login logo, which are one vector `bee.svg`. `branding/generate-icons.sh` regenerates them.
 
 ## Acceptance criteria
 1. AC-001-01 `git log master` has no commit shared with `main`.
