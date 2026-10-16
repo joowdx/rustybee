@@ -18,7 +18,7 @@ Updated: 2026-10-16
 - **TLS roots:** reqwest uses `rustls` with bundled webpki roots, so no CA files are needed in the image.
 
 ### `deploy/compose.yaml`
-- One service `rustybee`, using the image from the Dockerfile, a named volume `rustybee-data:/data`, `restart: unless-stopped`, and port `8080`.
+- One service `rustybee`, using the published image `ghcr.io/joowdx/rustybee:3` (or a local build from the Dockerfile with `docker compose build`), a named volume `rustybee-data:/data`, `restart: unless-stopped`, and port `8080`.
 - Environment from `.env`: `RUSTYBEE_PUBLIC_URL`, `RUSTYBEE_ADMIN_PASSWORD` (first run only), and the optional `RUSTYBEE_PING_SECONDS`, `RUSTYBEE_TRUST_PROXY` and `RUSTYBEE_FCM_CREDENTIALS` (the file mounted read-only).
 - `deploy/.env.example` documents every variable.
 

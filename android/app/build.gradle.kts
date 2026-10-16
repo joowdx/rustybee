@@ -23,6 +23,12 @@ fun signingValue(key: String, env: String): String? =
 
 val storeFilePath = signingValue("storeFile", "RUSTYBEE_STORE_FILE")
 
+// The repository-root VERSION file is the single version source (spec 001).
+val appVersion = rootProject.file("../VERSION").readText().trim()
+val appVersionCode = appVersion.split(".").map(String::toInt).let { (major, minor, patch) ->
+    major * 10_000 + minor * 100 + patch
+}
+
 android {
     namespace = "dev.joowdx.rustybee"
     compileSdk = 36
@@ -31,8 +37,8 @@ android {
         applicationId = "dev.joowdx.rustybee"
         minSdk = 36
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersion
     }
 
     buildFeatures {

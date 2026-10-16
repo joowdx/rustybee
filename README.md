@@ -11,12 +11,12 @@ A personal SMS gateway: your Android phone sends and receives SMS on behalf of a
 ## Quick start
 
 ```sh
-docker build -f deploy/Dockerfile -t rustybee .
 docker run -d --name rustybee -p 8080:8080 -v rustybee-data:/data \
-  -e RUSTYBEE_PUBLIC_URL=https://sms.example.org -e RUSTYBEE_ADMIN_PASSWORD='change-me-now' rustybee
+  -e RUSTYBEE_PUBLIC_URL=https://sms.example.org -e RUSTYBEE_ADMIN_PASSWORD='change-me-now' \
+  ghcr.io/joowdx/rustybee:3
 ```
 
-Open the web UI, go to Devices → Pair a device, and scan the QR code with the phone. Then send:
+Install the APK from the latest [release](https://github.com/joowdx/rustybee/releases/latest) on the phone. Open the web UI, go to Devices → Pair a device, and scan the QR code with the phone. Then send:
 
 ```sh
 curl -H "Authorization: Bearer rbk_…" -H 'Content-Type: application/json' \

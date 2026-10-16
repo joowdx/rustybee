@@ -4,7 +4,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: rustybee
+    image: ghcr.io/joowdx/rustybee:3
     container_name: rustybee
     restart: unless-stopped
     ports:

@@ -10,3 +10,7 @@ jobs:
           if git grep -nIi -E 'textbee|vernu' -- . ':!docs/**' ':!CLAUDE.md' ':!.github/workflows/hygiene.yml'; then
             echo "legacy names found"; exit 1
           fi
+      - name: VERSION matches server/Cargo.toml
+        run: |
+          cargo=$(sed -nE '0,/^version = "([^"]+)"/s//\1/p' server/Cargo.toml)
+          test "$cargo" = "$(cat VERSION)" || { echo "server/Cargo.toml is $cargo, VERSION is $(cat VERSION)"; exit 1; }
