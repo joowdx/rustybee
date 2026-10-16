@@ -125,4 +125,8 @@ if (!hasGmsConfig) {
         "Add it, or build the foss flavor (e.g. ./gradlew assembleFossRelease)."
     tasks.matching { it.name.startsWith("pre") && it.name.contains("Gms") && it.name.endsWith("Build") }
         .configureEach { doFirst { throw GradleException(message) } }
+} else {
+    // The plugin runs for every variant; foss has no Firebase and no config of its own.
+    tasks.matching { it.name.startsWith("processFoss") && it.name.endsWith("GoogleServices") }
+        .configureEach { enabled = false }
 }
