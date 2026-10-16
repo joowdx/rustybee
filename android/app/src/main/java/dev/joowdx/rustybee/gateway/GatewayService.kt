@@ -60,6 +60,8 @@ class GatewayService : Service() {
     private var lastPermissions: Permissions? = null
     private var stopping = false
     private var pendingForwarding: String? = null
+    /** The `receive_enabled` of the save in flight. */
+    private var pendingReceiveEnabled = false
 
     inner class LocalBinder : Binder() {
         val state: StateFlow<GatewayState> get() = stateFlow.asStateFlow()
@@ -253,9 +255,10 @@ class GatewayService : Service() {
             setState { it.copy(forwardingSave = result) }
             return
         }
-        if (receiveEnabled) graph.prefs.forwardingOffHere = false
+        // On clears the phone's own "off" only once the server accepts it, in onReply.
         val id = Ulid.next()
         pendingForwarding = id
+        pendingReceiveEnabled = receiveEnabled
         sendForwarding(SetForwarding(baseRev, receiveEnabled, filters), id)
         setState { it.copy(forwardingSave = ForwardingSave.Saving) }
     }
@@ -274,6 +277,7 @@ class GatewayService : Service() {
     private fun onReply(ref: String, nack: Nack?) {
         if (ref != pendingForwarding) return
         pendingForwarding = null
+        if (nack == null && pendingReceiveEnabled) graph.prefs.forwardingOffHere = false
         val result = when {
             nack == null -> ForwardingSave.Saved
             nack.code == "filters_conflict" -> ForwardingSave.Conflict

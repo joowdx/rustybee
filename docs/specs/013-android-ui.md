@@ -57,7 +57,7 @@ Live updates come from binding to `GatewayService` and collecting its `StateFlow
   - rule rows, each with a field (sender, message, sender or message), a match (contains, equals, starts with, ends with), the text, an "Ignore case" box and Remove; plus "Add rule".
 - Loads from the config the server last sent. Save sends `set_forwarding` with that config's `filters_rev` and shows Saving…, Saved, or the error.
 - On `filters_conflict` the editor reloads from the new config and says "Changed on the web, reloaded."
-- Save is disabled while the gateway isn't connected, except when the switch is off: turning forwarding off saves on the phone at once and reaches the server when it reconnects (spec 002). The phone keeps using its last config either way.
+- Turning the switch off saves at once, with no Save press: it applies on the phone immediately, even offline, and reaches the server now or when the phone reconnects (spec 002). Turning it on and editing the filter need Save, which is disabled while the gateway isn't connected. The phone keeps using its last config either way.
 - The switch shows the phone's effective state: off when the server's config is off or the phone's local "off" is set.
 - Warns when "forward only matching" has no rules (nothing is forwarded) and when rules exist while the filter is off.
 

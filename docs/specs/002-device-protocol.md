@@ -103,8 +103,9 @@ Every text frame is one JSON object:
   - Editing on the phone needs a live connection, so offline edits never have to be merged. The one exception is turning forwarding off, below.
 - The phone has the final say on forwarding, because the phone's owner may not be the server's admin:
   - The web can turn forwarding off but never on. Only `set_forwarding` from the phone turns it on.
-  - The phone also keeps its own "off" locally. Turning forwarding off on the phone takes effect at once, even offline. While that local "off" is set, the phone forwards nothing even if a `config` says `receive_enabled=true`, and once connected it sends `set_forwarding` with `receive_enabled=false` so the server agrees again.
-  - The web edits the filters only while forwarding is on. A web save with forwarding off keeps the stored filters.
+  - The phone also keeps its own "off" locally. Turning forwarding off on the phone takes effect at once, even offline. While that local "off" is set, the phone forwards nothing even if a `config` says `receive_enabled=true`, and once connected it sends `set_forwarding` with `receive_enabled=false` so the server agrees again. The phone clears its local "off" only when the server acks a `set_forwarding` with `receive_enabled=true`.
+  - The web edits the filters only while forwarding is on. A web save with forwarding off keeps the stored filters. Both rules are checked against the stored row in the same write, so a phone change made after the web form was loaded is never undone.
+- A replayed `set_forwarding` (same `id`, its ack lost) that was already stored is acked again and not reapplied. One that was refused is judged again.
 
 ### Device handling of `send`
 1. Look up `msg_id` in the local `sent` table.

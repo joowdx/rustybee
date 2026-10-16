@@ -259,6 +259,11 @@ async fn ac_002_10_set_forwarding_checks_rev() {
     assert_eq!(cfg["data"]["receive_enabled"], false);
     assert_eq!(cfg["data"]["filters"], rules);
 
+    // A replay of the same frame (its ack was lost) is acked again, not reapplied or refused.
+    d.send(&f).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
+    assert_eq!(d.recv_type("config").await["data"]["filters_rev"], 1);
+
     // Stale base: refused, and the current config comes back.
     let f = frame(
         "set_forwarding",

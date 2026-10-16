@@ -56,6 +56,8 @@ class ForwardingActivity : Activity() {
     private var state = GatewayState()
     /** Only report save results for saves made from this screen. */
     private var submitted = false
+    /** Set while [load] fills the editor, so the switch's listener can tell it from the user. */
+    private var loading = false
 
     private val connectionCallback = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -82,7 +84,10 @@ class ForwardingActivity : Activity() {
             text = "Forward received SMS"
             textSize = 16f
             setPadding(0, dp(16), 0, 0)
-            setOnCheckedChangeListener { _, _ -> refreshHints(); render(state) }
+            setOnCheckedChangeListener { _, on ->
+                refreshHints()
+                if (!on && !loading) turnOff() else render(state)
+            }
         }
         content.add(forward)
         offNote = text("Nothing is forwarded while this is off. Only this phone can turn it back on.", 14f).apply {
@@ -144,7 +149,9 @@ class ForwardingActivity : Activity() {
     private fun load() {
         val config = graph.prefs.config
         baseRev = config.filtersRev
+        loading = true
         forward.isChecked = Forwarding.on(config, graph.prefs.forwardingOffHere)
+        loading = false
         mode.setSelection(MODES.indexOfFirst { it.first == config.filters.mode }.coerceAtLeast(0))
         rows.removeAllViews()
         config.filters.rules.forEach(::addRow)
@@ -213,9 +220,20 @@ class ForwardingActivity : Activity() {
         if (v is ViewGroup) (0 until v.childCount).forEach { setEnabledDeep(v.getChildAt(it), enabled) }
     }
 
+    /** Off applies at once, even offline (spec 002); it keeps the stored filter. */
+    private fun turnOff() {
+        val b = binder
+        if (b == null) {
+            graph.prefs.forwardingOffHere = true
+            status.text = "Off on this phone. The server is told when the phone reconnects."
+            return
+        }
+        submitted = true
+        b.saveForwarding(false, graph.prefs.config.filters, baseRev)
+    }
+
     private fun submit() {
-        // The filter is locked while forwarding is off, so turning it off keeps the stored one.
-        val filters = if (forward.isChecked) current() else graph.prefs.config.filters
+        val filters = current()
         if (filters.rules.any { it.value.isEmpty() }) {
             status.text = "Every rule needs text to match."
             return
@@ -226,25 +244,26 @@ class ForwardingActivity : Activity() {
         }
         val b = binder ?: return render(state)
         submitted = true
-        b.saveForwarding(forward.isChecked, filters, baseRev)
+        b.saveForwarding(true, filters, baseRev)
     }
 
     private fun render(s: GatewayState) {
         val prev = state
         state = s
         val online = binder != null && s.connection == ConnectionState.CONNECTED
-        // Turning forwarding off works offline (spec 002).
-        save.isEnabled = (online || !forward.isChecked) && binder != null && s.forwardingSave != ForwardingSave.Saving
-        // The server's answer to our save arrives with (or right after) its new config.
-        if (submitted && s.filtersRev != prev.filtersRev) {
-            if (s.forwardingSave == ForwardingSave.Saved) baseRev = s.filtersRev
-            if (s.forwardingSave == ForwardingSave.Conflict) load()
+        // Off saves as soon as the switch turns; Save is for turning it on and for filter edits.
+        save.isEnabled = online && forward.isChecked && s.forwardingSave != ForwardingSave.Saving
+        // The answer and the new config can arrive in either order, so act on either changing.
+        if (submitted) {
+            val answered = s.forwardingSave != prev.forwardingSave || s.filtersRev != prev.filtersRev
+            if (answered && s.forwardingSave == ForwardingSave.Saved) baseRev = s.filtersRev
+            if (answered && s.forwardingSave == ForwardingSave.Conflict) load()
         }
         val f = s.forwardingSave
         status.text = when {
             submitted && f == ForwardingSave.SavedOnPhone -> "Off on this phone. The server is told when the phone reconnects."
             !online && forward.isChecked -> "Connect to the server to save. The phone keeps using the last settings it received."
-            !online -> "Not connected. Saving turns forwarding off on this phone now."
+            !online -> "Forwarding is off on this phone."
             !submitted -> ""
             f == ForwardingSave.Saving -> "Saving…"
             f == ForwardingSave.Saved -> "Saved."
