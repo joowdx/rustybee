@@ -260,6 +260,7 @@ pub async fn save_device(
         name,
         enabled: f.on("enabled"),
         send_delay_ms: delay,
+        // Only ever turns forwarding off; see `update_settings`.
         receive_enabled: f.on("receive_enabled"),
         sim: f.get("sim").trim().parse().ok(),
         filters: Filters { mode, rules },

@@ -67,7 +67,8 @@
           {% for s in d.sims %}<option value="{{ s.value }}"{% if s.selected %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
         </select>
       </div>
-      <label class="f sw-row"><span>Forward received SMS<span class="hint">Texts that reach this phone show up in Messages</span></span><input class="sw" type="checkbox" name="receive_enabled"{% if d.receive_enabled %} checked{% endif %}></label>
+      <label class="f sw-row"><span>Forward received SMS<span class="hint">{% if d.receive_enabled %}Texts that reach this phone show up in Messages. Once off, only the phone can turn it back on.{% else %}Off. Only the phone can turn forwarding back on.{% endif %}</span></span><input class="sw" type="checkbox" name="receive_enabled" data-forwarding{% if d.receive_enabled %} checked{% else %} disabled{% endif %}></label>
+      <fieldset class="group" data-forwarding-filters{% if !d.receive_enabled %} disabled{% endif %}>
       <div class="f"><label for="fm-{{ d.id }}">Filter received SMS<span class="hint">The phone applies it before forwarding. It can also be edited in the app.</span></label>
         <select id="fm-{{ d.id }}" name="filter_mode" data-filter-mode>
           <option value="off"{% if d.filter_mode == "off" %} selected{% endif %}>Forward everything</option>
@@ -84,6 +85,7 @@
         <template data-rule-template>{% call rule_row("sender", "contains", "", true) %}</template>
         <div class="actions"><button type="button" class="ghost sm" data-rule-add hidden>Add rule</button></div>
         <p class="warn" data-rules-warn{% if !(d.filter_mode == "allow" && d.rules.is_empty()) %} hidden{% endif %}>With no rules, “Forward only matching” forwards nothing.</p>
+      </fieldset>
       </fieldset>
       <div class="f-foot"><button>Save settings</button></div>
     </form>

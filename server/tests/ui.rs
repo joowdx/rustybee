@@ -321,6 +321,7 @@ async fn device_settings_keys_and_webhooks_forms() {
                 ("enabled", "on"),
                 ("send_delay_ms", "1500"),
                 ("sim", "1"),
+                ("receive_enabled", "on"),
                 ("filter_mode", "block"),
                 ("rule_field", "sender"),
                 ("rule_op", "equals"),
@@ -343,7 +344,7 @@ async fn device_settings_keys_and_webhooks_forms() {
     let cfg = d.recv_type("config").await;
     assert_eq!(cfg["data"]["name"], "Renamed");
     assert_eq!(cfg["data"]["sim"], 1);
-    assert_eq!(cfg["data"]["receive_enabled"], false);
+    assert_eq!(cfg["data"]["receive_enabled"], true);
     assert_eq!(cfg["data"]["filters"]["mode"], "block");
     let rules = cfg["data"]["filters"]["rules"].as_array().unwrap();
     assert_eq!(rules.len(), 2);
@@ -404,6 +405,53 @@ async fn device_settings_keys_and_webhooks_forms() {
         .await;
     assert_eq!(r.headers()["location"], "/devices?ok=removed");
     assert_eq!(d.close_code(2000).await, Some(4003));
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_002_11_web_turns_forwarding_off_not_on() {
+    let s = server().await;
+    let (pid, token) = s.pair("Phone").await;
+    let mut d = Device::connect(&s, &token).await;
+    let ui = Ui::new(&s).await;
+    let block = [
+        ("filter_mode", "block"),
+        ("rule_field", "body"),
+        ("rule_op", "contains"),
+        ("rule_value", "promo"),
+        ("rule_case", "ignore"),
+    ];
+    // Turning forwarding off bumps the rev; the filter fields sent alongside are ignored.
+    let mut form = vec![("name", "Phone")];
+    form.extend(block);
+    ui.post(&format!("/devices/{pid}"), &form).await;
+    let cfg = d.recv_type("config").await;
+    assert_eq!(cfg["data"]["receive_enabled"], false);
+    assert_eq!(cfg["data"]["filters"]["mode"], "off");
+    assert_eq!(cfg["data"]["filters_rev"], 1);
+    let (_, page) = ui.get("/devices").await;
+    assert!(page.contains(r#"name="receive_enabled" data-forwarding disabled"#));
+    assert!(page.contains("data-forwarding-filters disabled"));
+
+    // The web cannot turn it back on, nor edit the filters while it is off.
+    let mut form = vec![("name", "Phone"), ("receive_enabled", "on")];
+    form.extend(block);
+    ui.post(&format!("/devices/{pid}"), &form).await;
+    let cfg = d.recv_type("config").await;
+    assert_eq!(cfg["data"]["receive_enabled"], false);
+    assert_eq!(cfg["data"]["filters"]["mode"], "off");
+    assert_eq!(cfg["data"]["filters_rev"], 1);
+
+    // The phone can.
+    let f = frame(
+        "set_forwarding",
+        serde_json::json!({"base_rev": 1, "receive_enabled": true, "filters": {"mode": "off", "rules": []}}),
+    );
+    d.send(&f).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
+    let cfg = d.recv_type("config").await;
+    assert_eq!(cfg["data"]["receive_enabled"], true);
+    assert_eq!(cfg["data"]["filters_rev"], 2);
     s.stop().await;
 }
 

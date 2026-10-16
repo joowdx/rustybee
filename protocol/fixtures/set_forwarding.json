@@ -1,0 +1,1 @@
+{"v":1,"id":"01JA0000000000000000000013","type":"set_forwarding","data":{"base_rev":3,"receive_enabled":true,"filters":{"mode":"allow","rules":[{"field":"sender","op":"equals","value":"+15551230000","ignore_case":true}]}}}

@@ -343,14 +343,33 @@ impl Conn {
                 self.notify.notify_one();
                 Ok(vec![])
             }
-            Frame::SetFilters(f) => {
+            Frame::SetForwarding(f) => {
                 if let Err(e) = f.filters.validate() {
                     return Ok(vec![nack(&id, "invalid", &e)]);
                 }
+                let fid = id.clone();
                 let res = app
                     .store
                     .write(move |c| {
-                        let r = devices::set_filters(c, device_id, f.base_rev, &f.filters)?;
+                        // A replay of a save already applied is acked again, not reapplied.
+                        if !first_sight(c, device_id, &fid, now)? {
+                            let dev = devices::by_id(c, device_id)?;
+                            return Ok((Ok(dev.as_ref().map_or(0, |d| d.filters_rev)), dev));
+                        }
+                        let r = devices::set_forwarding(
+                            c,
+                            device_id,
+                            f.base_rev,
+                            f.receive_enabled,
+                            &f.filters,
+                        )?;
+                        if r.is_err() {
+                            // Nothing was stored, so a replay must be judged again.
+                            c.execute(
+                                "DELETE FROM seen_frames WHERE device_id=?1 AND frame_id=?2",
+                                params![device_id, fid],
+                            )?;
+                        }
                         Ok((r, devices::by_id(c, device_id)?))
                     })
                     .await?;

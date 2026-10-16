@@ -52,7 +52,7 @@ Updated: 2026-10-16
   - Group the PDUs by originating address and concatenate the bodies in order.
   - `received_at` is the first PDU's `timestampMillis`.
   - `sim` comes from the intent's `SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX` extra, or `-1` mapped to null.
-- **Skipped** if the gateway is disabled, `config.receive_enabled=false`, or the filters drop the message (spec 002 semantics).
+- **Skipped** if the gateway is disabled, `config.receive_enabled=false`, the phone's local forwarding "off" is set, or the filters drop the message (spec 002 semantics).
 - **Otherwise:**
   1. Compute the uid from spec 002.
   2. Insert an `inbound` frame into the outbox. Inserting a uid that is already queued in the outbox is a no-op.

@@ -36,6 +36,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("gateway_enabled", false)
         set(v) = sp.edit().putBoolean("gateway_enabled", v).apply()
 
+    /** The user turned forwarding off on this phone; no server config turns it back on (spec 002). */
+    var forwardingOffHere: Boolean
+        get() = sp.getBoolean("forwarding_off_here", false)
+        set(v) = sp.edit().putBoolean("forwarding_off_here", v).apply()
+
     var fcmToken: String?
         get() = sp.getString("fcm_token", null)
         set(v) = sp.edit().putString("fcm_token", v).apply()

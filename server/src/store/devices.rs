@@ -316,8 +316,14 @@ pub struct Settings {
 
 pub fn update_settings(c: &Connection, id: i64, s: &Settings) -> rusqlite::Result<()> {
     c.execute(
-        "UPDATE devices SET name=?2, enabled=?3, send_delay_ms=?4, receive_enabled=?5, sim=?6,
-           filters_rev=filters_rev + (filters_json IS NOT ?7), filters_json=?7
+        // The web can turn forwarding off but not on, and edits the filters only while it
+        // stays on (spec 002). Checked against the row itself, so a phone edit made since
+        // the form was read is never undone.
+        "UPDATE devices SET name=?2, enabled=?3, send_delay_ms=?4, sim=?6,
+           receive_enabled=(receive_enabled AND ?5),
+           filters_rev=filters_rev + ((receive_enabled AND ?5) IS NOT receive_enabled
+             OR (receive_enabled AND ?5 AND filters_json IS NOT ?7)),
+           filters_json=CASE WHEN receive_enabled AND ?5 THEN ?7 ELSE filters_json END
          WHERE id=?1",
         params![
             id,
@@ -332,17 +338,24 @@ pub fn update_settings(c: &Connection, id: i64, s: &Settings) -> rusqlite::Resul
     Ok(())
 }
 
-/// Save filters edited on the device when `base_rev` is still current.
-/// `Ok(new_rev)` on success, `Err(current_rev)` when the web changed them first.
-pub fn set_filters(
+/// Save forwarding edited on the device when `base_rev` is still current.
+/// `Ok(new_rev)` on success, `Err(current_rev)` when the web changed it first.
+pub fn set_forwarding(
     c: &Connection,
     id: i64,
     base_rev: i64,
+    receive_enabled: bool,
     f: &Filters,
 ) -> rusqlite::Result<Result<i64, i64>> {
     let n = c.execute(
-        "UPDATE devices SET filters_json=?3, filters_rev=filters_rev+1 WHERE id=?1 AND filters_rev=?2",
-        params![id, base_rev, serde_json::to_string(f).unwrap_or_default()],
+        "UPDATE devices SET receive_enabled=?3, filters_json=?4, filters_rev=filters_rev+1
+         WHERE id=?1 AND filters_rev=?2",
+        params![
+            id,
+            base_rev,
+            receive_enabled,
+            serde_json::to_string(f).unwrap_or_default()
+        ],
     )?;
     let rev: i64 = c.query_row("SELECT filters_rev FROM devices WHERE id=?1", [id], |r| {
         r.get(0)

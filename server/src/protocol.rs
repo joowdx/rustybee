@@ -135,15 +135,16 @@ pub struct DeviceConfig {
     pub receive_enabled: bool,
     pub sim: Option<i64>,
     pub filters: Filters,
-    /// Bumped on every filter change; the device echoes it in `set_filters`.
+    /// Bumped when `receive_enabled` or the filters change; the device echoes it in `set_forwarding`.
     #[serde(default)]
     pub filters_rev: i64,
 }
 
-/// Filters edited on the device, based on the `filters_rev` it last saw.
+/// Forwarding edited on the device, based on the `filters_rev` it last saw.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SetFilters {
+pub struct SetForwarding {
     pub base_rev: i64,
+    pub receive_enabled: bool,
     pub filters: Filters,
 }
 
@@ -193,7 +194,7 @@ pub enum Frame {
     Send(Send),
     Ack(Ack),
     Nack(Nack),
-    SetFilters(SetFilters),
+    SetForwarding(SetForwarding),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -217,7 +218,7 @@ impl Frame {
             Frame::Send(_) => "send",
             Frame::Ack(_) => "ack",
             Frame::Nack(_) => "nack",
-            Frame::SetFilters(_) => "set_filters",
+            Frame::SetForwarding(_) => "set_forwarding",
         }
     }
 
@@ -232,7 +233,7 @@ impl Frame {
             Frame::Send(d) => serde_json::to_value(d),
             Frame::Ack(d) => serde_json::to_value(d),
             Frame::Nack(d) => serde_json::to_value(d),
-            Frame::SetFilters(d) => serde_json::to_value(d),
+            Frame::SetForwarding(d) => serde_json::to_value(d),
         };
         v.unwrap_or(Value::Null)
     }
@@ -273,7 +274,7 @@ pub fn decode(text: &str) -> Result<(String, Frame), DecodeError> {
         "send" => typed(env.data).map(Frame::Send),
         "ack" => typed(env.data).map(Frame::Ack),
         "nack" => typed(env.data).map(Frame::Nack),
-        "set_filters" => typed(env.data).map(Frame::SetFilters),
+        "set_forwarding" => typed(env.data).map(Frame::SetForwarding),
         other => return Err(err("unsupported", format!("unknown type {other:?}"))),
     }
     .map_err(|m| err("invalid", m))?;

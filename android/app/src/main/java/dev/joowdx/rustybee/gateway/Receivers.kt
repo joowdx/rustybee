@@ -32,7 +32,7 @@ class SmsInboundReceiver : BroadcastReceiver() {
             val prefs = graph.prefs
             if (!prefs.gatewayEnabled || !prefs.paired) return@async
             val config = prefs.config
-            if (!config.receiveEnabled) return@async
+            if (!Forwarding.on(config, prefs.forwardingOffHere)) return@async
             val sim = subIndex.takeIf { it >= 0 }
             var queued = false
             messages.filterNotNull()

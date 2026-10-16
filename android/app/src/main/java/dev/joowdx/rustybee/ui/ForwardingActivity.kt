@@ -13,10 +13,13 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Spinner
+import android.widget.Switch
 import android.widget.TextView
 import android.view.View
+import android.view.ViewGroup
 import dev.joowdx.rustybee.gateway.ConnectionState
-import dev.joowdx.rustybee.gateway.FiltersSave
+import dev.joowdx.rustybee.gateway.Forwarding
+import dev.joowdx.rustybee.gateway.ForwardingSave
 import dev.joowdx.rustybee.gateway.GatewayService
 import dev.joowdx.rustybee.gateway.GatewayState
 import dev.joowdx.rustybee.gateway.Graph
@@ -28,14 +31,18 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * Edit this device's inbound SMS filter (spec 013). The server owns the filter: saving
- * needs a live connection, and an edit made against an older revision is refused and reloaded.
+ * Turn forwarding on or off and edit the inbound SMS filter (spec 013). Saving needs a live
+ * connection, except turning forwarding off, which applies on the phone at once. An edit made
+ * against an older revision is refused and reloaded.
  */
-class FiltersActivity : Activity() {
+class ForwardingActivity : Activity() {
     private val scope = MainScope()
     private var collect: Job? = null
     private val graph by lazy { Graph.of(this) }
 
+    private lateinit var forward: Switch
+    private lateinit var filter: LinearLayout
+    private lateinit var offNote: TextView
     private lateinit var mode: Spinner
     private lateinit var rows: LinearLayout
     private lateinit var warning: TextView
@@ -49,6 +56,8 @@ class FiltersActivity : Activity() {
     private var state = GatewayState()
     /** Only report save results for saves made from this screen. */
     private var submitted = false
+    /** Set while [load] fills the editor, so the switch's listener can tell it from the user. */
+    private var loading = false
 
     private val connectionCallback = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -68,10 +77,27 @@ class FiltersActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val content = vertical()
-        content.add(text("Filter", 24f, bold = true))
-        content.add(text("Choose which received texts are forwarded to the server.").apply { setPadding(0, dp(8), 0, 0) })
+        content.add(text("Forwarding", 24f, bold = true))
+        content.add(text("Choose whether received texts are forwarded to the server, and which.").apply { setPadding(0, dp(8), 0, 0) })
 
-        content.add(header("Mode"))
+        forward = Switch(this).apply {
+            text = "Forward received SMS"
+            textSize = 16f
+            setPadding(0, dp(16), 0, 0)
+            setOnCheckedChangeListener { _, on ->
+                refreshHints()
+                if (!on && !loading) turnOff() else render(state)
+            }
+        }
+        content.add(forward)
+        offNote = text("Nothing is forwarded while this is off. Only this phone can turn it back on.", 14f).apply {
+            setPadding(0, dp(4), 0, 0)
+        }
+        content.add(offNote)
+
+        filter = vertical()
+        content.add(filter)
+        filter.add(header("Filter"))
         mode = Spinner(this).apply {
             adapter = spinnerAdapter(MODES)
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -79,17 +105,17 @@ class FiltersActivity : Activity() {
                 override fun onNothingSelected(p: AdapterView<*>?) = Unit
             }
         }
-        content.add(mode)
+        filter.add(mode)
         warning = text("", 14f).apply {
             setTextColor(0xFFB45309.toInt())
             setPadding(0, dp(8), 0, 0)
         }
-        content.add(warning)
+        filter.add(warning)
 
-        content.add(header("Rules"))
+        filter.add(header("Rules"))
         rows = vertical()
-        content.add(rows)
-        content.add(button("Add rule") { addRow(FilterRule("sender", "contains", "")); refreshHints() })
+        filter.add(rows)
+        filter.add(button("Add rule") { addRow(FilterRule("sender", "contains", "")); refreshHints() })
 
         content.add(header("Save"))
         status = text("")
@@ -119,10 +145,13 @@ class FiltersActivity : Activity() {
         super.onDestroy()
     }
 
-    /** Fill the editor from the config the server last sent. */
+    /** Fill the editor from the config the server last sent and this phone's own "off". */
     private fun load() {
         val config = graph.prefs.config
         baseRev = config.filtersRev
+        loading = true
+        forward.isChecked = Forwarding.on(config, graph.prefs.forwardingOffHere)
+        loading = false
         mode.setSelection(MODES.indexOfFirst { it.first == config.filters.mode }.coerceAtLeast(0))
         rows.removeAllViews()
         config.filters.rules.forEach(::addRow)
@@ -174,6 +203,9 @@ class FiltersActivity : Activity() {
     }
 
     private fun refreshHints() {
+        offNote.visibility = if (forward.isChecked) View.GONE else View.VISIBLE
+        setEnabledDeep(filter, forward.isChecked)
+        filter.alpha = if (forward.isChecked) 1f else 0.5f
         val m = MODES[mode.selectedItemPosition].first
         warning.text = when {
             m == "allow" && rows.childCount == 0 -> "With no rules, nothing is forwarded."
@@ -181,6 +213,23 @@ class FiltersActivity : Activity() {
             else -> ""
         }
         warning.visibility = if (warning.text.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    private fun setEnabledDeep(v: View, enabled: Boolean) {
+        v.isEnabled = enabled
+        if (v is ViewGroup) (0 until v.childCount).forEach { setEnabledDeep(v.getChildAt(it), enabled) }
+    }
+
+    /** Off applies at once, even offline (spec 002); it keeps the stored filter. */
+    private fun turnOff() {
+        val b = binder
+        if (b == null) {
+            graph.prefs.forwardingOffHere = true
+            status.text = "Off on this phone. The server is told when the phone reconnects."
+            return
+        }
+        submitted = true
+        b.saveForwarding(false, graph.prefs.config.filters, baseRev)
     }
 
     private fun submit() {
@@ -195,27 +244,31 @@ class FiltersActivity : Activity() {
         }
         val b = binder ?: return render(state)
         submitted = true
-        b.saveFilters(filters, baseRev)
+        b.saveForwarding(true, filters, baseRev)
     }
 
     private fun render(s: GatewayState) {
         val prev = state
         state = s
         val online = binder != null && s.connection == ConnectionState.CONNECTED
-        save.isEnabled = online && s.filtersSave != FiltersSave.Saving
-        // The server's answer to our save arrives with (or right after) its new config.
-        if (submitted && s.filtersRev != prev.filtersRev) {
-            if (s.filtersSave == FiltersSave.Saved) baseRev = s.filtersRev
-            if (s.filtersSave == FiltersSave.Conflict) load()
+        // Off saves as soon as the switch turns; Save is for turning it on and for filter edits.
+        save.isEnabled = online && forward.isChecked && s.forwardingSave != ForwardingSave.Saving
+        // The answer and the new config can arrive in either order, so act on either changing.
+        if (submitted) {
+            val answered = s.forwardingSave != prev.forwardingSave || s.filtersRev != prev.filtersRev
+            if (answered && s.forwardingSave == ForwardingSave.Saved) baseRev = s.filtersRev
+            if (answered && s.forwardingSave == ForwardingSave.Conflict) load()
         }
-        val f = s.filtersSave
+        val f = s.forwardingSave
         status.text = when {
-            !online -> "Connect to the server to save. The phone keeps using the last filter it received."
+            submitted && f == ForwardingSave.SavedOnPhone -> "Off on this phone. The server is told when the phone reconnects."
+            !online && forward.isChecked -> "Connect to the server to save. The phone keeps using the last settings it received."
+            !online -> "Forwarding is off on this phone."
             !submitted -> ""
-            f == FiltersSave.Saving -> "Saving…"
-            f == FiltersSave.Saved -> "Saved."
-            f == FiltersSave.Conflict -> "Changed on the web, reloaded. Make your edit again."
-            f is FiltersSave.Failed -> "Not saved: ${f.message}"
+            f == ForwardingSave.Saving -> "Saving…"
+            f == ForwardingSave.Saved -> "Saved."
+            f == ForwardingSave.Conflict -> "Changed on the web, reloaded. Make your edit again."
+            f is ForwardingSave.Failed -> "Not saved: ${f.message}"
             else -> ""
         }
     }

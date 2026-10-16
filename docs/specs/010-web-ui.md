@@ -24,7 +24,7 @@ All pages except `/login` require a session (spec 005).
 | `/bulk` | Step 1: upload a CSV (≤ 1 MB, ≤ 1000 rows), parsed on the server with the `csv` crate. Step 2: pick the phone column; the rest are variables. Step 3: write a `{{column}}` template with a preview of the first 5 rows and the segment count. Step 4: confirm, which calls the batch endpoint internally. The parsed CSV is kept in memory under a random token for 30 min, so there are no temp files. |
 | `/messages` | Unified history. Filters (direction, state, device, peer, q, date range) live in the query string. Keyset "Load more" via htmx. |
 | `/messages/{id}` | Detail view with the timeline (timestamps), error, webhook deliveries for the message, and a Reply form for the peer. |
-| `/devices` | List. "Pair a phone" shows the QR code (inline SVG) plus the copyable link, with a countdown of the code's expiry; the page polls until a device pairs. Per device: rename, set default, enable/disable, send delay, receive toggle, preferred SIM, SMS filter editor (mode plus rule rows), remove (with confirmation; closes the socket with 4003). |
+| `/devices` | List. "Pair a phone" shows the QR code (inline SVG) plus the copyable link, with a countdown of the code's expiry; the page polls until a device pairs. Per device: rename, set default, enable/disable, send delay, preferred SIM, a forwarding switch with the SMS filter editor (mode plus rule rows) under it, remove (with confirmation; closes the socket with 4003). |
 | `/keys` | Create (secret shown once with a copy button), rename, revoke, delete. |
 | `/webhooks` | Create, edit, delete, rotate secret, test. `/webhooks/{id}` shows the deliveries log, paged, with the payload, status and error, and a redeliver button. |
 | `/settings` | Login phone (set with a texted code, or remove); change password; list sessions and revoke them. |
@@ -54,6 +54,7 @@ All pages except `/login` require a session (spec 005).
 - No command palette and no charts.
 - Webhook events are picked with one checkbox per event; at least one is required.
 - The SMS filter editor is a mode select plus one row per rule: field (sender, message, either), match (equals, contains, starts with, ends with), value and a case toggle. Rows post as repeated `rule_field`/`rule_op`/`rule_value`/`rule_case` keys; blank-value rows are dropped. Without JS one spare blank row is rendered; with JS rows are added and removed in place. "Forward only matching" with no rules shows a warning that nothing is forwarded.
+- The forwarding switch can turn forwarding off but not on (spec 002); while it is off the switch is disabled with the hint "Only the phone can turn forwarding back on", and the filter editor is disabled and keeps its stored values. Unticking the switch disables the filter editor in place with JS.
 - "Polls until a device pairs" is `GET /devices/paired?n=<count>` every 3 s via htmx; it answers `204`, or `HX-Refresh: true` once the device count grows.
 
 ## Open questions

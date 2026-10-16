@@ -37,7 +37,7 @@
         </activity>
 
         <activity
-            android:name=".ui.FiltersActivity"
+            android:name=".ui.ForwardingActivity"
             android:exported="false"
             android:label="Filter"
             android:windowSoftInputMode="adjustResize" />
