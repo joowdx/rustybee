@@ -26,9 +26,9 @@ object FrameType {
     const val SEND = "send"
     const val ACK = "ack"
     const val NACK = "nack"
-    const val SET_FILTERS = "set_filters"
+    const val SET_FORWARDING = "set_forwarding"
 
-    val ALL = setOf(HELLO, STATUS, INBOUND, HEALTH, WELCOME, CONFIG, SEND, ACK, NACK, SET_FILTERS)
+    val ALL = setOf(HELLO, STATUS, INBOUND, HEALTH, WELCOME, CONFIG, SEND, ACK, NACK, SET_FORWARDING)
 }
 
 @Serializable
@@ -133,10 +133,11 @@ data class Config(
     }
 }
 
-/** Filters edited on the phone; [baseRev] is the `filters_rev` they were based on. */
+/** Forwarding edited on the phone; [baseRev] is the `filters_rev` it was based on. */
 @Serializable
-data class SetFilters(
+data class SetForwarding(
     @SerialName("base_rev") val baseRev: Long,
+    @SerialName("receive_enabled") val receiveEnabled: Boolean,
     val filters: Filters,
 )
 
@@ -204,7 +205,7 @@ object Frames {
         FrameType.SEND -> Send.serializer()
         FrameType.ACK -> Ack.serializer()
         FrameType.NACK -> Nack.serializer()
-        FrameType.SET_FILTERS -> SetFilters.serializer()
+        FrameType.SET_FORWARDING -> SetForwarding.serializer()
         else -> null
     }
 }

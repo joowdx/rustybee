@@ -23,7 +23,7 @@ import dev.joowdx.rustybee.protocol.Welcome
 import kotlinx.coroutines.CoroutineScope
 import dev.joowdx.rustybee.protocol.Filters
 import dev.joowdx.rustybee.protocol.Nack
-import dev.joowdx.rustybee.protocol.SetFilters
+import dev.joowdx.rustybee.protocol.SetForwarding
 import dev.joowdx.rustybee.protocol.Ulid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -59,14 +59,14 @@ class GatewayService : Service() {
     private var lastNetwork: Network? = null
     private var lastPermissions: Permissions? = null
     private var stopping = false
-    private var pendingFilters: String? = null
+    private var pendingForwarding: String? = null
 
     inner class LocalBinder : Binder() {
         val state: StateFlow<GatewayState> get() = stateFlow.asStateFlow()
 
-        /** Send filters edited on the phone; the result shows in [GatewayState.filtersSave]. */
-        fun saveFilters(filters: Filters, baseRev: Long) {
-            events.trySend(GatewayEvent.SaveFilters(filters, baseRev))
+        /** Send forwarding edited on the phone; the result shows in [GatewayState.forwardingSave]. */
+        fun saveForwarding(receiveEnabled: Boolean, filters: Filters, baseRev: Long) {
+            events.trySend(GatewayEvent.SaveForwarding(receiveEnabled, filters, baseRev))
         }
     }
 
@@ -105,6 +105,7 @@ class GatewayService : Service() {
             onConfig = {
                 graph.prefs.config = it
                 graph.log("config updated")
+                restoreForwardingOff()
                 setState { s -> s.copy(filtersRev = it.filtersRev) }
             },
             onReply = ::onReply,
@@ -179,7 +180,7 @@ class GatewayService : Service() {
                 connect()
             }
             GatewayEvent.HealthTick -> sendHealth()
-            is GatewayEvent.SaveFilters -> saveFilters(ev.filters, ev.baseRev)
+            is GatewayEvent.SaveForwarding -> saveForwarding(ev.receiveEnabled, ev.filters, ev.baseRev)
             is GatewayEvent.Opened -> if (ev.gen == connection.generation) onOpened()
             is GatewayEvent.Message -> if (ev.gen == connection.generation) {
                 handler.handle(ev.text) { connection.send(it) }
@@ -240,36 +241,52 @@ class GatewayService : Service() {
             }
         }
         graph.log("welcome; outbox replayed")
+        restoreForwardingOff()
         publish()
     }
 
-    private fun saveFilters(filters: Filters, baseRev: Long) {
+    private fun saveForwarding(receiveEnabled: Boolean, filters: Filters, baseRev: Long) {
+        // Off applies on the phone at once, even offline; on needs the server (spec 002).
+        if (!receiveEnabled) graph.prefs.forwardingOffHere = true
         if (!welcomed) {
-            setState { it.copy(filtersSave = FiltersSave.Failed("Not connected to the server")) }
+            val result = if (receiveEnabled) ForwardingSave.Failed("Not connected to the server") else ForwardingSave.SavedOnPhone
+            setState { it.copy(forwardingSave = result) }
             return
         }
+        if (receiveEnabled) graph.prefs.forwardingOffHere = false
         val id = Ulid.next()
-        pendingFilters = id
-        connection.send(Frames.encode(FrameType.SET_FILTERS, SetFilters.serializer(), SetFilters(baseRev, filters), id))
-        setState { it.copy(filtersSave = FiltersSave.Saving) }
+        pendingForwarding = id
+        sendForwarding(SetForwarding(baseRev, receiveEnabled, filters), id)
+        setState { it.copy(forwardingSave = ForwardingSave.Saving) }
     }
 
+    /** Tell the server about an "off" set on this phone that its config doesn't show yet. */
+    private fun restoreForwardingOff() {
+        if (!welcomed || pendingForwarding != null) return
+        val frame = Forwarding.restore(graph.prefs.config, graph.prefs.forwardingOffHere) ?: return
+        graph.log("forwarding is off on this phone; telling the server")
+        sendForwarding(frame, Ulid.next())
+    }
+
+    private fun sendForwarding(f: SetForwarding, id: String) =
+        connection.send(Frames.encode(FrameType.SET_FORWARDING, SetForwarding.serializer(), f, id))
+
     private fun onReply(ref: String, nack: Nack?) {
-        if (ref != pendingFilters) return
-        pendingFilters = null
+        if (ref != pendingForwarding) return
+        pendingForwarding = null
         val result = when {
-            nack == null -> FiltersSave.Saved
-            nack.code == "filters_conflict" -> FiltersSave.Conflict
-            else -> FiltersSave.Failed(nack.message ?: nack.code)
+            nack == null -> ForwardingSave.Saved
+            nack.code == "filters_conflict" -> ForwardingSave.Conflict
+            else -> ForwardingSave.Failed(nack.message ?: nack.code)
         }
-        graph.log("filters save: ${result.javaClass.simpleName}")
-        setState { it.copy(filtersSave = result) }
+        graph.log("forwarding save: ${result.javaClass.simpleName}")
+        setState { it.copy(forwardingSave = result) }
     }
 
     private fun onClosed(code: Int, reason: String) {
-        if (pendingFilters != null) {
-            pendingFilters = null
-            setState { it.copy(filtersSave = FiltersSave.Failed("Connection lost before the server answered")) }
+        if (pendingForwarding != null) {
+            pendingForwarding = null
+            setState { it.copy(forwardingSave = ForwardingSave.Failed("Connection lost before the server answered")) }
         }
         graph.uplink.detach()
         healthJob?.cancel()

@@ -343,14 +343,20 @@ impl Conn {
                 self.notify.notify_one();
                 Ok(vec![])
             }
-            Frame::SetFilters(f) => {
+            Frame::SetForwarding(f) => {
                 if let Err(e) = f.filters.validate() {
                     return Ok(vec![nack(&id, "invalid", &e)]);
                 }
                 let res = app
                     .store
                     .write(move |c| {
-                        let r = devices::set_filters(c, device_id, f.base_rev, &f.filters)?;
+                        let r = devices::set_forwarding(
+                            c,
+                            device_id,
+                            f.base_rev,
+                            f.receive_enabled,
+                            &f.filters,
+                        )?;
                         Ok((r, devices::by_id(c, device_id)?))
                     })
                     .await?;

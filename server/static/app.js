@@ -76,6 +76,12 @@
       };
       tick();
     });
+    root.querySelectorAll("[data-forwarding]").forEach(function (sw) {
+      if (sw.dataset.ready) return;
+      sw.dataset.ready = "1";
+      var group = sw.form && sw.form.querySelector("[data-forwarding-filters]");
+      if (group) sw.addEventListener("change", function () { group.disabled = !sw.checked; });
+    });
     root.querySelectorAll("[data-rules]").forEach(function (box) {
       if (box.dataset.ready) return;
       box.dataset.ready = "1";

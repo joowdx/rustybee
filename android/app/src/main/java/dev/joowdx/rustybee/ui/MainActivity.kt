@@ -126,7 +126,7 @@ class MainActivity : Activity() {
         content.add(header("Device"))
         content.add(
             horizontal()
-                .add(button("Filter") { startActivity(Intent(this, FiltersActivity::class.java)) })
+                .add(button("Forwarding") { startActivity(Intent(this, ForwardingActivity::class.java)) })
                 .add(button("Logs") { startActivity(Intent(this, LogsActivity::class.java)) })
                 .add(button("Unpair") { confirmUnpair() }),
         )

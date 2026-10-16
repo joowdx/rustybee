@@ -46,17 +46,19 @@ A single scrolling screen with these sections:
 4. **Log:** the last 100 entries, monospace, with Copy and Clear buttons.
 5. **Unpair:** asks for confirmation, wipes the credentials and the db, stops the service and opens Setup.
 
-6. **SMS filter** button, which opens `FiltersActivity`.
+6. **Forwarding** button, which opens `ForwardingActivity`. The Device row reads Forwarding, Logs, Unpair.
 
 Live updates come from binding to `GatewayService` and collecting its `StateFlow` while the activity is started.
 
-### `FiltersActivity`
-- Edits this device's inbound filter (spec 002):
+### `ForwardingActivity`
+- Edits whether this phone forwards received SMS, and its inbound filter (spec 002), on one screen:
+  - a "Forward received SMS" switch at the top. While it is off, the mode picker and the rules are locked and the screen says nothing is forwarded;
   - a mode picker: off, forward only matching, forward all except matching;
   - rule rows, each with a field (sender, message, sender or message), a match (contains, equals, starts with, ends with), the text, an "Ignore case" box and Remove; plus "Add rule".
-- Loads from the config the server last sent. Save sends `set_filters` with that config's `filters_rev` and shows Saving…, Saved, or the error.
+- Loads from the config the server last sent. Save sends `set_forwarding` with that config's `filters_rev` and shows Saving…, Saved, or the error.
 - On `filters_conflict` the editor reloads from the new config and says "Changed on the web, reloaded."
-- Save is disabled while the gateway isn't connected. The phone keeps filtering with its last config either way.
+- Save is disabled while the gateway isn't connected, except when the switch is off: turning forwarding off saves on the phone at once and reaches the server when it reconnects (spec 002). The phone keeps using its last config either way.
+- The switch shows the phone's effective state: off when the server's config is off or the phone's local "off" is set.
 - Warns when "forward only matching" has no rules (nothing is forwarded) and when rules exist while the filter is off.
 
 ### Permissions
@@ -72,6 +74,7 @@ Requested in one runtime request, with a short rationale, when the gateway is fi
 3. AC-013-03 There is no layout overlap with the system bars in portrait and landscape. Manual check, screenshots at 0.5 scale.
 4. AC-013-04 Unpairing returns to Setup and the service stops.
 5. AC-013-05 Scanning the Devices-page QR from inside the app pairs it, in portrait and landscape. Refusing the camera leaves Setup usable with a message. Manual check.
+6. AC-013-06 The Forwarding screen locks the filter while the switch is off, and turning the switch off while offline stops forwarding at once. Manual check.
 
 ## Test plan
 Manual checks in M7, with screenshots attached to the M7 notes.

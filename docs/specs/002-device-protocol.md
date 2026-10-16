@@ -64,9 +64,9 @@ Every text frame is one JSON object:
 |---|---|---|
 | `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted}, outbox}` | first frame after every connect |
 | `status` | `{msg_id, state:"sent"\|"delivered"\|"failed", at, parts, error:{code,message}\|null}` | each change of a message's outcome |
-| `inbound` | `{uid, from, body, sim, received_at}` | each received SMS that passes the filters |
+| `inbound` | `{uid, from, body, sim, received_at}` | each received SMS, while forwarding is on, that passes the filters |
 | `health` | `{battery, network, permissions, outbox}` | every 15 min while connected, and on a change of charging state or permissions |
-| `set_filters` | `{base_rev, filters}` | the user saves filters edited on the phone |
+| `set_forwarding` | `{base_rev, receive_enabled, filters}` | the user saves the Forwarding screen on the phone, or the phone restores its own "off" (below) |
 
 - `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100.
 - `inbound.uid` is the lowercase hex of the first 16 bytes of `SHA-256(from + "\n" + received_at + "\n" + body + "\n" + (sim ?: ""))`.
@@ -89,17 +89,22 @@ Every text frame is one JSON object:
   {"name":"…","ping_s":270,"receive_enabled":true,"sim":null,"filters_rev":3,
    "filters":{"mode":"off"|"allow"|"block","rules":[{"field":"sender"|"body"|"any","op":"equals"|"contains"|"starts_with"|"ends_with","value":"…","ignore_case":true}]}}
   ```
+- Forwarding: `receive_enabled=false` forwards nothing, whatever the filters say. The filters apply only while it is `true`.
 - Filter semantics:
   - `mode=off`: forward everything.
   - `allow`: forward only messages that match at least one rule.
   - `block`: drop messages that match any rule.
   - `allow` with no rules forwards nothing. Both editors warn about this.
-- Filter sync: the server owns the filters, and `filters_rev` goes up by one on every change, from the web or the phone.
-  - The device sends `set_filters` with the `filters_rev` its edit started from as `base_rev`.
-  - If `base_rev` is current and the filters are valid (at most 100 rules; each value non-empty after trimming and at most 200 characters), the server stores them, acks, and sends `config` with the new rev.
+- Forwarding sync: `receive_enabled` and the filters are one setting, edited from the web or the phone. `filters_rev` goes up by one whenever either changes.
+  - The device sends `set_forwarding` with the `filters_rev` its edit started from as `base_rev`.
+  - If `base_rev` is current and the filters are valid (at most 100 rules; each value non-empty after trimming and at most 200 characters), the server stores both, acks, and sends `config` with the new rev.
   - If `base_rev` is stale, the server nacks with `filters_conflict` and sends the current `config`. The phone reloads its editor.
   - If the filters are invalid, the server nacks with `invalid`.
-  - Editing on the phone needs a live connection, so offline edits never have to be merged.
+  - Editing on the phone needs a live connection, so offline edits never have to be merged. The one exception is turning forwarding off, below.
+- The phone has the final say on forwarding, because the phone's owner may not be the server's admin:
+  - The web can turn forwarding off but never on. Only `set_forwarding` from the phone turns it on.
+  - The phone also keeps its own "off" locally. Turning forwarding off on the phone takes effect at once, even offline. While that local "off" is set, the phone forwards nothing even if a `config` says `receive_enabled=true`, and once connected it sends `set_forwarding` with `receive_enabled=false` so the server agrees again.
+  - The web edits the filters only while forwarding is on. A web save with forwarding off keeps the stored filters.
 
 ### Device handling of `send`
 1. Look up `msg_id` in the local `sent` table.
@@ -123,7 +128,9 @@ Every text frame is one JSON object:
 7. AC-002-07 Removing a device closes its socket with 4003, and the app wipes its credentials.
 8. AC-002-08 A malformed frame with an `id` gets a `nack`, and the connection stays open.
 9. AC-002-09 The server closes a socket that is silent for `2 × ping_s + 30` s.
-10. AC-002-10 `set_filters` with the current `base_rev` is stored and acked, and a `config` with the next `filters_rev` follows. With a stale `base_rev` it is nacked `filters_conflict`, a `config` with the current filters follows, and nothing is stored.
+10. AC-002-10 `set_forwarding` with the current `base_rev` stores `receive_enabled` and the filters and is acked, and a `config` with the next `filters_rev` follows. With a stale `base_rev` it is nacked `filters_conflict`, a `config` with the current settings follows, and nothing is stored.
+11. AC-002-11 A web save can turn forwarding off but not on, bumps `filters_rev` when it turns it off, and leaves the filters unchanged while forwarding is off.
+12. AC-002-12 With its local "off" set, the phone forwards nothing when a `config` says `receive_enabled=true`, and sends `set_forwarding` with `receive_enabled=false` once connected.
 
 ## Test plan
 | AC | Test |
@@ -133,7 +140,9 @@ Every text frame is one JSON object:
 | 04 | server: `device_ws.rs::ac_002_04_*`; app: `OutboxTest` |
 | 05 | `server/tests/device_ws.rs::ac_002_05_*` |
 | 09 | server test with a short `ping_s` |
-| 10 | `server/tests/device_ws.rs::set_filters_from_device_checks_rev`; `tests/ui.rs` (web save bumps the rev) |
+| 10 | `server/tests/device_ws.rs::ac_002_10_set_forwarding_checks_rev` |
+| 11 | `server/tests/ui.rs::ac_002_11_web_turns_forwarding_off_not_on` |
+| 12 | app `ForwardingTest` |
 
 ## Assumptions
 - Ping frames come from the app only. The server never sends pings, which saves server-initiated wakeups on the phone.

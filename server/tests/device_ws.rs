@@ -242,23 +242,27 @@ async fn ac_002_09_traffic_keeps_socket_open() {
 }
 
 #[tokio::test]
-async fn set_filters_from_device_checks_rev() {
+async fn ac_002_10_set_forwarding_checks_rev() {
     let s = server().await;
     let (_, token) = s.pair("A").await;
     let mut d = Device::connect(&s, &token).await;
     let rules = json!({"mode": "block", "rules": [{"field": "body", "op": "contains", "value": "promo", "ignore_case": true}]});
-    let f = frame("set_filters", json!({"base_rev": 0, "filters": rules}));
+    let f = frame(
+        "set_forwarding",
+        json!({"base_rev": 0, "receive_enabled": false, "filters": rules}),
+    );
     d.send(&f).await;
     let a = d.recv_type("ack").await;
     assert_eq!(a["data"]["ref"], f["id"]);
     let cfg = d.recv_type("config").await;
     assert_eq!(cfg["data"]["filters_rev"], 1);
+    assert_eq!(cfg["data"]["receive_enabled"], false);
     assert_eq!(cfg["data"]["filters"], rules);
 
     // Stale base: refused, and the current config comes back.
     let f = frame(
-        "set_filters",
-        json!({"base_rev": 0, "filters": {"mode": "off", "rules": []}}),
+        "set_forwarding",
+        json!({"base_rev": 0, "receive_enabled": true, "filters": {"mode": "off", "rules": []}}),
     );
     d.send(&f).await;
     let n = d.recv_type("nack").await;
@@ -266,11 +270,12 @@ async fn set_filters_from_device_checks_rev() {
     let cfg = d.recv_type("config").await;
     assert_eq!(cfg["data"]["filters_rev"], 1);
     assert_eq!(cfg["data"]["filters"]["mode"], "block");
+    assert_eq!(cfg["data"]["receive_enabled"], false);
 
     // Invalid rules are refused without a change.
     let f = frame(
-        "set_filters",
-        json!({"base_rev": 1, "filters": {"mode": "allow", "rules": [{"field": "body", "op": "equals", "value": " "}]}}),
+        "set_forwarding",
+        json!({"base_rev": 1, "receive_enabled": true, "filters": {"mode": "allow", "rules": [{"field": "body", "op": "equals", "value": " "}]}}),
     );
     d.send(&f).await;
     assert_eq!(d.recv_type("nack").await["data"]["code"], "invalid");

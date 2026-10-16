@@ -96,6 +96,8 @@ label{display:block}
 .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 form{margin:0}
 fieldset{border:0;margin:0;padding:0;min-width:0}
+fieldset.group{display:contents}
+fieldset.group:disabled .f{opacity:.55}
 
 /* Surfaces */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px;min-width:0}

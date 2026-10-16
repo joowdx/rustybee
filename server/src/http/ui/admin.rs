@@ -246,6 +246,9 @@ pub async fn save_device(
             _ => return Ok(back_err("/devices", "send delay must be 0 to 3600000 ms")),
         },
     };
+    // The phone has the final say on forwarding (spec 002): the web can only turn it off,
+    // and edits the filters only while it stays on.
+    let receive_enabled = d.receive_enabled && f.on("receive_enabled");
     let mode = match f.get("filter_mode") {
         "" | "off" => Mode::Off,
         "allow" => Mode::Allow,
@@ -260,9 +263,13 @@ pub async fn save_device(
         name,
         enabled: f.on("enabled"),
         send_delay_ms: delay,
-        receive_enabled: f.on("receive_enabled"),
+        receive_enabled,
         sim: f.get("sim").trim().parse().ok(),
-        filters: Filters { mode, rules },
+        filters: if receive_enabled {
+            Filters { mode, rules }
+        } else {
+            d.filters.clone()
+        },
     };
     if let Err(e) = s.filters.validate() {
         return Ok(back_err("/devices", format!("filter rules: {e}")));

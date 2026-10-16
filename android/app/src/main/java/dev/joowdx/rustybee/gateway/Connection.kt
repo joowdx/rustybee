@@ -73,5 +73,5 @@ sealed interface GatewayEvent {
     data object NetworkChanged : GatewayEvent
     data object Nudge : GatewayEvent
     data object HealthTick : GatewayEvent
-    data class SaveFilters(val filters: Filters, val baseRev: Long) : GatewayEvent
+    data class SaveForwarding(val receiveEnabled: Boolean, val filters: Filters, val baseRev: Long) : GatewayEvent
 }

@@ -54,7 +54,7 @@ pub struct Filters {
 }
 
 impl Filters {
-    /// Limits shared by the web form and the device's `set_filters`.
+    /// Limits shared by the web form and the device.s `set_forwarding`.
     pub fn validate(&self) -> Result<(), String> {
         if self.rules.len() > MAX_RULES {
             return Err(format!("at most {MAX_RULES} rules"));
