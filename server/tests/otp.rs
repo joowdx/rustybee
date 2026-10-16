@@ -449,6 +449,8 @@ async fn ac_005_19_failed_verify_does_not_name_the_number() {
     let page = r.text().await.unwrap();
     assert!(page.contains("name=\"code\""), "{page}");
     assert!(!page.contains("1111"), "{page}");
+    // The resend form asks for the last 4 again instead of carrying them.
+    assert!(page.contains("name=\"last4\" inputmode"), "{page}");
     // Throttled responses don't name it either.
     for _ in 0..5 {
         post(&s, "/login/verify", &[("code", wrong)]).await;

@@ -16,7 +16,7 @@
     <button>Log in</button>
   </form>
   <form method="post" action="/login/code" class="resend" hx-boost="false">
-    {% if let Some(p) = sent_to %}<input type="hidden" name="last4" value="{{ p }}">{% endif %}
+    {% if let Some(p) = sent_to %}<input type="hidden" name="last4" value="{{ p }}">{% else %}<label><span class="lbl">Last 4 digits of your number</span><input class="code" name="last4" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="off" placeholder="••••" required></label>{% endif %}
     <span class="muted">Didn't get it? It can take a minute.</span> {% call ts(turnstile) %}<button class="link"{% if turnstile.is_some() %} disabled data-ts{% endif %}>Send a new code</button>
   </form>
   {% else if m.otp %}
