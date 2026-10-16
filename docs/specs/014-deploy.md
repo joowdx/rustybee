@@ -19,7 +19,7 @@ Updated: 2026-10-16
 
 ### `deploy/compose.yaml`
 - One service `rustybee`, using the published image `ghcr.io/joowdx/rustybee:3` (or a local build from the Dockerfile with `docker compose build`), a named volume `rustybee-data:/data`, `restart: unless-stopped`, and port `8080`.
-- Environment from `.env`: `RUSTYBEE_PUBLIC_URL`, `RUSTYBEE_ADMIN_PASSWORD` (first run only), and the optional `RUSTYBEE_PING_SECONDS`, `RUSTYBEE_TRUST_PROXY` and `RUSTYBEE_FCM_CREDENTIALS` (the file mounted read-only).
+- Environment from `.env`: `RUSTYBEE_PUBLIC_URL`, `RUSTYBEE_ADMIN_PASSWORD` (first run only), and the optional `RUSTYBEE_PING_SECONDS`, `RUSTYBEE_TRUST_PROXY`, `RUSTYBEE_TURNSTILE_SITE_KEY`, `RUSTYBEE_TURNSTILE_SECRET` and `RUSTYBEE_FCM_CREDENTIALS` (the file mounted read-only).
 - `deploy/.env.example` documents every variable.
 
 ### `deploy/rustybee.service`
@@ -30,7 +30,7 @@ A systemd unit for running without Docker:
 ### Reverse proxy snippets (`deploy/README.md`)
 - **Caddy:** `reverse_proxy 127.0.0.1:8080`. WebSockets work by default; set `RUSTYBEE_TRUST_PROXY=1`.
 - **nginx:** `proxy_http_version 1.1`, the `Upgrade`/`Connection` headers, `proxy_read_timeout 600s`, and `proxy_buffering off` for `/events`.
-- **Cloudflare Tunnel:** set `RUSTYBEE_PING_SECONDS=60`, because idle WebSockets are cut at about 100 s.
+- **Cloudflare Tunnel:** set `RUSTYBEE_PING_SECONDS=60`, because idle WebSockets are cut at about 100 s. Set `RUSTYBEE_TRUST_PROXY=1`, and optionally the Turnstile keys (widget hostname = the public host).
 - **Backups:** `docker exec rustybee /rustybee backup /data/backup-$(date +%F).db`.
 
 ### Configuration (all optional except the public URL)
@@ -42,7 +42,9 @@ A systemd unit for running without Docker:
 | `RUSTYBEE_ADMIN_PASSWORD` | — | sets the password at first start if none is set |
 | `RUSTYBEE_PING_SECONDS` | `270` | device ping interval (spec 002) |
 | `RUSTYBEE_MESSAGE_TTL_HOURS` | `24` | spec 004 |
-| `RUSTYBEE_TRUST_PROXY` | `0` | trust `X-Forwarded-For` / `X-Forwarded-Proto` |
+| `RUSTYBEE_TRUST_PROXY` | `0` | trust `CF-Connecting-IP` / `X-Forwarded-For` / `X-Forwarded-Proto` |
+| `RUSTYBEE_TURNSTILE_SITE_KEY` | — | Turnstile on Cloudflare-proxied logins (spec 005); needs the secret too |
+| `RUSTYBEE_TURNSTILE_SECRET` | — | Turnstile Siteverify secret |
 | `RUSTYBEE_FCM_CREDENTIALS` | — | path to the service-account JSON (spec 009) |
 | `RUST_LOG` | `info` | tracing filter |
 

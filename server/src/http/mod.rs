@@ -35,17 +35,27 @@ pub fn bearer(headers: &HeaderMap) -> Option<&str> {
         .map(str::trim)
 }
 
-/// Client IP: `X-Forwarded-For` only when `RUSTYBEE_TRUST_PROXY=1`.
+/// Client IP (spec 005). With `RUSTYBEE_TRUST_PROXY=1`: `CF-Connecting-IP`,
+/// else the rightmost `X-Forwarded-For` entry, the one the proxy appended.
 pub fn client_ip(app: &Ctx, headers: &HeaderMap, peer: Option<SocketAddr>) -> IpAddr {
-    if app.cfg.trust_proxy
-        && let Some(ip) = headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
+    if app.cfg.trust_proxy {
+        let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+        let ip = header("cf-connecting-ip")
             .and_then(|v| v.trim().parse().ok())
-    {
-        return ip;
+            .or_else(|| {
+                header("x-forwarded-for")
+                    .and_then(|v| v.rsplit(',').next())
+                    .and_then(|v| v.trim().parse().ok())
+            });
+        if let Some(ip) = ip {
+            return ip;
+        }
     }
     peer.map(|p| p.ip())
         .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+}
+
+/// The request came through Cloudflare: proxy trusted and `CF-Connecting-IP` set.
+pub fn via_cloudflare(app: &Ctx, headers: &HeaderMap) -> bool {
+    app.cfg.trust_proxy && headers.contains_key("cf-connecting-ip")
 }

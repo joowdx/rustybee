@@ -16,6 +16,8 @@ pub struct Config {
     pub message_ttl: Duration,
     pub trust_proxy: bool,
     pub fcm_credentials: Option<PathBuf>,
+    /// Turnstile on Cloudflare-proxied logins (spec 005).
+    pub turnstile: Option<Turnstile>,
     // ---- injectable timings and endpoints (tests) ----
     pub inflight_timeout: Duration,
     pub status_timeout: Duration,
@@ -32,6 +34,13 @@ pub struct Config {
     pub otp_max_failures: u32,
     /// A login code not sent within this long counts as a failed send.
     pub otp_send_timeout: Duration,
+    pub turnstile_verify_url: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Turnstile {
+    pub site_key: String,
+    pub secret: String,
 }
 
 fn env(key: &str) -> Option<String> {
@@ -68,6 +77,19 @@ impl Config {
         c.trust_proxy = trust_proxy;
         c.fcm_credentials = env("RUSTYBEE_FCM_CREDENTIALS").map(PathBuf::from);
         c.otp_max_failures = env_num("RUSTYBEE_OTP_MAX_FAILURES")?.unwrap_or(3).max(1);
+        c.turnstile = match (
+            env("RUSTYBEE_TURNSTILE_SITE_KEY"),
+            env("RUSTYBEE_TURNSTILE_SECRET"),
+        ) {
+            (Some(site_key), Some(secret)) => Some(Turnstile { site_key, secret }),
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "RUSTYBEE_TURNSTILE_SITE_KEY and RUSTYBEE_TURNSTILE_SECRET must be set together"
+                        .into(),
+                );
+            }
+        };
         Ok(c)
     }
 
@@ -82,6 +104,7 @@ impl Config {
             message_ttl: Duration::from_secs(24 * 3600),
             trust_proxy: false,
             fcm_credentials: None,
+            turnstile: None,
             inflight_timeout: Duration::from_secs(120),
             status_timeout: Duration::from_secs(24 * 3600),
             sweep_interval: Duration::from_secs(60),
@@ -94,6 +117,8 @@ impl Config {
             login_window: Duration::from_secs(60),
             otp_max_failures: 3,
             otp_send_timeout: Duration::from_secs(90),
+            turnstile_verify_url: "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+                .into(),
         }
     }
 

@@ -12,5 +12,6 @@ pub mod otp;
 pub mod protocol;
 pub mod store;
 pub mod sweeper;
+pub mod turnstile;
 pub mod util;
 pub mod webhooks;
