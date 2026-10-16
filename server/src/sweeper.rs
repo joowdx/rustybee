@@ -21,17 +21,7 @@ pub async fn run(app: App) {
         let now = app.clock.now_ms();
         if last_prune.is_none_or(|t| now - t >= DAY_MS) {
             last_prune = Some(now);
-            let r = app
-                .store
-                .write(move |c| {
-                    c.execute(
-                        "DELETE FROM seen_frames WHERE seen_at<?1",
-                        [now - 7 * DAY_MS],
-                    )?;
-                    store::auth::prune(c, now)
-                })
-                .await;
-            if let Err(e) = r {
+            if let Err(e) = prune_once(&app).await {
                 tracing::warn!(error = %e, "prune");
             }
         }
@@ -42,6 +32,35 @@ pub async fn run(app: App) {
             }
         }
     }
+}
+
+/// The daily prune: seen frames, auth rows and, when `RUSTYBEE_RETENTION_DAYS`
+/// is set, finished messages and webhook deliveries (spec 003). Returns the
+/// number of messages and deliveries deleted.
+pub async fn prune_once(app: &App) -> store::Result<(usize, usize)> {
+    let now = app.clock.now_ms();
+    let retention = app.cfg.retention_days.map(|d| now - i64::from(d) * DAY_MS);
+    let (msgs, hooks) = app
+        .store
+        .write(move |c| {
+            c.execute(
+                "DELETE FROM seen_frames WHERE seen_at<?1",
+                [now - 7 * DAY_MS],
+            )?;
+            store::auth::prune(c, now)?;
+            let Some(before) = retention else {
+                return Ok((0, 0));
+            };
+            // Deliveries first; any left pointing at a pruned message get NULL.
+            let hooks = store::webhooks::prune_finished(c, before)?;
+            let msgs = messages::prune_finished(c, before)?;
+            Ok((msgs, hooks))
+        })
+        .await?;
+    if msgs + hooks > 0 {
+        tracing::info!(messages = msgs, deliveries = hooks, "retention pruned");
+    }
+    Ok((msgs, hooks))
 }
 
 /// One TTL / status-timeout pass (spec 004). Returns the changed messages.

@@ -1,7 +1,7 @@
 # 014 — Deploy
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 
@@ -19,7 +19,7 @@ Updated: 2026-10-16
 
 ### `deploy/compose.yaml`
 - One service `rustybee`, using the published image `ghcr.io/joowdx/rustybee:3` (or a local build from the Dockerfile with `docker compose build`), a named volume `rustybee-data:/data`, `restart: unless-stopped`, and port `127.0.0.1:8080:8080`: loopback only, for a reverse proxy or tunnel on the same host. Widen it to `8080:8080` only when there is no proxy.
-- Environment from `.env`: `RUSTYBEE_PUBLIC_URL`, `RUSTYBEE_ADMIN_PASSWORD` (first run only), and the optional `RUSTYBEE_PING_SECONDS`, `RUSTYBEE_TRUST_PROXY`, `RUSTYBEE_TURNSTILE_SITE_KEY`, `RUSTYBEE_TURNSTILE_SECRET` and `RUSTYBEE_FCM_CREDENTIALS` (the file mounted read-only).
+- Environment from `.env`: `RUSTYBEE_PUBLIC_URL`, `RUSTYBEE_ADMIN_PASSWORD` (first run only), and the optional `RUSTYBEE_PING_SECONDS`, `RUSTYBEE_TRUST_PROXY`, `RUSTYBEE_MAX_QUEUED`, `RUSTYBEE_ALLOW_SHORT_CODES`, `RUSTYBEE_RETENTION_DAYS`, `RUSTYBEE_TURNSTILE_SITE_KEY`, `RUSTYBEE_TURNSTILE_SECRET` and `RUSTYBEE_FCM_CREDENTIALS` (the file mounted read-only).
 - `deploy/.env.example` documents every variable.
 
 ### `deploy/rustybee.service`
@@ -46,6 +46,9 @@ A systemd unit for running without Docker:
 | `RUSTYBEE_TURNSTILE_SITE_KEY` | — | Turnstile on Cloudflare-proxied logins (spec 005); needs the secret too |
 | `RUSTYBEE_TURNSTILE_SECRET` | — | Turnstile Siteverify secret |
 | `RUSTYBEE_FCM_CREDENTIALS` | — | path to the service-account JSON (spec 009) |
+| `RUSTYBEE_MAX_QUEUED` | `1000` | most queued messages per device before sends get 429 `queue_full` (spec 007) |
+| `RUSTYBEE_ALLOW_SHORT_CODES` | `0` | `1` to accept recipients with 3–6 digits (spec 004) |
+| `RUSTYBEE_RETENTION_DAYS` | — | prune finished messages and webhook deliveries older than this (spec 003) |
 | `RUST_LOG` | `info` | tracing filter |
 
 ## Acceptance criteria

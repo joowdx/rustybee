@@ -51,6 +51,13 @@ pub struct Ctx {
 
 pub type App = Arc<Ctx>;
 
+/// Why `queue` wrote nothing after validation.
+enum Rejected {
+    Choice(devices::Choice),
+    /// The device's backlog of `queued` messages, which the batch would push over the cap.
+    QueueFull(i64),
+}
+
 /// One item of a send request, before validation.
 pub struct Draft {
     /// Field name used in error messages, e.g. `to[3]`.
@@ -90,7 +97,7 @@ impl Ctx {
                     format!("body is {n} characters; the limit is {MAX_BODY_CHARS}"),
                 ));
             }
-            let to = phone::normalize(&d.to).map_err(|e| {
+            let to = phone::normalize_with(&d.to, self.cfg.allow_short_codes).map_err(|e| {
                 ApiError::new(
                     StatusCode::BAD_REQUEST,
                     "invalid_recipient",
@@ -100,27 +107,44 @@ impl Ctx {
             items.push(NewMessage { to, body: d.body });
         }
         let now = self.clock.now_ms();
+        let max_queued = i64::from(self.cfg.max_queued);
         let res = self
             .store
             .write(move |c| {
                 Ok(match devices::choose(c, device.as_deref())? {
                     devices::Choice::Ok(id) => {
-                        Ok((id, store::messages::create_batch(c, id, &items, sim, now)?))
+                        let queued: i64 = c.query_row(
+                            "SELECT count(*) FROM messages WHERE device_id=?1 AND state='queued'",
+                            [id],
+                            |r| r.get(0),
+                        )?;
+                        if queued + items.len() as i64 > max_queued {
+                            Err(Rejected::QueueFull(queued))
+                        } else {
+                            Ok((id, store::messages::create_batch(c, id, &items, sim, now)?))
+                        }
                     }
-                    other => Err(other),
+                    other => Err(Rejected::Choice(other)),
                 })
             })
             .await?;
-        let (device_id, (batch, rows)) = res.map_err(|choice| match choice {
-            devices::Choice::NotFound => {
+        let (device_id, (batch, rows)) = res.map_err(|r| match r {
+            Rejected::QueueFull(queued) => ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "queue_full",
+                format!(
+                    "the device already has {queued} queued messages; the limit is {max_queued}"
+                ),
+            ),
+            Rejected::Choice(devices::Choice::NotFound) => {
                 ApiError::new(StatusCode::NOT_FOUND, "not_found", "device not found")
             }
-            devices::Choice::Disabled => ApiError::new(
+            Rejected::Choice(devices::Choice::Disabled) => ApiError::new(
                 StatusCode::CONFLICT,
                 "device_disabled",
                 "device is disabled",
             ),
-            _ => ApiError::new(
+            Rejected::Choice(_) => ApiError::new(
                 StatusCode::BAD_REQUEST,
                 "device_required",
                 "several devices are enabled and none is the default; pass device_id",

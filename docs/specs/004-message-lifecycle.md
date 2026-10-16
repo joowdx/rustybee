@@ -55,7 +55,7 @@ Runs every 60 s with `RUSTYBEE_MESSAGE_TTL_HOURS`, default 24:
 ### Phone number normalisation
 - Trim the input and remove spaces, `-`, `(`, `)` and `.`.
 - A local Philippine mobile number, exactly `09` followed by 9 digits (`09XXXXXXXXX`), becomes `+639XXXXXXXXX`: the leading `0` is replaced with `+63`. Nothing else is rewritten.
-- It must then match `^\+?[0-9]{3,20}$`, or it is rejected as `invalid_recipient`.
+- It must then match `^\+?[0-9]{7,20}$`, or it is rejected as `invalid_recipient`. With `RUSTYBEE_ALLOW_SHORT_CODES=1` (passed in as a flag; the domain reads no environment) the minimum is 3 digits, so short codes work (spec 007, AC-007-08).
 - Alphanumeric peers are allowed for **inbound** only.
 
 ## Acceptance criteria

@@ -1,7 +1,7 @@
 # 003 — Data model and store
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 
@@ -76,15 +76,18 @@ CREATE TABLE seen_frames (device_id INTEGER NOT NULL REFERENCES devices(id) ON D
 2. AC-003-02 All PRAGMAs are in effect on every connection.
 3. AC-003-03 Concurrent writes from many tasks are serialized without `SQLITE_BUSY` errors.
 4. AC-003-04 `backup` produces a database that opens and holds the same rows.
+5. AC-003-05 With `RUSTYBEE_RETENTION_DAYS=N`, the daily prune deletes `delivered`, `failed`, `expired` and `received` messages and delivered or aborted webhook deliveries created more than N days ago, plus batches left with no messages. `queued`, `dispatched` and `sent` messages and pending deliveries stay.
+6. AC-003-06 Without `RUSTYBEE_RETENTION_DAYS`, the prune deletes no messages or deliveries.
 
 ## Test plan
 | AC | Test |
 |---|---|
 | 01–04 | `server/src/store` unit tests, using a temp dir |
+| 05–06 | `server/tests/retention.rs` with an injected clock |
 
 ## Assumptions
 - Removing a device is a soft delete: `removed_at` is set, `token_sha256` is replaced with random bytes, `fcm_token` and `is_default` are cleared, and the row is hidden from every device list, selection and dispatch. Its messages and batches stay in history. Every outbound message of the device still in `queued` or `dispatched` becomes `failed`/`cancelled`.
 - Message bodies are stored in plain text. The database file is protected by filesystem permissions, with no at-rest encryption.
-- No automatic retention. Messages are kept until the user deletes them; a prune setting may come later.
+- Retention is opt-in. Without `RUSTYBEE_RETENTION_DAYS`, messages are kept until the user deletes them. With it, the daily prune deletes finished rows older than that many days, by `created_at`: messages in a terminal state (spec 004) or `received`, delivered or aborted webhook deliveries, and batches with no messages left. `sent` messages are kept because a delivery report can still move them, so a phone that never reports delivery keeps its `sent` history. Deliveries are deleted before messages, and any delivery still pointing at a pruned message has `message_id` set to NULL.
 
 ## Open questions

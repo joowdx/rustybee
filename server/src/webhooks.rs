@@ -11,6 +11,20 @@ use tokio::task::JoinSet;
 pub const CONCURRENCY: usize = 4;
 pub const CLAIM_LIMIT: i64 = 16;
 const MAX_IDLE: Duration = Duration::from_secs(60);
+/// Stop reading a receiver's response body after this many bytes.
+pub const MAX_RESPONSE_READ: usize = 2048;
+/// Characters of the response body kept in `last_error`.
+pub const MAX_ERROR_CHARS: usize = 500;
+
+/// The first [`MAX_ERROR_CHARS`] characters of at most [`MAX_RESPONSE_READ`]
+/// bytes. A character cut at the byte limit becomes U+FFFD.
+fn response_excerpt(buf: &[u8]) -> String {
+    let buf = &buf[..buf.len().min(MAX_RESPONSE_READ)];
+    String::from_utf8_lossy(buf)
+        .chars()
+        .take(MAX_ERROR_CHARS)
+        .collect()
+}
 
 pub async fn run(app: App) {
     let sem = Arc::new(Semaphore::new(CONCURRENCY));
@@ -79,10 +93,16 @@ async fn post(
         .send()
         .await;
     match res {
-        Ok(r) => {
+        Ok(mut r) => {
             let status = r.status().as_u16();
-            let text = r.text().await.unwrap_or_default();
-            (Some(status), text.chars().take(500).collect())
+            let mut buf = Vec::new();
+            while buf.len() < MAX_RESPONSE_READ {
+                match r.chunk().await {
+                    Ok(Some(c)) => buf.extend_from_slice(&c),
+                    _ => break,
+                }
+            }
+            (Some(status), response_excerpt(&buf))
         }
         Err(e) => (None, e.to_string()),
     }
@@ -135,5 +155,24 @@ pub async fn send_test(app: &App, hook: &WebhookRow) -> Result<u16, String> {
     match post(app, &hook.url, "message.received", &id, &hook.secret, &body).await {
         (Some(s), _) => Ok(s),
         (None, e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ac_008_06_excerpt_is_bounded_and_utf8_safe() {
+        assert_eq!(response_excerpt(b"nope"), "nope");
+        let long = "x".repeat(10_000);
+        assert_eq!(response_excerpt(long.as_bytes()).chars().count(), 500);
+        // 3-byte characters: 2048 bytes hold 682 of them, of which 500 are kept.
+        let wide = "\u{20AC}".repeat(1000);
+        assert_eq!(response_excerpt(wide.as_bytes()), "\u{20AC}".repeat(500));
+        // A character split at the byte limit does not panic.
+        let mut odd = "a".repeat(2047).into_bytes();
+        odd.extend_from_slice("\u{20AC}".as_bytes());
+        assert_eq!(response_excerpt(&odd), "a".repeat(500));
     }
 }

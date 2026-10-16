@@ -30,7 +30,7 @@ Every choice made without asking during the one-shot run. Each one is also liste
 - **002** Ping frames come from the app only. The server never sends pings, which saves server-initiated wakeups on the phone.
 - **002** The default `ping_s` is 270, set with `RUSTYBEE_PING_SECONDS`. Use 60 behind Cloudflare.
 - **003** Message bodies are stored in plain text. The database file is protected by filesystem permissions, with no at-rest encryption.
-- **003** No automatic retention. Messages are kept until the user deletes them; a prune setting may come later.
+- **003** Retention is opt-in with `RUSTYBEE_RETENTION_DAYS`; finished messages (not `sent`) and finished webhook deliveries older than that are pruned daily. Unset keeps everything.
 - **004** No user-facing cancel in the first release. The `cancel` transition exists only for deleting a device that still has queued messages.
 - **005** Single admin with no username field.
 - **006** A window of 1 per device is enough throughput for personal use. Carriers throttle anyway, and AOSP prompts after 30 SMS in 30 minutes.

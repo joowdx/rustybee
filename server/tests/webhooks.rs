@@ -192,6 +192,31 @@ async fn ac_008_03_abort_after_third_4xx() {
 }
 
 #[tokio::test]
+async fn ac_008_06_endless_response_body_is_cut_short() {
+    // A receiver that answers 400 with a body that never ends.
+    let endless = Router::new().fallback(|| async {
+        let chunk = Bytes::from(vec![b'z'; 1024]);
+        let body = futures_util::stream::repeat_with(move || {
+            Ok::<_, std::convert::Infallible>(chunk.clone())
+        });
+        (StatusCode::BAD_REQUEST, axum::body::Body::from_stream(body))
+    });
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/hook", l.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(l, endless).await.unwrap() });
+    let s = server_with(|c| c.webhook_timeout = std::time::Duration::from_secs(30)).await;
+    let key = s.api_key().await;
+    s.pair("A").await;
+    let h = hook(&s, &url, &["message.sent"], true).await;
+    message_through(&s, &key, vec![Event::Dispatch, Event::StatusSent]).await;
+    assert!(eventually(|| async { deliveries(&s, h.id).await[0].attempts >= 1 }).await);
+    let d = &deliveries(&s, h.id).await[0];
+    assert_eq!(d.last_status, Some(400));
+    assert_eq!(d.last_error.as_deref(), Some("z".repeat(500).as_str()));
+    s.stop().await;
+}
+
+#[tokio::test]
 async fn ac_008_05_redeliver_sends_again() {
     let s = server().await;
     let key = s.api_key().await;

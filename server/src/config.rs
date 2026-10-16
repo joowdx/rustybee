@@ -18,6 +18,12 @@ pub struct Config {
     pub fcm_credentials: Option<PathBuf>,
     /// Turnstile on Cloudflare-proxied logins (spec 005).
     pub turnstile: Option<Turnstile>,
+    /// Most `queued` messages one device may hold (spec 007).
+    pub max_queued: u32,
+    /// Accept recipients shorter than 7 digits (spec 004).
+    pub allow_short_codes: bool,
+    /// Prune finished messages and webhook deliveries older than this (spec 003).
+    pub retention_days: Option<u32>,
     // ---- injectable timings and endpoints (tests) ----
     pub inflight_timeout: Duration,
     pub status_timeout: Duration,
@@ -77,6 +83,12 @@ impl Config {
         c.trust_proxy = trust_proxy;
         c.fcm_credentials = env("RUSTYBEE_FCM_CREDENTIALS").map(PathBuf::from);
         c.otp_max_failures = env_num("RUSTYBEE_OTP_MAX_FAILURES")?.unwrap_or(3).max(1);
+        c.max_queued = env_num("RUSTYBEE_MAX_QUEUED")?.unwrap_or(1000).max(1);
+        c.allow_short_codes = matches!(
+            env("RUSTYBEE_ALLOW_SHORT_CODES").as_deref(),
+            Some("1" | "true" | "yes")
+        );
+        c.retention_days = env_num::<u32>("RUSTYBEE_RETENTION_DAYS")?.map(|d| d.max(1));
         c.turnstile = match (
             env("RUSTYBEE_TURNSTILE_SITE_KEY"),
             env("RUSTYBEE_TURNSTILE_SECRET"),
@@ -105,6 +117,9 @@ impl Config {
             trust_proxy: false,
             fcm_credentials: None,
             turnstile: None,
+            max_queued: 1000,
+            allow_short_codes: false,
+            retention_days: None,
             inflight_timeout: Duration::from_secs(120),
             status_timeout: Duration::from_secs(24 * 3600),
             sweep_interval: Duration::from_secs(60),
