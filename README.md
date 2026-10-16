@@ -93,7 +93,7 @@ docker compose up -d
 docker compose ps        # wait until it says "healthy"
 ```
 
-Open the public URL and log in with the password. Compose publishes port 8080 on `127.0.0.1` only, for a reverse proxy or tunnel on the same host; to reach it as `http://<server-ip>:8080` on your LAN with no proxy, change the mapping in `compose.yaml` to `"8080:8080"` (trusted LANs only; public access needs a TLS-terminating proxy or tunnel). After the first login, remove `RUSTYBEE_ADMIN_PASSWORD` from `.env`: it is only read when no password is set yet. To change the password later:
+Open the public URL and log in with the password. Compose publishes port 8080 on `127.0.0.1` only, for a reverse proxy or tunnel on the same host; to reach it as `http://<server-ip>:8080` on your LAN with no proxy, change the mapping in `compose.yaml` to `"8080:8080"` and set `RUSTYBEE_PUBLIC_URL=http://<server-ip>:8080` in `.env`, since the phone pairs and connects through that URL (trusted LANs only; public access needs a TLS-terminating proxy or tunnel). After the first login, remove `RUSTYBEE_ADMIN_PASSWORD` from `.env`: it is only read when no password is set yet. To change the password later:
 
 ```sh
 docker exec -it rustybee /rustybee set-password
