@@ -23,8 +23,10 @@ fun signingValue(key: String, env: String): String? =
 
 val storeFilePath = signingValue("storeFile", "RUSTYBEE_STORE_FILE")
 
-// The repository-root VERSION file is the single version source (spec 001).
-val appVersion = rootProject.file("../VERSION").readText().trim()
+// CI passes the release version in RUSTYBEE_VERSION; local builds fall back to
+// the repository-root VERSION file (spec 001).
+val appVersion = providers.environmentVariable("RUSTYBEE_VERSION").orNull
+    ?: rootProject.file("../VERSION").readText().trim()
 val appVersionCode = appVersion.split(".").map(String::toInt).let { (major, minor, patch) ->
     major * 10_000 + minor * 100 + patch
 }

@@ -1,0 +1,20 @@
+# The only check that runs on every PR, so the one to require in branch
+# protection. With squash merges the title becomes the commit subject that
+# .github/scripts/next-version.sh reads to bump the release (spec 001).
+name: pr
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+jobs:
+  title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Conventional Commits title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          re='^(feat|fix|perf|refactor|chore|docs|test|build|ci|style|revert)(\([^)]+\))?!?: .+'
+          [[ "$TITLE" =~ $re ]] || {
+            echo "::error::PR title must look like 'feat(android): ...', 'fix: ...' or 'feat!: ...' (got: $TITLE)"
+            exit 1
+          }
