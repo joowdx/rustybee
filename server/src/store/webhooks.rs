@@ -321,6 +321,16 @@ pub fn redeliver(c: &Connection, pid: &str, now: i64) -> rusqlite::Result<usize>
     )
 }
 
+/// Retention (spec 003): delete delivered or aborted rows created before
+/// `before`. Pending rows are kept until they finish.
+pub fn prune_finished(c: &Connection, before: i64) -> rusqlite::Result<usize> {
+    c.execute(
+        "DELETE FROM webhook_deliveries WHERE created_at<?1
+           AND (delivered_at IS NOT NULL OR aborted_at IS NOT NULL)",
+        [before],
+    )
+}
+
 /// Earliest pending attempt, for the worker's sleep.
 pub fn next_due(c: &Connection) -> rusqlite::Result<Option<i64>> {
     c.query_row(

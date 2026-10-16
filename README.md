@@ -93,7 +93,7 @@ docker compose up -d
 docker compose ps        # wait until it says "healthy"
 ```
 
-Open the public URL (or `http://<server-ip>:8080` on your LAN) and log in with the password. After the first login, remove `RUSTYBEE_ADMIN_PASSWORD` from `.env`: it is only read when no password is set yet. To change the password later:
+Open the public URL and log in with the password. Compose publishes port 8080 on `127.0.0.1` only, for a reverse proxy or tunnel on the same host; to reach it as `http://<server-ip>:8080` on your LAN with no proxy, change the mapping in `compose.yaml` to `"8080:8080"`. After the first login, remove `RUSTYBEE_ADMIN_PASSWORD` from `.env`: it is only read when no password is set yet. To change the password later:
 
 ```sh
 docker exec -it rustybee /rustybee set-password
@@ -253,6 +253,7 @@ Errors always look like this:
 | 401 | `unauthorized` (missing, wrong or revoked key) |
 | 404 | `not_found` |
 | 409 | `device_disabled` |
+| 429 | `queue_full` (the phone already has `RUSTYBEE_MAX_QUEUED` messages waiting) |
 
 ### From code
 
@@ -376,6 +377,9 @@ Everything is set with environment variables. Only `RUSTYBEE_PUBLIC_URL` is real
 | `RUSTYBEE_PING_SECONDS` | `270` | How often the phone pings. Use `60` behind Cloudflare. |
 | `RUSTYBEE_MESSAGE_TTL_HOURS` | `24` | How long a message waits for an offline phone before it expires. |
 | `RUSTYBEE_OTP_MAX_FAILURES` | `3` | Failed login-code texts in a row before password login unlocks. |
+| `RUSTYBEE_MAX_QUEUED` | `1000` | Most messages waiting for one phone. Sends beyond it get `429 queue_full`. |
+| `RUSTYBEE_ALLOW_SHORT_CODES` | `0` | `1` to allow recipients with 3–6 digits (short codes). Otherwise 7 digits are required. |
+| `RUSTYBEE_RETENTION_DAYS` | — | Delete finished messages and webhook deliveries older than this many days. Unset keeps everything. |
 | `RUSTYBEE_TURNSTILE_SITE_KEY` | — | Turnstile site key. Needs the secret too. |
 | `RUSTYBEE_TURNSTILE_SECRET` | — | Turnstile secret key. |
 | `RUSTYBEE_FCM_CREDENTIALS` | — | Path to a Firebase service-account JSON, for GMS wake-ups. |

@@ -4,7 +4,7 @@ mod common;
 
 use common::*;
 use rustybee::otp;
-use rustybee::store::messages;
+use rustybee::store::{devices, messages};
 use serde_json::Value;
 
 const PHONE: &str = "+15550001111";
@@ -39,6 +39,10 @@ async fn request_code(s: &Server, d: &mut Device) -> (String, String) {
     let code: String = body.chars().filter(char::is_ascii_digit).take(6).collect();
     assert_eq!(code.len(), 6, "{body}");
     (f["data"]["msg_id"].as_str().unwrap().to_string(), code)
+}
+
+fn ip(n: u8) -> std::net::IpAddr {
+    std::net::IpAddr::from([198, 51, 100, n])
 }
 
 async fn failures(s: &Server) -> u32 {
@@ -177,12 +181,12 @@ async fn code_dies_after_five_wrong_tries_and_sends_are_spaced() {
     let wrong = if code == "000000" { "111111" } else { "000000" };
     for _ in 0..otp::MAX_ATTEMPTS {
         assert_eq!(
-            otp::verify(s.app(), otp::Purpose::Login, wrong),
+            otp::verify(s.app(), otp::Purpose::Login, wrong, ip(1)),
             otp::Verify::Wrong
         );
     }
     assert_eq!(
-        otp::verify(s.app(), otp::Purpose::Login, &code),
+        otp::verify(s.app(), otp::Purpose::Login, &code, ip(1)),
         otp::Verify::Expired
     );
     s.stop().await;
@@ -373,5 +377,139 @@ async fn ac_005_17_login_page_shows_no_phone_digits() {
         .unwrap();
     assert!(page.contains("Text me a code"));
     assert!(!page.contains("1111") && !page.contains("•••• "), "{page}");
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_005_18_wrong_codes_from_one_ip_keep_anothers_code() {
+    let s = server().await;
+    set_phone(&s).await;
+    let (_, token) = s.pair("A").await;
+    let mut d = Device::connect(&s, &token).await;
+    let (_, code) = request_code(&s, &mut d).await;
+    let wrong = if code == "000000" { "111111" } else { "000000" };
+    for _ in 0..otp::MAX_ATTEMPTS {
+        assert_eq!(
+            otp::verify(s.app(), otp::Purpose::Login, wrong, ip(1)),
+            otp::Verify::Wrong
+        );
+    }
+    // The guessing IP is locked out, even with the right code.
+    assert_eq!(
+        otp::verify(s.app(), otp::Purpose::Login, &code, ip(1)),
+        otp::Verify::Expired
+    );
+    assert!(otp::pending(s.app(), otp::Purpose::Login));
+    assert_eq!(
+        otp::verify(s.app(), otp::Purpose::Login, &code, ip(2)),
+        otp::Verify::Ok(PHONE.to_string())
+    );
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_005_18_code_dropped_after_global_ceiling() {
+    let s = server().await;
+    set_phone(&s).await;
+    let (_, token) = s.pair("A").await;
+    let mut d = Device::connect(&s, &token).await;
+    let (_, code) = request_code(&s, &mut d).await;
+    let wrong = if code == "000000" { "111111" } else { "000000" };
+    for n in 0..otp::MAX_TOTAL_ATTEMPTS {
+        let who = ip((n / otp::MAX_ATTEMPTS) as u8 + 10);
+        assert_eq!(
+            otp::verify(s.app(), otp::Purpose::Login, wrong, who),
+            otp::Verify::Wrong
+        );
+    }
+    assert!(!otp::pending(s.app(), otp::Purpose::Login));
+    assert_eq!(
+        otp::verify(s.app(), otp::Purpose::Login, &code, ip(99)),
+        otp::Verify::Expired
+    );
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_005_19_failed_verify_does_not_name_the_number() {
+    let s = server().await;
+    set_phone(&s).await;
+    let (_, token) = s.pair("A").await;
+    let mut d = Device::connect(&s, &token).await;
+    let r = post(&s, "/login/code", &[("last4", "1111")]).await;
+    assert_eq!(r.status(), 200);
+    assert!(r.text().await.unwrap().contains("•••• 1111"));
+    let f = d.recv_type("send").await;
+    d.ack(&f["id"]).await;
+    let body = f["data"]["body"].as_str().unwrap();
+    let code: String = body.chars().filter(char::is_ascii_digit).take(6).collect();
+    let wrong = if code == "000000" { "111111" } else { "000000" };
+    let r = post(&s, "/login/verify", &[("code", wrong)]).await;
+    assert_eq!(r.status(), 401);
+    let page = r.text().await.unwrap();
+    assert!(page.contains("name=\"code\""), "{page}");
+    assert!(!page.contains("1111"), "{page}");
+    // The resend form asks for the last 4 again instead of carrying them.
+    assert!(page.contains("name=\"last4\" inputmode"), "{page}");
+    // Throttled responses don't name it either.
+    for _ in 0..5 {
+        post(&s, "/login/verify", &[("code", wrong)]).await;
+    }
+    let r = post(&s, "/login/verify", &[("code", wrong)]).await;
+    assert_eq!(r.status(), 429);
+    assert!(!r.text().await.unwrap().contains("1111"));
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_005_20_orphaned_code_message_is_redacted() {
+    let s = server().await;
+    s.pair("A").await;
+    let device = s.app().store.read(devices::list).await.unwrap()[0].id;
+    let old = s.app().clock.now_ms() - otp::CODE_TTL_MS - 1;
+    let fresh = s.app().clock.now_ms();
+    let ids = s
+        .app()
+        .store
+        .write(move |c| {
+            let mut ids = vec![];
+            for (at, internal) in [(old, true), (fresh, true), (old, false)] {
+                let item = messages::NewMessage {
+                    to: PHONE.into(),
+                    body: "rustybee login code: 123456. Expires in 5 minutes.".into(),
+                };
+                let (_, rows) = messages::create_batch(c, device, &[item], None, at)?;
+                if internal {
+                    messages::mark_internal(c, rows[0].id)?;
+                }
+                ids.push(rows[0].public_id.clone());
+            }
+            Ok(ids)
+        })
+        .await
+        .unwrap();
+    otp::resolve(s.app()).await.unwrap();
+    let mut bodies = vec![];
+    for id in ids {
+        let m = s
+            .app()
+            .store
+            .read(move |c| messages::by_public(c, &id))
+            .await
+            .unwrap()
+            .unwrap();
+        bodies.push(m.body);
+    }
+    assert_eq!(bodies[0], "Login code (hidden)");
+    assert!(
+        bodies[1].contains("123456"),
+        "fresh code kept: {}",
+        bodies[1]
+    );
+    assert!(
+        bodies[2].contains("123456"),
+        "user message kept: {}",
+        bodies[2]
+    );
     s.stop().await;
 }

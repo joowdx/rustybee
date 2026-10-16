@@ -1,8 +1,19 @@
 //! Phone number normalisation (spec 004).
 
-/// Trim, strip spaces, `-`, `(`, `)` and `.`, rewrite a local Philippine
-/// mobile `09XXXXXXXXX` to `+639XXXXXXXXX`, then require `^\+?[0-9]{3,20}$`.
+/// Fewest digits in a recipient unless short codes are allowed.
+pub const MIN_DIGITS: usize = 7;
+/// Fewest digits in a short code.
+pub const MIN_SHORT_DIGITS: usize = 3;
+
+/// [`normalize_with`] without short codes.
 pub fn normalize(input: &str) -> Result<String, String> {
+    normalize_with(input, false)
+}
+
+/// Trim, strip spaces, `-`, `(`, `)` and `.`, rewrite a local Philippine
+/// mobile `09XXXXXXXXX` to `+639XXXXXXXXX`, then require `^\+?[0-9]{7,20}$`,
+/// or `{3,20}` when `allow_short_codes` is set.
+pub fn normalize_with(input: &str, allow_short_codes: bool) -> Result<String, String> {
     let cleaned: String = input
         .trim()
         .chars()
@@ -19,7 +30,12 @@ pub fn normalize(input: &str) -> Result<String, String> {
         _ => cleaned,
     };
     let digits = cleaned.strip_prefix('+').unwrap_or(&cleaned);
-    if (3..=20).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit()) {
+    let min = if allow_short_codes {
+        MIN_SHORT_DIGITS
+    } else {
+        MIN_DIGITS
+    };
+    if (min..=20).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit()) {
         Ok(cleaned)
     } else {
         Err(format!("{:?} is not a valid phone number", input.trim()))
@@ -53,6 +69,17 @@ mod tests {
         assert!(normalize("+").is_err());
         assert!(normalize("++123").is_err());
         assert!(normalize(&"1".repeat(21)).is_err());
-        assert!(normalize("123").is_ok());
+        assert!(normalize("1234567").is_ok());
+    }
+
+    #[test]
+    fn ac_007_08_short_codes_need_opt_in() {
+        assert!(normalize("123").is_err());
+        assert!(normalize("123456").is_err());
+        assert!(normalize("+123456").is_err());
+        assert_eq!(normalize("1234567").unwrap(), "1234567");
+        assert_eq!(normalize_with("123", true).unwrap(), "123");
+        assert_eq!(normalize_with("2336", true).unwrap(), "2336");
+        assert!(normalize_with("12", true).is_err());
     }
 }

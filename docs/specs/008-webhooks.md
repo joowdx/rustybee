@@ -1,7 +1,7 @@
 # 008 — Webhooks
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 - **Events:** `message.sent`, `message.delivered`, `message.failed`, `message.expired`, `message.received`.
@@ -35,7 +35,7 @@ Updated: 2026-10-16
   - **Retryable:** a network error, a timeout, 408, 429 or any 5xx.
   - **Other 4xx:** retried at most twice (three attempts in total), then aborted.
   - **Backoff after attempt n:** 30 s, 2 min, 10 min, 1 h, 6 h, 24 h. The delivery is aborted after the 7th failed attempt.
-  - `last_status` and `last_error` (the first 500 characters of the body or the error) are recorded.
+  - `last_status` and `last_error` (the first 500 characters of the body or the error) are recorded. At most 2 KiB of the response body is read, then the connection is dropped; bytes cut mid-character become U+FFFD.
 - **Redeliver** (UI): resets an aborted or delivered row to `attempts=0`, `next_attempt_at=now`, `aborted_at=NULL`, `delivered_at=NULL`.
 - **Test** (UI): sends a synthetic `message.received` payload marked `"test":true` directly, without writing to the outbox.
 - **Verification recipe** for receivers, documented in the README: split the header, recompute the HMAC over `t.body`, compare in constant time, and reject if `|now − t| > 300 s`.
@@ -46,11 +46,12 @@ Updated: 2026-10-16
 3. AC-008-03 A 500 response retries with the backoff schedule. A 400 response aborts after the 3rd attempt. A 2xx marks the delivery delivered.
 4. AC-008-04 Two workers, or a restart in the middle of a delivery, never deliver the same row concurrently: the lease prevents it, and an expired lease is picked up again.
 5. AC-008-05 Redeliver sends the delivery again.
+6. AC-008-06 A receiver that streams an endless body still gets its status recorded, with `last_error` holding the first 500 characters.
 
 ## Test plan
 | AC | Test |
 |---|---|
-| 01–05 | `server/tests/webhooks.rs` with a local axum receiver and an injected clock and backoff scale |
+| 01–06 | `server/tests/webhooks.rs` with a local axum receiver and an injected clock and backoff scale |
 
 ## Assumptions
 - No automatic disabling of failing webhooks.

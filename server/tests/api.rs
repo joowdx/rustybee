@@ -306,3 +306,56 @@ async fn ac_007_06_batch_counts_and_status() {
     assert_eq!(st, 404);
     s.stop().await;
 }
+
+fn send_n(n: usize) -> Value {
+    let to: Vec<String> = (0..n).map(|i| format!("+155500000{i:02}")).collect();
+    json!({"to": to, "body": "x"})
+}
+
+#[tokio::test]
+async fn ac_007_07_queue_full_returns_429() {
+    let s = server_with(|c| c.max_queued = 3).await;
+    let key = s.api_key().await;
+    s.pair("A").await;
+    let (st, _) = s.api_post(&key, "/api/v1/messages", send_n(2)).await;
+    assert_eq!(st, 202);
+    let (st, v) = s.api_post(&key, "/api/v1/messages", send_n(2)).await;
+    assert_eq!(st, 429);
+    assert_eq!(v["error"]["code"], "queue_full");
+    assert_eq!(count_messages(&s).await, 2);
+    let (st, _) = s.api_post(&key, "/api/v1/messages", send_n(1)).await;
+    assert_eq!(st, 202);
+    assert_eq!(count_messages(&s).await, 3);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_007_08_short_codes_need_opt_in() {
+    let s = server().await;
+    let key = s.api_key().await;
+    s.pair("A").await;
+    let (st, v) = s
+        .api_post(
+            &key,
+            "/api/v1/messages",
+            json!({"to": ["2336"], "body": "x"}),
+        )
+        .await;
+    assert_eq!(st, 400);
+    assert_eq!(v["error"]["code"], "invalid_recipient");
+    s.stop().await;
+
+    let s = server_with(|c| c.allow_short_codes = true).await;
+    let key = s.api_key().await;
+    s.pair("A").await;
+    let (st, v) = s
+        .api_post(
+            &key,
+            "/api/v1/messages",
+            json!({"to": ["2336"], "body": "x"}),
+        )
+        .await;
+    assert_eq!(st, 202);
+    assert_eq!(v["messages"][0]["peer"], "2336");
+    s.stop().await;
+}

@@ -233,6 +233,26 @@ pub fn create_batch(
     Ok((batch_pid, rows))
 }
 
+/// States retention may delete (spec 003): the terminal ones from spec 004
+/// plus inbound `received`. `sent` can still change, so it is kept.
+pub const PRUNABLE_STATES: &str = "'delivered','failed','expired','received'";
+
+/// Delete messages in a [`PRUNABLE_STATES`] state created before `before`, then
+/// batches created before `before` that have no messages left. Returns the
+/// number of messages deleted.
+pub fn prune_finished(c: &Connection, before: i64) -> rusqlite::Result<usize> {
+    let n = c.execute(
+        &format!("DELETE FROM messages WHERE created_at<?1 AND state IN ({PRUNABLE_STATES})"),
+        [before],
+    )?;
+    c.execute(
+        "DELETE FROM batches WHERE created_at<?1
+           AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.batch_id=batches.id)",
+        [before],
+    )?;
+    Ok(n)
+}
+
 /// Mark a message as server-internal (no webhooks, hidden from the API).
 pub fn mark_internal(c: &Connection, id: i64) -> rusqlite::Result<()> {
     c.execute("UPDATE messages SET internal=1 WHERE id=?1", [id])?;
@@ -246,6 +266,15 @@ pub fn redact(c: &Connection, id: i64, body: &str) -> rusqlite::Result<()> {
         params![id, body],
     )?;
     Ok(())
+}
+
+/// Redact every internal message created before `before` that still has its
+/// body; returns how many changed.
+pub fn redact_older(c: &Connection, before: i64, body: &str) -> rusqlite::Result<usize> {
+    c.execute(
+        "UPDATE messages SET body=?2 WHERE internal=1 AND created_at<?1 AND body<>?2",
+        params![before, body],
+    )
 }
 
 /// Insert an inbound SMS. `None` when `(device_id, uid)` was already stored.

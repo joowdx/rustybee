@@ -18,7 +18,9 @@ curl -fsS http://127.0.0.1:8080/api/v1/health
 ```
 
 The image is `FROM scratch`, runs as uid 10001 and keeps everything in the
-`/data` volume. `RUSTYBEE_ADMIN_PASSWORD` is only used when no password is set
+`/data` volume. Compose publishes port 8080 on `127.0.0.1` only, for a proxy or
+tunnel on the same host; change it to `"8080:8080"` only when there is no proxy.
+`RUSTYBEE_ADMIN_PASSWORD` is only used when no password is set
 yet; remove it from `.env` after the first login. To change the password later:
 
 ```sh
@@ -151,6 +153,9 @@ then start it again.
 | `RUSTYBEE_MESSAGE_TTL_HOURS` | `24` | queued-message lifetime |
 | `RUSTYBEE_TRUST_PROXY` | `0` | trust `X-Forwarded-For` / `X-Forwarded-Proto` |
 | `RUSTYBEE_OTP_MAX_FAILURES` | `3` | failed login-code sends before password login unlocks |
+| `RUSTYBEE_MAX_QUEUED` | `1000` | queued messages per device before sends get 429 `queue_full` |
+| `RUSTYBEE_ALLOW_SHORT_CODES` | `0` | `1` to accept 3–6 digit recipients (short codes) |
+| `RUSTYBEE_RETENTION_DAYS` | — | prune finished messages and webhook deliveries older than this |
 | `RUSTYBEE_TURNSTILE_SITE_KEY` | — | Turnstile on Cloudflare-proxied logins; needs the secret too |
 | `RUSTYBEE_TURNSTILE_SECRET` | — | Turnstile Siteverify secret |
 | `RUSTYBEE_FCM_CREDENTIALS` | — | Firebase service-account JSON for wake-ups |

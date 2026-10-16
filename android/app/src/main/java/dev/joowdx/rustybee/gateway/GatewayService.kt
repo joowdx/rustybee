@@ -131,7 +131,9 @@ class GatewayService : Service() {
         )
         scope.launch {
             val now = System.currentTimeMillis()
-            graph.db.pruneSeen(now - 7 * 24 * 3_600_000L)
+            val cutoff = now - 7 * 24 * 3_600_000L
+            graph.db.pruneSeen(cutoff)
+            graph.db.pruneSent(cutoff)
             graph.sender.failLost()
             for (ev in events) runCatching { process(ev) }.onFailure { graph.log("event failed: $it", "E") }
         }

@@ -1,7 +1,7 @@
 # 011 — Android architecture
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 
@@ -45,7 +45,8 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 ```
 - `outbox` holds every device→server frame except `hello`, `health` and acks, until the server acks it.
 - `seen` dedupes server frames by id and is pruned after 7 days.
-- `log` is capped at 1000 rows. Phone numbers are redacted to their last 4 digits.
+- `sent` rows in a final state (`sent`, `delivered`, `failed`) are pruned once `updated_at` is more than 7 days old, at service start next to the `seen` prune. `accepted` rows are kept for `failLost`.
+- `log` is capped at 1000 rows. Phone numbers are redacted to their last 4 digits, whether written with spaces, dashes, dots or parentheses (`555.123.4567`, `(555) 123-4567`, `+1 (555) 123-4567`).
 
 ### GatewayService
 - A foreground service with `foregroundServiceType="remoteMessaging"` and the `FOREGROUND_SERVICE_REMOTE_MESSAGING` permission.
@@ -85,6 +86,8 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 4. AC-011-04 The backoff sequence is 1, 2, 4 … up to 120 s within ±20 %, and resets after a connection has been up for 60 s.
 5. AC-011-05 After a reboot with the gateway enabled, the FGS runs and connects. Manual check on the emulator.
 6. AC-011-06 While connected and idle, `dumpsys power` shows no wake lock held by the app.
+7. AC-011-07 Log redaction keeps only the last 4 digits of numbers written with spaces, dashes, dots or parentheses, and leaves short numbers and ids alone.
+8. AC-011-08 Service start deletes `sent` rows in a final state older than 7 days and keeps `accepted` rows.
 
 ## Test plan
 | AC | Test |
@@ -94,6 +97,8 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 | 03 | `OutboxTest` (Robolectric-free: the SQL lives in a small interface faked in JVM) |
 | 04 | `BackoffTest` |
 | 05, 06 | Manual check in M7 |
+| 07 | `RedactTest` |
+| 08 | `RedactTest` (final-state list); the `Db.pruneSent` SQL is checked by review, since Robolectric is not used |
 
 ## Assumptions
 - Robolectric is not used, to keep the test toolchain light. Code that needs the Android framework is kept thin.

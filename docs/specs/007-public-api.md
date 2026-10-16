@@ -1,7 +1,7 @@
 # 007 — Public API
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 - **Base:** `/api/v1`, JSON in and out, authenticated with `Authorization: Bearer rbk_…` (spec 005). The request body limit is 2 MB.
@@ -14,6 +14,7 @@ Updated: 2026-10-16
   | 404 | `not_found` |
   | 409 | `device_disabled` |
   | 413 | (payload too large) |
+  | 429 | `queue_full` |
 
 ### Message object
 ```json
@@ -39,6 +40,8 @@ Timestamps are RFC 3339 UTC strings with milliseconds.
 - Duplicate recipients within one request are kept. The caller decides.
 - **Paging:** keyset over `id DESC`. The cursor is the opaque base64url of the last row's id.
 - All validation happens before anything is written. An invalid recipient rejects the whole request and names its index: `message: "to[3]: …"`.
+- Recipients need at least 7 digits (spec 004). `RUSTYBEE_ALLOW_SHORT_CODES=1` lowers that to 3 so short codes can be texted.
+- **Backlog cap:** a send is refused with 429 `queue_full`, writing nothing, when the chosen device's `queued` messages plus the new ones would exceed `RUSTYBEE_MAX_QUEUED` (default 1000). The web send forms use the same path.
 
 ## Acceptance criteria
 1. AC-007-01 `POST /messages` with 3 recipients returns 202, one batch and 3 queued messages, and wakes the dispatcher.
@@ -47,11 +50,14 @@ Timestamps are RFC 3339 UTC strings with milliseconds.
 4. AC-007-04 The filters `direction`, `state`, `peer`, `q`, `since` and `until` each narrow the results correctly.
 5. AC-007-05 A request without a key returns 401. `/health` needs no key.
 6. AC-007-06 Batch counts and status follow spec 004.
+7. AC-007-07 With `RUSTYBEE_MAX_QUEUED=3` and 2 messages queued, sending 2 more returns 429 `queue_full` and writes nothing; sending 1 more succeeds.
+8. AC-007-08 A recipient with fewer than 7 digits, such as `2336`, returns 400 `invalid_recipient`, unless `RUSTYBEE_ALLOW_SHORT_CODES=1`.
 
 ## Test plan
 | AC | Test |
 |---|---|
-| 01–06 | `server/tests/api.rs` |
+| 01–08 | `server/tests/api.rs` |
+| 08 | `domain::phone` unit tests |
 
 ## Assumptions
 - No scheduled sends in the first release (non-goal).

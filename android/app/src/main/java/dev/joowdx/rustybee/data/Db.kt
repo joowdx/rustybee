@@ -117,6 +117,16 @@ class Db(context: Context) : SQLiteOpenHelper(context, "rustybee.db", null, 1), 
             arrayOf(since.toString(), SentState.ACCEPTED),
         ).use { it.moveToFirst(); it.getInt(0) }
 
+    /** Deletes `sent` rows in a final state last updated before [before] (AC-011-08). */
+    fun pruneSent(before: Long) {
+        val marks = SentState.FINAL.joinToString(",") { "?" }
+        writableDatabase.delete(
+            "sent",
+            "state IN ($marks) AND updated_at < ?",
+            (SentState.FINAL + before.toString()).toTypedArray(),
+        )
+    }
+
     // --- seen
 
     override fun seen(frameId: String): Boolean =

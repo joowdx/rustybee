@@ -286,3 +286,160 @@ async fn ac_002_10_set_forwarding_checks_rev() {
     assert_eq!(d.recv_type("nack").await["data"]["code"], "invalid");
     s.stop().await;
 }
+
+async fn count(s: &Server, sql: &'static str) -> i64 {
+    s.app()
+        .store
+        .read(move |c| c.query_row(sql, [], |r| r.get::<_, i64>(0)))
+        .await
+        .unwrap()
+}
+
+async fn sink_webhook(s: &Server, events: &[&str]) {
+    let now = s.app().clock.now_ms();
+    let events: Vec<String> = events.iter().map(|e| e.to_string()).collect();
+    s.app()
+        .store
+        .write(move |c| webhooks::create(c, "sink", "http://127.0.0.1:9/none", &events, true, now))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn ac_002_14_inbound_dropped_while_forwarding_off() {
+    let s = server().await;
+    let (_, token) = s.pair("A").await;
+    sink_webhook(&s, &["message.received"]).await;
+    let mut d = Device::connect(&s, &token).await;
+    let off = frame(
+        "set_forwarding",
+        json!({"base_rev": 0, "receive_enabled": false, "filters": {"mode": "off", "rules": []}}),
+    );
+    d.send(&off).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], off["id"]);
+    // An inbound frame queued before the phone turned forwarding off is acked and dropped.
+    let f = frame(
+        "inbound",
+        json!({"uid": "3b0368d22af9d295abcbe52c2ce7fdaa", "from": "+15551234567",
+            "body": "hi", "sim": 1, "received_at": 1_760_000_000_000i64}),
+    );
+    d.send(&f).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
+    // Its id is still recorded, so a replay is acked and does nothing.
+    d.send(&f).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
+    assert_eq!(count(&s, "SELECT count(*) FROM seen_frames").await, 2);
+    assert_eq!(
+        count(&s, "SELECT count(*) FROM messages WHERE direction='in'").await,
+        0
+    );
+    assert_eq!(
+        count(&s, "SELECT count(*) FROM webhook_deliveries").await,
+        0
+    );
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_002_15_status_at_is_clamped_and_parts_checked() {
+    let s = server().await;
+    let key = s.api_key().await;
+    let (_, token) = s.pair("A").await;
+    let mut d = Device::connect(&s, &token).await;
+    let (_, v) = s
+        .api_post(
+            &key,
+            "/api/v1/messages",
+            json!({"to": ["+15550001111"], "body": "x"}),
+        )
+        .await;
+    let msg = v["messages"][0]["id"].as_str().unwrap().to_string();
+    let send = d.recv_type("send").await;
+    d.ack(&send["id"]).await;
+    // `parts` below 1 is a bad frame and changes nothing.
+    let bad = frame(
+        "status",
+        json!({"msg_id": msg, "state": "sent", "at": 1, "parts": 0, "error": null}),
+    );
+    d.send(&bad).await;
+    let n = d.recv_type("nack").await;
+    assert_eq!(n["data"]["ref"], bad["id"]);
+    assert_eq!(n["data"]["code"], "bad_frame");
+    assert_eq!(s.message_state(&key, &msg).await, "dispatched");
+    // A time before dispatch becomes the dispatch time.
+    let f = frame(
+        "status",
+        json!({"msg_id": msg, "state": "sent", "at": 1, "parts": 1, "error": null}),
+    );
+    d.send(&f).await;
+    d.recv_type("ack").await;
+    // A time in the future becomes now.
+    let before = s.app().clock.now_ms();
+    let f = frame(
+        "status",
+        json!({"msg_id": msg, "state": "delivered", "at": i64::MAX, "parts": 1, "error": null}),
+    );
+    d.send(&f).await;
+    d.recv_type("ack").await;
+    let after = s.app().clock.now_ms();
+    let pid = msg.clone();
+    let m = s
+        .app()
+        .store
+        .read(move |c| rustybee::store::messages::by_public(c, &pid))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(m.dispatched_at.is_some());
+    assert_eq!(m.sent_at, m.dispatched_at);
+    let at = m.delivered_at.unwrap();
+    assert!(before <= at && at <= after, "{before} <= {at} <= {after}");
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_004_08_expired_message_takes_late_sent() {
+    let s = server().await;
+    let key = s.api_key().await;
+    let (_, token) = s.pair("A").await;
+    sink_webhook(
+        &s,
+        &["message.expired", "message.sent", "message.delivered"],
+    )
+    .await;
+    let mut d = Device::connect(&s, &token).await;
+    let (_, v) = s
+        .api_post(
+            &key,
+            "/api/v1/messages",
+            json!({"to": ["+15550001111"], "body": "x"}),
+        )
+        .await;
+    let msg = v["messages"][0]["id"].as_str().unwrap().to_string();
+    // The `send` arrives but its ack is lost, so the TTL expires it.
+    d.recv_type("send").await;
+    s.app().clock.advance_ms(25 * 3600 * 1000);
+    rustybee::sweeper::sweep_once(s.app()).await.unwrap();
+    assert_eq!(s.message_state(&key, &msg).await, "expired");
+    // The phone sent it anyway.
+    d.status(&msg, "sent").await;
+    assert_eq!(s.message_state(&key, &msg).await, "sent");
+    d.status(&msg, "delivered").await;
+    assert_eq!(s.message_state(&key, &msg).await, "delivered");
+    for ev in ["message.expired", "message.sent", "message.delivered"] {
+        let n = s
+            .app()
+            .store
+            .read(move |c| {
+                c.query_row(
+                    "SELECT count(*) FROM webhook_deliveries WHERE event=?1",
+                    [ev],
+                    |r| r.get::<_, i64>(0),
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(n, 1, "{ev}");
+    }
+    s.stop().await;
+}

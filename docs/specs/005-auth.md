@@ -1,7 +1,7 @@
 # 005 — Authentication
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 
@@ -26,10 +26,10 @@ Updated: 2026-10-16
   - otherwise it 6 random digits valid for 5 minutes, keeps only their SHA-256 in memory, and replaces any earlier pending code;
   - queues `rustybee login code: 123456. Expires in 5 minutes.` to every admin phone ending in those digits (the same code) on the default device if it is connected, otherwise on any connected device; the message is marked `internal`;
   - is limited to one send per 30 s, 5 per 15 min per client IP, and 20 per hour overall. A whole request counts as one send. Over a limit it returns 429; with no phone or no connected device it returns 409.
-  - the code-entry page then names the number as `•••• 1234` and its "Send a new code" form carries the same `last4`.
-- `POST /login/verify`: constant-time compare; 5 wrong tries end the code. A right code creates a session (303), and the code can't be reused.
+  - the code-entry page then names the number as `•••• 1234` and its "Send a new code" form carries the same `last4`. Only the response to a successful send names it; a failed `POST /login/verify` and any throttled response say "your phone" instead.
+- `POST /login/verify`: constant-time compare. Each client IP gets 5 wrong tries per code; after that the code is treated as expired for that IP only, so one client guessing can't end another's code. The code is dropped after 20 wrong tries from all IPs together, on expiry, or once it matches. A right code creates a session (303), and the code can't be reused.
 - **Failure counter:** `otp_send_failures` goes up by one when a code message ends `failed` or `expired`, disappears, or is still not `sent` after 90 s. Each message counts once. It resets to 0 when a code message is `sent` or `delivered`, and on any successful login.
-- After a code message finishes, its body is replaced with "Login code (hidden)".
+- After a code message finishes, its body is replaced with "Login code (hidden)". Every sweep also redacts any `internal` message older than the code lifetime (5 min) that still has its body, which covers code messages left behind by a restart.
 - Pending codes live in memory, so a restart ends them.
 
 ### Sessions
@@ -38,11 +38,11 @@ Updated: 2026-10-16
 - Logout deletes the session. Changing the password deletes every other session.
 - **CSRF:** non-GET UI requests must carry an `Origin` header (or `Referer` if `Origin` is absent) that matches the request host. SameSite=Strict is the second layer.
 - **Login throttle:** 5 failures per minute per client IP, then `429`. Counted in memory.
-- **Client IP:** with `RUSTYBEE_TRUST_PROXY=1`, taken from `CF-Connecting-IP` when present, else from the **rightmost** `X-Forwarded-For` entry (the one the proxy appended; entries to its left are client-supplied). Otherwise, and when neither header parses, the peer address.
+- **Client IP:** with `RUSTYBEE_TRUST_PROXY=1` and a TCP peer that is loopback or private (IPv4 10/8, 172.16/12, 192.168/16; IPv6 `::1` and `fc00::/7`; IPv4-mapped IPv6 is checked as IPv4), taken from `CF-Connecting-IP` when present, else from the **rightmost** `X-Forwarded-For` entry (the one the proxy appended; entries to its left are client-supplied). Otherwise, and when neither header parses, the peer address. A public peer's proxy headers are ignored, since it can't be the reverse proxy.
 
 ### Turnstile (optional)
 - Enabled when both `RUSTYBEE_TURNSTILE_SITE_KEY` and `RUSTYBEE_TURNSTILE_SECRET` are set. Setting only one fails startup.
-- It applies only to requests that came through Cloudflare: `RUSTYBEE_TRUST_PROXY=1` and a `CF-Connecting-IP` header is present. Cloudflare always sets that header and a client cannot remove it. Requests without it (LAN, or a non-Cloudflare proxy) skip Turnstile, so local login keeps working when the internet or tunnel is down.
+- It applies only to requests that came through Cloudflare: `RUSTYBEE_TRUST_PROXY=1`, a loopback or private peer (as for the client IP), and a `CF-Connecting-IP` header is present. Cloudflare always sets that header and a client cannot remove it. Requests without it (LAN, or a non-Cloudflare proxy) skip Turnstile, so local login keeps working when the internet or tunnel is down.
 - When it applies, the login page loads the Turnstile widget inside the password form and the code-send forms. The widget is meant to be created in **Invisible** mode in the Cloudflare dashboard. Those forms' buttons start disabled and are enabled once a token arrives.
 - `POST /login` and `POST /login/code` then require the `cf-turnstile-response` field. The server checks it with Cloudflare Siteverify (`secret`, `response`, `remoteip` = client IP) before doing anything else except the login throttle. A missing or rejected token, a Siteverify error, timeout (10 s) or `success: false` all return `403` (fail closed). A Turnstile failure does not count toward the login throttle.
 - `POST /login/verify` is not gated; it is already bounded by 5 tries per code and the login throttle.
@@ -75,13 +75,17 @@ Updated: 2026-10-16
 15. AC-005-15 With `RUSTYBEE_TRUST_PROXY=1`, a spoofed leftmost `X-Forwarded-For` entry does not change the client IP used by the login throttle.
 16. AC-005-16 `POST /login/code` with last 4 digits that match no admin phone sends nothing and returns 404 with "isn't registered"; the 6th miss within a minute returns 429. Matching digits text the code to that number only.
 17. AC-005-17 The login page before a code is sent contains no digits of any admin phone.
+18. AC-005-18 Five wrong codes from one IP lock that IP out of the code but another IP can still log in with it; 20 wrong codes in all drop it.
+19. AC-005-19 A failed or throttled `POST /login/verify` response contains no digits of the admin phone; only a successful `POST /login/code` names `•••• 1234`.
+20. AC-005-20 A sweep redacts an internal message older than 5 minutes even when no code is outstanding for it; newer internal messages and normal messages keep their bodies.
+21. AC-005-21 With `RUSTYBEE_TRUST_PROXY=1`, `CF-Connecting-IP` and `X-Forwarded-For` from a public peer are ignored (the peer IP is used and Turnstile does not apply); from a loopback, RFC 1918, ULA or IPv4-mapped private peer they are honoured.
 
 ## Test plan
 | AC | Test |
 |---|---|
 | 01–06 | `server/tests/auth.rs` |
-| 07–12, 16–17 | `server/tests/otp.rs` |
-| 13–15 | `server/tests/auth.rs` |
+| 07–12, 16–20 | `server/tests/otp.rs` |
+| 13–15, 21 | `server/tests/auth.rs` |
 
 ## Assumptions
 - Single admin with no username field.

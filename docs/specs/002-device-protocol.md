@@ -1,7 +1,7 @@
 # 002 — Device protocol
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Context
 This is the contract between the server and the Android app. It replaces MQTT and FCM-as-transport. Golden examples live in `protocol/fixtures/`, and both test suites parse every fixture.
@@ -41,6 +41,7 @@ This is the contract between the server and the Android app. It replaces MQTT an
 
 ### Connection
 - The app opens `GET /api/device/ws` with the header `Authorization: Bearer <device_token>`. A missing or bad token gets HTTP `401` before the upgrade.
+- A WebSocket message or frame larger than 256 KiB closes the socket. No valid frame comes near it.
 - If the device already has an open socket, the server closes the old one with close code **4000 `replaced`**.
 - Close code **4003 `revoked`** means the device was removed. The app wipes its credentials, stops the gateway and shows setup again.
 - Liveness:
@@ -68,6 +69,9 @@ Every text frame is one JSON object:
 | `health` | `{battery, network, permissions, outbox}` | every 15 min while connected, and on a change of charging state or permissions |
 | `set_forwarding` | `{base_rev, receive_enabled, filters}` | the user saves the Forwarding screen on the phone, or the phone restores its own "off" (below) |
 
+- `status.parts` must be at least 1 when present. A `status` with `parts` below 1 is nacked `bad_frame` and changes nothing.
+- The server clamps `status.at` to the range from the message's `dispatched_at` to its own clock (just its own clock if the message has no `dispatched_at`), so a wrong phone clock never stores an outcome before dispatch or in the future.
+- An `inbound` that arrives while the stored `receive_enabled` is `false` (for example one queued on the phone before forwarding was turned off) is acked and dropped: its frame id is recorded, but no message is stored and no webhook fires. The check is made in the same write as the insert.
 - `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100.
 - `inbound.uid` is the lowercase hex of the first 16 bytes of `SHA-256(from + "\n" + received_at + "\n" + body + "\n" + (sim ?: ""))`.
 - `status.error.code` is one of:
@@ -104,7 +108,9 @@ Every text frame is one JSON object:
 - The phone has the final say on forwarding, because the phone's owner may not be the server's admin:
   - The web can turn forwarding off but never on. Only `set_forwarding` from the phone turns it on.
   - The phone also keeps its own "off" locally. Turning forwarding off on the phone takes effect at once, even offline. While that local "off" is set, the phone forwards nothing even if a `config` says `receive_enabled=true`, and once connected it sends `set_forwarding` with `receive_enabled=false` so the server agrees again. The phone clears its local "off" only when the server acks a `set_forwarding` with `receive_enabled=true`.
-  - The web edits the filters only while forwarding is on. A web save with forwarding off keeps the stored filters. Both rules are checked against the stored row in the same write, so a phone change made after the web form was loaded is never undone.
+  - The web edits the filters only while forwarding is on. A web save with forwarding off keeps the stored filters.
+  - The web form carries the `filters_rev` it was loaded with as `base_rev`. The filters are stored only when the row's `filters_rev` still equals `base_rev`. If it does not, and forwarding stays on and the submitted filters differ from the stored ones, the stored filters are kept, the rest of the form (name, enabled, delay, SIM, and turning forwarding off) is still saved, and the page shows "The filters were changed on the phone. Reload to see them." A form without `filters_rev` is treated as stale.
+  - All of these rules are checked against the stored row in the same `UPDATE`, so a phone change made after the web form was loaded is never undone.
 - A replayed `set_forwarding` (same `id`, its ack lost) that was already stored is acked again and not reapplied. One that was refused is judged again.
 
 ### Device handling of `send`
@@ -132,6 +138,9 @@ Every text frame is one JSON object:
 10. AC-002-10 `set_forwarding` with the current `base_rev` stores `receive_enabled` and the filters and is acked, and a `config` with the next `filters_rev` follows. With a stale `base_rev` it is nacked `filters_conflict`, a `config` with the current settings follows, and nothing is stored.
 11. AC-002-11 A web save can turn forwarding off but not on, bumps `filters_rev` when it turns it off, and leaves the filters unchanged while forwarding is off.
 12. AC-002-12 With its local "off" set, the phone forwards nothing when a `config` says `receive_enabled=true`, and sends `set_forwarding` with `receive_enabled=false` once connected.
+13. AC-002-13 A web save whose `filters_rev` is older than the stored one keeps the phone's newer filters and shows the reload error, while still saving the other fields and still able to turn forwarding off. With the current rev, or when the submitted filters equal the stored ones, it saves normally.
+14. AC-002-14 An `inbound` received while the stored `receive_enabled` is `false` is acked and its frame id recorded, but no message row or webhook is created.
+15. AC-002-15 A `status` with `parts` below 1 is nacked `bad_frame` and changes nothing. A `status.at` before `dispatched_at` is stored as `dispatched_at`, and one in the future as the server's now.
 
 ## Test plan
 | AC | Test |
@@ -144,6 +153,9 @@ Every text frame is one JSON object:
 | 10 | `server/tests/device_ws.rs::ac_002_10_set_forwarding_checks_rev` |
 | 11 | `server/tests/ui.rs::ac_002_11_web_turns_forwarding_off_not_on` |
 | 12 | app `ForwardingTest` |
+| 13 | `server/tests/ui.rs::ac_002_13_web_save_keeps_newer_phone_filters` |
+| 14 | `server/tests/device_ws.rs::ac_002_14_inbound_dropped_while_forwarding_off` |
+| 15 | `server/tests/device_ws.rs::ac_002_15_status_at_is_clamped_and_parts_checked` |
 
 ## Assumptions
 - Ping frames come from the app only. The server never sends pings, which saves server-initiated wakeups on the phone.

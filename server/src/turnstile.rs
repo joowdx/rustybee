@@ -3,13 +3,13 @@
 use crate::app::Ctx;
 use axum::http::HeaderMap;
 use serde::Deserialize;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 /// Site key to render on the login page, when Turnstile applies to this request.
-pub fn site_key<'a>(app: &'a Ctx, headers: &HeaderMap) -> Option<&'a str> {
+pub fn site_key<'a>(app: &'a Ctx, headers: &HeaderMap, peer: SocketAddr) -> Option<&'a str> {
     let t = app.cfg.turnstile.as_ref()?;
-    crate::http::via_cloudflare(app, headers).then_some(t.site_key.as_str())
+    crate::http::via_cloudflare(app, headers, Some(peer)).then_some(t.site_key.as_str())
 }
 
 #[derive(Deserialize)]
@@ -19,11 +19,17 @@ struct Siteverify {
 
 /// True when Turnstile does not apply, or Siteverify accepts the token.
 /// Fails closed on a missing token and on any Siteverify error.
-pub async fn passes(app: &Ctx, headers: &HeaderMap, token: &str, ip: IpAddr) -> bool {
+pub async fn passes(
+    app: &Ctx,
+    headers: &HeaderMap,
+    peer: SocketAddr,
+    token: &str,
+    ip: IpAddr,
+) -> bool {
     let Some(t) = app.cfg.turnstile.as_ref() else {
         return true;
     };
-    if !crate::http::via_cloudflare(app, headers) {
+    if !crate::http::via_cloudflare(app, headers, Some(peer)) {
         return true;
     }
     if token.is_empty() {

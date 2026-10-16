@@ -37,7 +37,8 @@ impl State {
         }
     }
 
-    /// Terminal states never change again.
+    /// Terminal states: no server-side event moves them. `expired` alone can still take a
+    /// late `sent` or `delivered` from the phone (spec 004).
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
@@ -119,6 +120,9 @@ pub fn transition(from: State, event: Event) -> Option<State> {
         (S::Dispatched, E::Cancel) => Some(S::Failed),
         (S::Sent, E::StatusDelivered) => Some(S::Delivered),
         (S::Sent, E::StatusFailed) => Some(S::Failed),
+        // The `send` ack was lost and the row expired, but the phone sent it anyway.
+        (S::Expired, E::StatusSent) => Some(S::Sent),
+        (S::Expired, E::StatusDelivered) => Some(S::Delivered),
         _ => None,
     }
 }
@@ -139,6 +143,8 @@ mod tests {
         (State::Dispatched, Event::Cancel, State::Failed),
         (State::Sent, Event::StatusDelivered, State::Delivered),
         (State::Sent, Event::StatusFailed, State::Failed),
+        (State::Expired, Event::StatusSent, State::Sent),
+        (State::Expired, Event::StatusDelivered, State::Delivered),
     ];
 
     #[test]
@@ -161,16 +167,33 @@ mod tests {
 
     #[test]
     fn ac_004_01_terminal_states_never_move() {
-        for from in [
-            State::Delivered,
-            State::Failed,
-            State::Expired,
-            State::Received,
-        ] {
+        for from in [State::Delivered, State::Failed, State::Received] {
             assert!(from.is_terminal());
             for ev in Event::ALL {
                 assert_eq!(transition(from, ev), None);
             }
+        }
+    }
+
+    #[test]
+    fn ac_004_08_expired_takes_a_late_sent_or_delivered() {
+        assert!(State::Expired.is_terminal());
+        assert_eq!(
+            transition(State::Expired, Event::StatusSent),
+            Some(State::Sent)
+        );
+        assert_eq!(
+            transition(State::Expired, Event::StatusDelivered),
+            Some(State::Delivered)
+        );
+        for ev in [
+            Event::Dispatch,
+            Event::StatusFailed,
+            Event::Ttl,
+            Event::Cancel,
+            Event::StatusTimeout,
+        ] {
+            assert_eq!(transition(State::Expired, ev), None, "{ev:?}");
         }
     }
 
