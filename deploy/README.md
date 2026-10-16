@@ -19,7 +19,8 @@ curl -fsS http://127.0.0.1:8080/api/v1/health
 
 The image is `FROM scratch`, runs as uid 10001 and keeps everything in the
 `/data` volume. Compose publishes port 8080 on `127.0.0.1` only, for a proxy or
-tunnel on the same host; change it to `"8080:8080"` only when there is no proxy.
+tunnel on the same host. Change it to `"8080:8080"` only for direct access on a
+trusted LAN; public access needs a TLS-terminating proxy or tunnel.
 `RUSTYBEE_ADMIN_PASSWORD` is only used when no password is set
 yet; remove it from `.env` after the first login. To change the password later:
 

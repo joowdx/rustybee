@@ -8,7 +8,7 @@ services:
     container_name: rustybee
     restart: unless-stopped
     ports:
-      # Loopback only, for a reverse proxy or tunnel on the same host; widen to "8080:8080" only when there is no proxy.
+      # Loopback only, for a reverse proxy or tunnel on the same host; widen to "8080:8080" only for direct access on a trusted LAN; public access needs a TLS-terminating proxy or tunnel.
       - "127.0.0.1:8080:8080"
     environment:
       RUSTYBEE_PUBLIC_URL: ${RUSTYBEE_PUBLIC_URL:?set RUSTYBEE_PUBLIC_URL in .env}
