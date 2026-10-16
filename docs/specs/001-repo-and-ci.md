@@ -4,7 +4,7 @@ Status: approved (self, one-shot)
 Updated: 2026-10-16
 
 ## Context
-The rewrite starts on an orphan branch `rewrite` that shares no history with the legacy code, which stays on `main` and is later renamed `legacy`.
+The rewrite lives on the orphan branch `master`, which shares no history with the legacy code. The legacy code stays on `main`, unchanged, as a read-only reference.
 
 ## Design
 - Layout:

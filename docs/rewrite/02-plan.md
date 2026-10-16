@@ -8,7 +8,7 @@ The current fork (NestJS + Mongo + Redis + Mosquitto + Next.js, and a Java/Kotli
 - no status state machine;
 - webhook replay.
 
-The rewrite is **rustybee**, a single-user SMS gateway rebuilt from scratch in the same repo on an orphan branch `rewrite`, which shares no history with `main`:
+The rewrite is **rustybee**, a single-user SMS gateway rebuilt from scratch in the same repo on the orphan branch `master` (first created as `rewrite`), which shares no history with `main`:
 - **Server:** one Rust binary with SQLite, serving the device WebSocket, the public API and an askama + htmx web UI.
 - **Android app:** native Kotlin, `dev.joowdx.rustybee`, minSdk = targetSdk = 36.
 
@@ -43,7 +43,7 @@ Every piece of work is described in a spec before code is written. The spec is t
 - **Persisting the rule:** in M0, a project `CLAUDE.md` is added with this rule and the spec location, so later sessions follow it too.
 - **Bundling:** specs stay small enough to approve in one sitting. Each milestone below lists the specs it needs. The technical sections that follow are **seed content for those specs**: proposals, not approved designs.
 
-## Repo layout (branch `rewrite`)
+## Repo layout (branch `master`)
 
 ```
 server/        Rust crate `rustybee` (bin)
@@ -54,7 +54,7 @@ branding/      keep the icon pipeline; re-export icons for rustybee
 docs/rewrite/  01-audit.md, 02-plan.md
 .github/workflows/  server.yml (fmt, clippy, test, musl build), android.yml (lint, unit tests, assembleRelease)
 ```
-The branch is an orphan, so none of the old tree is carried over (`api/`, `web/`, `android/`, `mqtt/`, compose, coderabbit, fork workflows, upstream README/SECURITY). The old code stays untouched on `main`, later renamed `legacy`.
+The branch is an orphan, so none of the old tree is carried over (`api/`, `web/`, `android/`, `mqtt/`, compose, coderabbit, fork workflows, upstream README/SECURITY). The old code stays untouched on `main` as a reference.
 
 ## Protocol (M1: written first; both sides code against it)
 
@@ -264,7 +264,7 @@ In one-shot mode each milestone drafts its specs, self-approves them, and implem
 8. **M7, verification:**
    - Check every acceptance criterion against a passing test or a recorded manual check.
    - Flip the specs to `implemented`.
-   - Cut over without a merge, since the histories are unrelated: rename `main` to `legacy`, rename `rewrite` to `main`, and make it the default branch on GitHub. Pushing and changing the default branch happen only after you confirm.
+   - Cut over without a merge, since the histories are unrelated: push `master` and make it the default branch on GitHub; `main` stays as the legacy reference. Pushing and changing the default branch happen only after you confirm.
 
 Delegation: work that is mechanical and fully specified goes to the Cursor runner. That covers fixtures, Askama templates, CSS, CRUD handlers and Gradle boilerplate. Design-heavy parts stay here: the protocol, dispatcher, state machine, service lifecycle and multipart aggregation.
 
