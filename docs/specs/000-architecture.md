@@ -52,14 +52,14 @@ rustybee replaces a NestJS/Mongo/Redis/Mosquitto/Next.js stack and a legacy Andr
 
 ## Acceptance criteria
 1. AC-000-01 The server is one static binary that needs nothing at runtime except a writable data directory.
-2. AC-000-02 No source file, resource or package id contains `textbee` or `vernu`.
+2. AC-000-02 No source file, resource or package id contains `textbee` or `vernu`. The credit note in the root `README.md` is the one exception.
 3. AC-000-03 The footprint budgets above are met (measured in M7).
 
 ## Test plan
 | AC | Test |
 |---|---|
 | 01 | `deploy/Dockerfile` builds a `FROM scratch` image; the container starts |
-| 02 | Verified once at cutover with `git grep -nIiE 'textbee\|vernu' -- . ':!docs' ':!CLAUDE.md'` |
+| 02 | Verified once at cutover with `git grep -nIiE 'textbee\|vernu' -- . ':!docs' ':!CLAUDE.md' ':!README.md'` |
 | 03 | Manual measurement, recorded in `docs/specs/README.md` |
 
 ## Assumptions
