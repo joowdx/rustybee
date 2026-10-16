@@ -1,0 +1,9 @@
+{% for m in rows %}
+<tr>
+  <td><a href="/messages/{{ m.id }}">{{ m.arrow }} {{ m.peer }}</a></td>
+  <td class="body">{{ m.body }}</td>
+  <td><span class="st st-{{ m.state }}">{{ m.state }}</span></td>
+  <td class="muted hide-sm">{{ m.device }}</td>
+  <td class="muted small hide-sm">{{ m.created }}</td>
+</tr>
+{% endfor %}

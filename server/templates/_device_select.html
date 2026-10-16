@@ -1,0 +1,12 @@
+<label>Device
+  <select name="device_id">
+    <option value="">Default</option>
+    {% for d in device_opts %}<option value="{{ d.id }}"{% if d.selected %} selected{% endif %}>{{ d.name }}{% if !d.enabled %} (disabled){% endif %}</option>{% endfor %}
+  </select>
+</label>
+<label>SIM
+  <select name="sim">
+    <option value="">Device default</option>
+    {% for s in sim_opts %}<option value="{{ s.value }}"{% if s.selected %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
+  </select>
+</label>

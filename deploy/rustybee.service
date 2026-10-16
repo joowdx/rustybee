@@ -1,0 +1,42 @@
+# Install the binary to /usr/local/bin/rustybee, copy this file to
+# /etc/systemd/system/, then: systemctl daemon-reload && systemctl enable --now rustybee
+# Configuration lives in /etc/rustybee.env (same variables as .env.example).
+# Set the password with:
+#   sudo systemd-run --pty -p DynamicUser=yes -p StateDirectory=rustybee \
+#     -E RUSTYBEE_DATA_DIR=/var/lib/rustybee /usr/local/bin/rustybee set-password
+
+[Unit]
+Description=rustybee SMS gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/rustybee serve
+Environment=RUSTYBEE_DATA_DIR=/var/lib/rustybee
+Environment=RUSTYBEE_BIND=127.0.0.1:8080
+EnvironmentFile=-/etc/rustybee.env
+DynamicUser=yes
+StateDirectory=rustybee
+Restart=on-failure
+RestartSec=2s
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

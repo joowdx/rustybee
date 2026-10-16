@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>API keys</h1>
+{% if let Some(k) = created %}
+<section class="card">
+  <p>Key <b>{{ k.0 }}</b> created. Copy it now; it is not shown again.</p>
+  <div class="secret"><code id="new-key">{{ k.1 }}</code><button class="ghost" data-copy="new-key">Copy</button></div>
+</section>
+{% endif %}
+<form method="post" action="/keys" class="row">
+  <label>Name <input name="name" required maxlength="64" placeholder="e.g. home automation"></label>
+  <div><button>Create key</button></div>
+</form>
+<p></p>
+{% if keys.is_empty() %}<p class="muted">No keys yet.</p>{% else %}
+<table>
+  <thead><tr><th>Name</th><th class="hide-sm">Prefix</th><th class="hide-sm">Last used</th><th>Status</th><th style="width:40%">Actions</th></tr></thead>
+  <tbody>
+  {% for k in keys %}
+  <tr>
+    <td>{{ k.name }}</td>
+    <td class="mono hide-sm">{{ k.prefix }}…</td>
+    <td class="small hide-sm">{{ k.last_used }}</td>
+    <td>{% if k.revoked %}<span class="st st-failed">revoked</span>{% else %}<span class="st st-sent">active</span>{% endif %}</td>
+    <td>
+      <form method="post" action="/keys/{{ k.id }}/rename" class="row"><input name="name" value="{{ k.name }}" required maxlength="64" aria-label="New name"><button class="ghost">Rename</button></form>
+      <div class="actions">
+      {% if !k.revoked %}<form method="post" action="/keys/{{ k.id }}/revoke" hx-confirm="Revoke {{ k.name }}?"><button class="danger">Revoke</button></form>{% endif %}
+      <form method="post" action="/keys/{{ k.id }}/delete" hx-confirm="Delete {{ k.name }}?"><button class="danger">Delete</button></form>
+      </div>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<h2>Using the API</h2>
+<pre>curl -X POST {{ base }}/api/v1/messages \
+  -H "Authorization: Bearer rbk_…" \
+  -H "Content-Type: application/json" \
+  -d '{"to":["+15551234567"],"body":"Hello from rustybee"}'</pre>
+{% endblock %}

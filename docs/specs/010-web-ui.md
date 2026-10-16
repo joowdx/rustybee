@@ -52,5 +52,8 @@ All pages except `/login` require a session (spec 005).
 
 ## Assumptions
 - No command palette and no charts.
+- Webhook events are picked with one checkbox per event; at least one is required.
+- The SMS filter editor is a textarea with one rule per line: `<field> <op> <value>` (for example `sender equals +15550000009`), plus mode and ignore-case controls.
+- "Polls until a device pairs" is `GET /devices/paired?n=<count>` every 3 s via htmx; it answers `204`, or `HX-Refresh: true` once the device count grows.
 
 ## Open questions

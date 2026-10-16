@@ -1,0 +1,27 @@
+# docker compose --env-file .env up -d   (run from deploy/)
+services:
+  rustybee:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: rustybee
+    container_name: rustybee
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      RUSTYBEE_PUBLIC_URL: ${RUSTYBEE_PUBLIC_URL:?set RUSTYBEE_PUBLIC_URL in .env}
+      RUSTYBEE_ADMIN_PASSWORD: ${RUSTYBEE_ADMIN_PASSWORD:-}
+      RUSTYBEE_PING_SECONDS: ${RUSTYBEE_PING_SECONDS:-270}
+      RUSTYBEE_MESSAGE_TTL_HOURS: ${RUSTYBEE_MESSAGE_TTL_HOURS:-24}
+      RUSTYBEE_TRUST_PROXY: ${RUSTYBEE_TRUST_PROXY:-0}
+      RUSTYBEE_FCM_CREDENTIALS: ${RUSTYBEE_FCM_CREDENTIALS:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - rustybee-data:/data
+      # Uncomment to enable FCM wake-ups, and set
+      # RUSTYBEE_FCM_CREDENTIALS=/run/secrets/fcm.json in .env.
+      # - ./fcm.json:/run/secrets/fcm.json:ro
+
+volumes:
+  rustybee-data:

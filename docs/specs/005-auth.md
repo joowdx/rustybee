@@ -42,5 +42,7 @@ Updated: 2026-10-16
 
 ## Assumptions
 - Single admin with no username field.
+- `rustybee set-password` run from the CLI deletes every session, since there is no current session to keep.
+- The login throttle window (1 min) can be injected, for tests only.
 
 ## Open questions

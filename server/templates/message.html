@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="/messages">← Messages</a></p>
+<h1>{{ m.arrow }} {{ m.peer }} <span class="st st-{{ m.state }}">{{ m.state }}</span></h1>
+<pre>{{ m.body }}</pre>
+<dl class="kv">
+  <dt>Id</dt><dd class="mono">{{ m.id }}</dd>
+  <dt>Device</dt><dd>{{ m.device }}</dd>
+  {% if let Some(b) = m.batch %}<dt>Batch</dt><dd><a href="/messages?batch_id={{ b }}">{{ b }}</a></dd>{% endif %}
+  {% if let Some(s) = m.sim %}<dt>SIM</dt><dd>{{ s }}</dd>{% endif %}
+  {% if let Some(p) = m.parts %}<dt>Parts</dt><dd>{{ p }}</dd>{% endif %}
+  {% if let Some(e) = m.error %}<dt>Error</dt><dd class="error">{{ e }}</dd>{% endif %}
+</dl>
+<h2>Timeline</h2>
+<ul class="timeline">
+{% for t in m.timeline %}<li><b>{{ t.0 }}</b> <span class="muted">{{ t.1 }}</span></li>{% endfor %}
+</ul>
+<h2>Webhook deliveries</h2>
+{% if deliveries.is_empty() %}<p class="muted">None.</p>{% else %}
+<table>
+  <thead><tr><th>Event</th><th>Status</th><th class="hide-sm">Attempts</th><th>Last</th></tr></thead>
+  <tbody>
+  {% for d in deliveries %}<tr><td><a href="/webhooks/{{ d.webhook }}">{{ d.event }}</a></td><td>{{ d.status }}</td><td class="hide-sm">{{ d.attempts }}</td><td class="small">{{ d.last }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<h2>Reply</h2>
+<form method="post" action="/messages/{{ m.id }}/reply" class="stack">
+  <label>Message to {{ m.peer }}
+    <textarea name="body" rows="3" data-counter="reply-count" required maxlength="1600"></textarea>
+  </label>
+  <output id="reply-count" class="muted small"></output>
+  <div><button>Send reply</button></div>
+</form>
+{% endblock %}

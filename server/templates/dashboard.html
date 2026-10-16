@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<div hx-ext="sse" sse-connect="/events">
+  <div id="live" hx-get="/partials/dashboard" hx-trigger="sse:device throttle:1s, sse:message throttle:1s" hx-swap="innerHTML">
+  {% include "_dashboard.html" %}
+  </div>
+</div>
+{% endblock %}

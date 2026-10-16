@@ -1,0 +1,5 @@
+# Only the server crate is needed in the build context.
+*
+!server/
+server/target/
+server/data/

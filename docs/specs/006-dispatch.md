@@ -36,6 +36,8 @@ There is one tokio task per connected device. It is started after `welcome` and 
 ### Acks and statuses from the device
 - An `ack` whose `ref` matches a message's `frame_id` sets `device_acked_at`. Acks for other frames (`welcome`, `config`) are ignored.
 - A `status` frame applies the spec 004 transition, acks the frame, and fires `Notify`.
+- A `nack` whose `ref` matches a message's `frame_id` fails the message with error `nack_<code>` and fires `Notify`; the frame is never resent.
+- A disabled device still connects and reports statuses, but its dispatcher sends nothing until it is enabled again; its queued messages wait.
 
 ### Disconnect
 - Set `connected=0` and `last_seen_at`.

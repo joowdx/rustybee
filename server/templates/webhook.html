@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="/webhooks">← Webhooks</a></p>
+<h1>{{ form.name }}</h1>
+<section class="card">
+  <p class="muted small">Signing secret (header <code>X-Rustybee-Signature</code>)</p>
+  <div class="secret"><code id="wh-secret">{{ secret }}</code><button class="ghost" data-copy="wh-secret">Copy</button></div>
+  <div class="actions">
+    <form method="post" action="/webhooks/{{ id }}/test"><button class="ghost">Send test</button></form>
+    <form method="post" action="/webhooks/{{ id }}/rotate" hx-confirm="Rotate the secret? The old one stops working."><button class="ghost">Rotate secret</button></form>
+    <form method="post" action="/webhooks/{{ id }}/delete" hx-confirm="Delete this webhook and its delivery log?"><button class="danger">Delete</button></form>
+  </div>
+</section>
+<h2>Edit</h2>
+<form method="post" action="/webhooks/{{ id }}" class="stack">
+{% include "_webhook_form.html" %}
+  <div><button>Save</button></div>
+</form>
+<h2>Deliveries</h2>
+{% if deliveries.is_empty() %}<p class="muted">No deliveries.</p>{% else %}
+<table>
+  <thead><tr><th>Event</th><th style="width:7em">Status</th><th class="hide-sm" style="width:5em">Tries</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for d in deliveries %}
+  <tr>
+    <td>{{ d.event }}{% if let Some(m) = d.message %}<br><a class="small" href="/messages/{{ m }}">message</a>{% endif %}<br><span class="muted small">{{ d.created }}</span></td>
+    <td>{{ d.status }}</td>
+    <td class="hide-sm">{{ d.attempts }}</td>
+    <td class="small">{{ d.last }}
+      <details><summary>Payload</summary><pre>{{ d.payload }}</pre></details>
+      <form method="post" action="/webhooks/deliveries/{{ d.id }}/redeliver"><button class="link">Redeliver</button></form>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if let Some(b) = older %}<p><a href="/webhooks/{{ id }}?before={{ b }}">Older deliveries</a></p>{% endif %}
+{% endif %}
+{% endblock %}

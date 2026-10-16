@@ -1,0 +1,131 @@
+//! Settings from environment variables (spec 014), plus test-only knobs.
+
+use std::path::PathBuf;
+use std::time::Duration;
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub bind: String,
+    pub data_dir: PathBuf,
+    /// Base URL without a trailing slash.
+    pub public_url: String,
+    pub admin_password: Option<String>,
+    pub ping_s: u32,
+    /// Close a device socket after this much silence (`2 × ping_s + 30 s`).
+    pub idle_timeout: Duration,
+    pub message_ttl: Duration,
+    pub trust_proxy: bool,
+    pub fcm_credentials: Option<PathBuf>,
+    // ---- injectable timings and endpoints (tests) ----
+    pub inflight_timeout: Duration,
+    pub status_timeout: Duration,
+    pub sweep_interval: Duration,
+    pub webhook_backoff: Vec<Duration>,
+    pub webhook_lease: Duration,
+    pub webhook_timeout: Duration,
+    pub fcm_interval: Duration,
+    pub fcm_oauth_url: String,
+    pub fcm_base_url: String,
+    /// Login throttle: failures allowed per window.
+    pub login_window: Duration,
+}
+
+fn env(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|v| !v.trim().is_empty())
+}
+
+fn env_num<T: std::str::FromStr>(key: &str) -> Result<Option<T>, String> {
+    match env(key) {
+        None => Ok(None),
+        Some(v) => v
+            .trim()
+            .parse()
+            .map(Some)
+            .map_err(|_| format!("{key}: not a number: {v:?}")),
+    }
+}
+
+impl Config {
+    pub fn from_env() -> Result<Config, String> {
+        let bind = env("RUSTYBEE_BIND").unwrap_or_else(|| "127.0.0.1:8080".into());
+        let data_dir = PathBuf::from(env("RUSTYBEE_DATA_DIR").unwrap_or_else(|| "./data".into()));
+        let public_url = env("RUSTYBEE_PUBLIC_URL").unwrap_or_else(|| format!("http://{bind}"));
+        let ping_s: u32 = env_num("RUSTYBEE_PING_SECONDS")?.unwrap_or(270).max(10);
+        let ttl_h: u64 = env_num("RUSTYBEE_MESSAGE_TTL_HOURS")?.unwrap_or(24).max(1);
+        let trust_proxy = matches!(
+            env("RUSTYBEE_TRUST_PROXY").as_deref(),
+            Some("1" | "true" | "yes")
+        );
+        let mut c = Config::base(bind, data_dir, &public_url);
+        c.admin_password = env("RUSTYBEE_ADMIN_PASSWORD");
+        c.ping_s = ping_s;
+        c.idle_timeout = Duration::from_secs(2 * ping_s as u64 + 30);
+        c.message_ttl = Duration::from_secs(ttl_h * 3600);
+        c.trust_proxy = trust_proxy;
+        c.fcm_credentials = env("RUSTYBEE_FCM_CREDENTIALS").map(PathBuf::from);
+        Ok(c)
+    }
+
+    fn base(bind: String, data_dir: PathBuf, public_url: &str) -> Config {
+        Config {
+            bind,
+            data_dir,
+            public_url: public_url.trim_end_matches('/').to_string(),
+            admin_password: None,
+            ping_s: 270,
+            idle_timeout: Duration::from_secs(570),
+            message_ttl: Duration::from_secs(24 * 3600),
+            trust_proxy: false,
+            fcm_credentials: None,
+            inflight_timeout: Duration::from_secs(120),
+            status_timeout: Duration::from_secs(24 * 3600),
+            sweep_interval: Duration::from_secs(60),
+            webhook_backoff: crate::domain::default_backoff(),
+            webhook_lease: Duration::from_secs(60),
+            webhook_timeout: Duration::from_secs(10),
+            fcm_interval: Duration::from_secs(60),
+            fcm_oauth_url: "https://oauth2.googleapis.com/token".into(),
+            fcm_base_url: "https://fcm.googleapis.com".into(),
+            login_window: Duration::from_secs(60),
+        }
+    }
+
+    /// Defaults for tests: ephemeral port, the given data dir, production timings.
+    pub fn for_tests(data_dir: PathBuf) -> Config {
+        Config::base("127.0.0.1:0".into(), data_dir, "http://127.0.0.1")
+    }
+
+    pub fn db_path(&self) -> PathBuf {
+        self.data_dir.join("rustybee.db")
+    }
+
+    pub fn secure_cookies(&self) -> bool {
+        self.public_url.starts_with("https://")
+    }
+
+    /// `ws_url` for pairing: http→ws, https→wss, plus `/api/device/ws`.
+    pub fn ws_url(&self) -> String {
+        let base = if let Some(rest) = self.public_url.strip_prefix("https://") {
+            format!("wss://{rest}")
+        } else if let Some(rest) = self.public_url.strip_prefix("http://") {
+            format!("ws://{rest}")
+        } else {
+            self.public_url.clone()
+        };
+        format!("{base}/api/device/ws")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ws_url_substitution() {
+        let mut c = Config::for_tests("/tmp".into());
+        c.public_url = "https://sms.example.org".into();
+        assert_eq!(c.ws_url(), "wss://sms.example.org/api/device/ws");
+        c.public_url = "http://10.0.0.2:8080".into();
+        assert_eq!(c.ws_url(), "ws://10.0.0.2:8080/api/device/ws");
+    }
+}

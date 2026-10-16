@@ -1,0 +1,60 @@
+[package]
+name = "rustybee"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Personal SMS gateway server"
+publish = false
+
+[[bin]]
+name = "rustybee"
+path = "src/main.rs"
+
+[lib]
+name = "rustybee"
+path = "src/lib.rs"
+
+[dependencies]
+# HTTP server, WebSocket and SSE
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query", "form", "ws", "multipart"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util"] }
+tower-http = { version = "0.6", features = ["limit", "trace"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# Storage
+rusqlite = { version = "0.37", features = ["bundled"] }
+# Web UI
+askama = "0.14"
+rust-embed = "8"
+# Formats and ids
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ulid = "1"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+base64 = "0.22"
+csv = "1"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# Auth and signing
+argon2 = { version = "0.5", features = ["std"] }
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+# Outbound HTTP (webhooks, FCM)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "json"] }
+jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
+# Runtime
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+mimalloc = { version = "0.1", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
+tokio-tungstenite = "0.26"
+flate2 = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true
+codegen-units = 1
+panic = "abort"

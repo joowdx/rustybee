@@ -1,0 +1,7 @@
+<label>Name <input name="name" value="{{ form.name }}" required maxlength="64"></label>
+<label>URL <input type="url" name="url" value="{{ form.url }}" required placeholder="https://example.org/hook"></label>
+<fieldset class="row">
+  <legend class="muted small">Events</legend>
+  {% for e in form.events %}<label class="check"><input type="checkbox" name="ev_{{ e.key }}"{% if e.on %} checked{% endif %}> {{ e.name }}</label>{% endfor %}
+</fieldset>
+<label class="check"><input type="checkbox" name="active"{% if form.active %} checked{% endif %}> Active</label>

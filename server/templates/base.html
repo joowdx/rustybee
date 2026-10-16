@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
+<title>{{ l.title }} · rustybee</title>
+<link rel="stylesheet" href="{{ l.css }}">
+<script src="{{ l.htmx }}" defer></script>
+<script src="{{ l.sse }}" defer></script>
+<script src="{{ l.js }}" defer></script>
+</head>
+<body hx-boost="true">
+{% if l.nav != "" %}
+<nav class="bar">
+  <a class="brand" href="/">rustybee</a>
+  <div class="tabs">
+    <a href="/"{% if l.nav == "home" %} aria-current="page"{% endif %}>Home</a>
+    <a href="/send"{% if l.nav == "send" %} aria-current="page"{% endif %}>Send</a>
+    <a href="/bulk"{% if l.nav == "bulk" %} aria-current="page"{% endif %}>Bulk</a>
+    <a href="/messages"{% if l.nav == "messages" %} aria-current="page"{% endif %}>Messages</a>
+    <a href="/devices"{% if l.nav == "devices" %} aria-current="page"{% endif %}>Devices</a>
+    <a href="/keys"{% if l.nav == "keys" %} aria-current="page"{% endif %}>Keys</a>
+    <a href="/webhooks"{% if l.nav == "webhooks" %} aria-current="page"{% endif %}>Webhooks</a>
+    <a href="/settings"{% if l.nav == "settings" %} aria-current="page"{% endif %}>Settings</a>
+  </div>
+  <form method="post" action="/logout" class="logout"><button class="link">Log out</button></form>
+</nav>
+{% endif %}
+<main>
+{% if let Some(f) = l.flash %}<p class="flash">{{ f }}</p>{% endif %}
+{% if let Some(e) = l.error %}<p class="error">{{ e }}</p>{% endif %}
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

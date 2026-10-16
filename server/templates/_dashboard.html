@@ -1,0 +1,31 @@
+<section class="cards">
+{% if devices.is_empty() %}
+  <p>No devices yet. <a href="/devices">Pair a phone</a>.</p>
+{% endif %}
+{% for d in devices %}
+  <article class="card">
+    <h3><span class="dot{% if d.online %} on{% endif %}"></span>{{ d.name }}</h3>
+    <div class="muted small">{{ d.model }}</div>
+    <dl class="kv">
+      <dt>Battery</dt><dd>{{ d.battery }}{% if d.charging %} (charging){% endif %}</dd>
+      <dt>Network</dt><dd>{{ d.network }}</dd>
+      <dt>Last seen</dt><dd>{{ d.last_seen }}</dd>
+      <dt>Outbox</dt><dd>{{ d.outbox }}</dd>
+      <dt>Queued</dt><dd>{{ d.queued }}</dd>
+    </dl>
+    {% for w in d.warnings %}<p class="warn">{{ w }}</p>{% endfor %}
+  </article>
+{% endfor %}
+</section>
+<h2>Today</h2>
+<section class="stats">
+  <div class="stat"><b>{{ counts.sent }}</b><span class="muted">sent</span></div>
+  <div class="stat"><b>{{ counts.delivered }}</b><span class="muted">delivered</span></div>
+  <div class="stat"><b>{{ counts.failed }}</b><span class="muted">failed</span></div>
+  <div class="stat"><b>{{ counts.received }}</b><span class="muted">received</span></div>
+  <div class="stat"><b>{{ counts.queued }}</b><span class="muted">queued</span></div>
+</section>
+<h2>Recent</h2>
+{% if rows.is_empty() %}<p class="muted">No messages yet.</p>{% else %}
+<table>{% include "_table_head.html" %}<tbody>{% include "_rows.html" %}</tbody></table>
+{% endif %}

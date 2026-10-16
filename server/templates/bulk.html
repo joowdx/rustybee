@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Bulk send</h1>
+
+{% if let Some(r) = result %}<p class="flash">Queued {{ r.count }} messages. <a href="/messages?batch_id={{ r.batch_id }}">View batch</a></p>{% endif %}
+{% if token.is_empty() %}
+<form method="post" action="/bulk/upload" enctype="multipart/form-data" class="stack">
+  <p class="muted">Step 1: upload a CSV with a header row (up to 1 MB and 1000 rows).</p>
+  <label>CSV file <input type="file" name="file" accept=".csv,text/csv" required></label>
+  <div><button>Upload</button></div>
+</form>
+{% else %}
+<form method="post" action="/bulk/preview" class="stack">
+  <input type="hidden" name="token" value="{{ token }}">
+  <p class="muted">{{ total }} rows. Step 2: pick the phone column. Step 3: write the template; other columns are variables, e.g. <code>{% raw %}{{name}}{% endraw %}</code>.</p>
+  <label>Phone column
+    <select name="phone">
+      {% for h in headers %}<option value="{{ h.value }}"{% if h.selected %} selected{% endif %}>{{ h.value }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Template
+    <textarea name="template" rows="5" data-counter="tpl-count" required>{{ template }}</textarea>
+  </label>
+  <output id="tpl-count" class="muted small"></output>
+  <div class="row">{% include "_device_select.html" %}</div>
+  <div class="actions">
+    <button class="ghost">Preview</button>
+    <button formaction="/bulk/send">Send {{ total }} messages</button>
+  </div>
+</form>
+{% if !preview.is_empty() %}
+<h2>Preview</h2>
+<table>
+  <thead><tr><th style="width:30%">To</th><th>Body</th><th style="width:5em">Parts</th></tr></thead>
+  <tbody>
+  {% for p in preview %}<tr><td>{{ p.to }}</td><td>{{ p.body }}</td><td>{{ p.parts }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endif %}
+{% endblock %}

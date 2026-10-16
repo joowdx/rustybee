@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Devices</h1>
+{% if let Some(p) = pair %}
+<section class="card">
+  <h2>Pair a device</h2>
+  <p>Scan this code with the rustybee app, or open the link on the phone.</p>
+  <div class="qr">{{ p.qr|safe }}</div>
+  <div class="secret"><code id="pair-link">{{ p.link }}</code><button class="ghost" data-copy="pair-link">Copy</button></div>
+  <p class="muted small">Code <code>{{ p.code }}</code> · <span data-expires="{{ p.expires }}">expires in 10:00</span></p>
+  <div hx-get="/devices/paired?n={{ p.count }}" hx-trigger="every 3s" hx-swap="none"></div>
+</section>
+{% else %}
+<form method="post" action="/devices/pair"><button>Pair a device</button></form>
+{% endif %}
+{% if devices.is_empty() %}<p class="muted">No devices paired yet.</p>{% endif %}
+{% for d in devices %}
+<section class="card" id="d-{{ d.id }}">
+  <h3><span class="dot{% if d.online %} on{% endif %}"></span>{{ d.name }}{% if d.is_default %} <span class="st">default</span>{% endif %}{% if !d.enabled %} <span class="st st-failed">disabled</span>{% endif %}</h3>
+  <div class="muted small">{{ d.model }} · last seen {{ d.last_seen }}</div>
+  <details>
+    <summary>Settings</summary>
+    <form method="post" action="/devices/{{ d.id }}" class="stack">
+      <label>Name <input name="name" value="{{ d.name }}" required maxlength="64"></label>
+      <label class="check"><input type="checkbox" name="enabled"{% if d.enabled %} checked{% endif %}> Enabled for sending</label>
+      <label>Send delay (ms, 0–3600000) <input type="number" name="send_delay_ms" min="0" max="3600000" value="{{ d.send_delay_ms }}"></label>
+      <label class="check"><input type="checkbox" name="receive_enabled"{% if d.receive_enabled %} checked{% endif %}> Forward received SMS</label>
+      <label>Preferred SIM
+        <select name="sim">
+          <option value="">Phone default</option>
+          {% for s in d.sims %}<option value="{{ s.value }}"{% if s.selected %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>SMS filter
+        <select name="filter_mode">
+          <option value="off"{% if d.filter_mode == "off" %} selected{% endif %}>Off</option>
+          <option value="allow"{% if d.filter_mode == "allow" %} selected{% endif %}>Allow only matching</option>
+          <option value="block"{% if d.filter_mode == "block" %} selected{% endif %}>Block matching</option>
+        </select>
+      </label>
+      <label>Rules, one per line: <code>field op value</code> (field: sender, body, any; op: equals, contains, starts_with, ends_with)
+        <textarea name="rules" rows="3">{{ d.rules }}</textarea>
+      </label>
+      <label class="check"><input type="checkbox" name="ignore_case"{% if d.ignore_case %} checked{% endif %}> Ignore case</label>
+      <div><button>Save</button></div>
+    </form>
+  </details>
+  <div class="actions">
+    {% if !d.is_default %}<form method="post" action="/devices/{{ d.id }}/default"><button class="ghost">Make default</button></form>{% endif %}
+    <form method="post" action="/devices/{{ d.id }}/delete" class="row" hx-confirm="Remove {{ d.name }}? Queued messages are cancelled.">
+      <label class="check"><input type="checkbox" name="confirm" required> Confirm</label>
+      <button class="danger">Remove</button>
+    </form>
+  </div>
+</section>
+{% endfor %}
+{% endblock %}

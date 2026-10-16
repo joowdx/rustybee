@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Send</h1>
+
+{% if let Some(r) = result %}<p class="flash">Queued {{ r.count }} message{% if r.count != 1 %}s{% endif %}. <a href="/messages?batch_id={{ r.batch_id }}">View batch</a></p>{% endif %}
+<form method="post" action="/send" class="stack">
+  <label>To (comma or newline separated)
+    <textarea name="to" rows="2" data-chips="to-chips" required placeholder="+15551234567">{{ to }}</textarea>
+  </label>
+  <div id="to-chips" class="chips"></div>
+  <label>Message
+    <textarea name="body" rows="5" data-counter="body-count" required maxlength="1600">{{ body }}</textarea>
+  </label>
+  <output id="body-count" class="muted small">{{ counter }}</output>
+  <div class="row">{% include "_device_select.html" %}</div>
+  <div><button>Send</button></div>
+</form>
+{% endblock %}

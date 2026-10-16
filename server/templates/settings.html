@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Settings</h1>
+<h2>Change password</h2>
+<form method="post" action="/settings/password" class="stack">
+  <label>Current password <input type="password" name="current" autocomplete="current-password" required></label>
+  <label>New password (at least 10 characters) <input type="password" name="new" autocomplete="new-password" minlength="10" required></label>
+  <label>Repeat <input type="password" name="repeat" autocomplete="new-password" minlength="10" required></label>
+  <div><button>Change password</button></div>
+</form>
+<h2>Sessions</h2>
+<table>
+  <thead><tr><th>Browser</th><th class="hide-sm">Signed in</th><th>Last seen</th><th style="width:7em"></th></tr></thead>
+  <tbody>
+  {% for s in sessions %}
+  <tr>
+    <td class="small">{{ s.agent }}{% if s.current %} <span class="st st-sent">this one</span>{% endif %}</td>
+    <td class="small hide-sm">{{ s.created }}</td>
+    <td class="small">{{ s.last_seen }}</td>
+    <td><form method="post" action="/settings/sessions/{{ s.id }}/revoke"><button class="danger">Revoke</button></form></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted small">rustybee {{ version }}</p>
+{% endblock %}

@@ -1,0 +1,411 @@
+//! Web UI (spec 010): HTTP-level checks on status, redirects and markup.
+
+mod common;
+
+use common::*;
+use rustybee::assets::Assets;
+use std::io::Write;
+
+struct Ui<'a> {
+    s: &'a Server,
+    cookie: String,
+}
+
+impl<'a> Ui<'a> {
+    async fn new(s: &'a Server) -> Ui<'a> {
+        let cookie = s.login().await;
+        Ui { s, cookie }
+    }
+
+    async fn get(&self, path: &str) -> (u16, String) {
+        let r = self
+            .s
+            .http
+            .get(self.s.url(path))
+            .header("Cookie", &self.cookie)
+            .send()
+            .await
+            .unwrap();
+        let st = r.status().as_u16();
+        (st, r.text().await.unwrap())
+    }
+
+    async fn post(&self, path: &str, form: &[(&str, &str)]) -> reqwest::Response {
+        self.s
+            .http
+            .post(self.s.url(path))
+            .header("Cookie", &self.cookie)
+            .header("Origin", &self.s.base)
+            .form(form)
+            .send()
+            .await
+            .unwrap()
+    }
+}
+
+fn between<'h>(html: &'h str, start: &str, end: &str) -> &'h str {
+    let i = html
+        .find(start)
+        .unwrap_or_else(|| panic!("{start} not in page"))
+        + start.len();
+    let j = html[i..].find(end).unwrap() + i;
+    &html[i..j]
+}
+
+#[tokio::test]
+async fn ac_010_01_routes_need_session() {
+    let s = server().await;
+    let key = s.api_key().await;
+    s.pair("Phone").await;
+    let (_, v) = s
+        .api_post(
+            &key,
+            "/api/v1/messages",
+            serde_json::json!({"to": ["+15550000001"], "body": "hi"}),
+        )
+        .await;
+    let msg = v["messages"][0]["id"].as_str().unwrap().to_string();
+    let now = s.app().clock.now_ms();
+    let hook = s
+        .app()
+        .store
+        .write(move |c| {
+            rustybee::store::webhooks::create(
+                c,
+                "h",
+                "https://x.test/h",
+                &["message.sent".into()],
+                true,
+                now,
+            )
+        })
+        .await
+        .unwrap();
+    let routes = [
+        "/".to_string(),
+        "/send".into(),
+        "/bulk".into(),
+        "/messages".into(),
+        format!("/messages/{msg}"),
+        "/devices".into(),
+        "/keys".into(),
+        "/webhooks".into(),
+        format!("/webhooks/{}", hook.public_id),
+        "/settings".into(),
+        "/partials/dashboard".into(),
+        "/messages/rows".into(),
+    ];
+    let ui = Ui::new(&s).await;
+    // Without a session: the login page renders, everything else redirects.
+    let r = s.http.get(s.url("/login")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(r.text().await.unwrap().contains("name=\"password\""));
+    for path in routes.iter().chain(std::iter::once(&"/events".to_string())) {
+        let r = s.http.get(s.url(path)).send().await.unwrap();
+        assert_eq!(r.status(), 303, "{path}");
+        assert_eq!(r.headers()["location"], "/login", "{path}");
+    }
+    for path in &routes {
+        let (st, _) = ui.get(path).await;
+        assert_eq!(st, 200, "{path}");
+    }
+    let (_, home) = ui.get("/").await;
+    assert!(home.contains("sse-connect=\"/events\""));
+    assert!(home.contains("Phone"));
+    let (_, detail) = ui.get(&format!("/messages/{msg}")).await;
+    assert!(detail.contains("+15550000001") && detail.contains("Reply"));
+    // SSE stream.
+    let r = s
+        .http
+        .get(s.url("/events"))
+        .header("Cookie", &ui.cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(
+        r.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/event-stream")
+    );
+    drop(r);
+    // Static assets: hashed names are immutable.
+    let css = between(&home, "<link rel=\"stylesheet\" href=\"", "\"").to_string();
+    assert!(css.starts_with("/static/app.") && css.ends_with(".css"));
+    let r = s.http.get(s.url(&css)).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        r.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
+    let r = s.http.get(s.url("/static/nope.js")).send().await.unwrap();
+    assert_eq!(r.status(), 404);
+    // The login page with no password set shows the hint.
+    let empty = server().await;
+    let r = empty.http.get(empty.url("/login")).send().await.unwrap();
+    assert!(r.text().await.unwrap().contains("set-password"));
+    empty.stop().await;
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_010_02_send_form_creates_visible_messages() {
+    let s = server().await;
+    s.pair("Phone").await;
+    let ui = Ui::new(&s).await;
+    let r = ui
+        .post(
+            "/send",
+            &[
+                ("to", "+15550000001, +1 555 000 0002"),
+                ("body", "From the UI"),
+                ("device_id", ""),
+                ("sim", ""),
+            ],
+        )
+        .await;
+    assert_eq!(r.status(), 200);
+    let html = r.text().await.unwrap();
+    assert!(html.contains("Queued 2 messages"), "{html}");
+    let (_, list) = ui.get("/messages").await;
+    assert_eq!(list.matches("From the UI").count(), 2);
+    assert!(list.contains("+15550000002"));
+    let (_, filtered) = ui.get("/messages?peer=%2B15550000002").await;
+    assert_eq!(filtered.matches("From the UI").count(), 1);
+    // A bad recipient re-renders the form with the error and keeps the input.
+    let r = ui
+        .post("/send", &[("to", "abc"), ("body", "keep me")])
+        .await;
+    assert_eq!(r.status(), 422);
+    let html = r.text().await.unwrap();
+    assert!(html.contains("class=\"error\"") && html.contains("keep me"));
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_010_03_bulk_csv_flow() {
+    let s = server().await;
+    let key = s.api_key().await;
+    s.pair("Phone").await;
+    let ui = Ui::new(&s).await;
+    let csv = "name,phone\nAnn,+15550000001\nBob,+15550000002\nCyd,+15550000003\n";
+    let boundary = "XyZboundary123";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"c.csv\"\r\nContent-Type: text/csv\r\n\r\n{csv}\r\n--{boundary}--\r\n"
+    );
+    let r = s
+        .http
+        .post(s.url("/bulk/upload"))
+        .header("Cookie", &ui.cookie)
+        .header("Origin", &s.base)
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let html = r.text().await.unwrap();
+    assert!(html.contains("3 rows"));
+    let token = between(&html, "name=\"token\" value=\"", "\"").to_string();
+    // The phone column is detected.
+    assert!(html.contains("<option value=\"phone\" selected>"));
+    let form = [
+        ("token", token.as_str()),
+        ("phone", "phone"),
+        ("template", "Hi {{name}}"),
+        ("device_id", ""),
+        ("sim", ""),
+    ];
+    let preview = ui.post("/bulk/preview", &form).await.text().await.unwrap();
+    assert!(preview.contains("Hi Ann") && preview.contains("Hi Cyd"));
+    let r = ui.post("/bulk/send", &form).await;
+    assert_eq!(r.status(), 200);
+    let html = r.text().await.unwrap();
+    assert!(html.contains("Queued 3 messages"), "{html}");
+    let (_, v) = s.api_get(&key, "/api/v1/messages").await;
+    let mut bodies: Vec<String> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            format!(
+                "{} {}",
+                m["peer"].as_str().unwrap(),
+                m["body"].as_str().unwrap()
+            )
+        })
+        .collect();
+    bodies.sort();
+    assert_eq!(
+        bodies,
+        vec![
+            "+15550000001 Hi Ann",
+            "+15550000002 Hi Bob",
+            "+15550000003 Hi Cyd"
+        ]
+    );
+    // The token is single-use.
+    let r = ui.post("/bulk/send", &form).await;
+    assert_eq!(r.status(), 422);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_010_04_pairing_link_is_accepted() {
+    let s = server().await;
+    let ui = Ui::new(&s).await;
+    let r = ui.post("/devices/pair", &[]).await;
+    assert_eq!(r.status(), 200);
+    let html = r.text().await.unwrap();
+    assert!(html.contains("<svg"), "QR code inline");
+    let link = between(&html, "<code id=\"pair-link\">", "</code>")
+        .replace("&amp;", "&")
+        .replace("&#38;", "&");
+    assert!(
+        link.starts_with("rustybee://pair?u=http%3A%2F%2F127.0.0.1&c="),
+        "{link}"
+    );
+    let code = link.rsplit("&c=").next().unwrap();
+    assert_eq!(code.len(), 20);
+    let r = s
+        .http
+        .post(s.url("/api/device/pair"))
+        .json(&serde_json::json!({"code": code, "name": "Scanned"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    // The polling endpoint notices the new device.
+    let r = s
+        .http
+        .get(s.url("/devices/paired?n=0"))
+        .header("Cookie", &ui.cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.headers()["hx-refresh"], "true");
+    let (_, list) = ui.get("/devices").await;
+    assert!(list.contains("Scanned"));
+    s.stop().await;
+}
+
+#[test]
+fn ac_010_05_static_assets_under_40kb_gzipped() {
+    let mut total = 0;
+    for name in Assets::iter() {
+        let f = Assets::get(&name).unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        gz.write_all(&f.data).unwrap();
+        let n = gz.finish().unwrap().len();
+        total += n;
+    }
+    assert!(total < 40 * 1024, "embedded assets gzip to {total} bytes");
+}
+
+#[tokio::test]
+async fn device_settings_keys_and_webhooks_forms() {
+    let s = server().await;
+    let (pid, token) = s.pair("Phone").await;
+    let mut d = Device::connect(&s, &token).await;
+    let ui = Ui::new(&s).await;
+    // Device settings are saved and pushed as `config`.
+    let r = ui
+        .post(
+            &format!("/devices/{pid}"),
+            &[
+                ("name", "Renamed"),
+                ("enabled", "on"),
+                ("send_delay_ms", "1500"),
+                ("sim", "1"),
+                ("filter_mode", "block"),
+                ("rules", "sender equals +15550000009\nbody contains promo"),
+                ("ignore_case", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status(), 303);
+    assert_eq!(r.headers()["location"], "/devices?ok=saved");
+    let cfg = d.recv_type("config").await;
+    assert_eq!(cfg["data"]["name"], "Renamed");
+    assert_eq!(cfg["data"]["sim"], 1);
+    assert_eq!(cfg["data"]["receive_enabled"], false);
+    assert_eq!(cfg["data"]["filters"]["mode"], "block");
+    assert_eq!(cfg["data"]["filters"]["rules"][1]["op"], "contains");
+    let (_, page) = ui.get("/devices?ok=saved").await;
+    assert!(page.contains("Renamed") && page.contains("body contains promo"));
+    let r = ui
+        .post(
+            &format!("/devices/{pid}"),
+            &[("name", "x"), ("rules", "nonsense")],
+        )
+        .await;
+    assert!(r.headers()["location"].to_str().unwrap().contains("err="));
+    // Keys: the secret is shown once.
+    let html = ui
+        .post("/keys", &[("name", "cli")])
+        .await
+        .text()
+        .await
+        .unwrap();
+    let secret = between(&html, "<code id=\"new-key\">", "</code>").to_string();
+    assert!(secret.starts_with("rbk_"));
+    let (st, _) = s.api_get(&secret, "/api/v1/devices").await;
+    assert_eq!(st, 200);
+    let (_, keys) = ui.get("/keys").await;
+    assert!(!keys.contains(&secret) && keys.contains("curl"));
+    // Webhooks: create, then edit.
+    let r = ui
+        .post(
+            "/webhooks",
+            &[
+                ("name", "sink"),
+                ("url", "https://example.org/h"),
+                ("ev_sent", "on"),
+                ("active", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status(), 303);
+    let loc = r.headers()["location"].to_str().unwrap().to_string();
+    let (st, page) = ui.get(&loc).await;
+    assert_eq!(st, 200);
+    assert!(page.contains("Created.") && page.contains("https://example.org/h"));
+    // Removing the device needs the confirm box, then closes the socket with 4003.
+    let r = ui.post(&format!("/devices/{pid}/delete"), &[]).await;
+    assert!(r.headers()["location"].to_str().unwrap().contains("err="));
+    let r = ui
+        .post(&format!("/devices/{pid}/delete"), &[("confirm", "on")])
+        .await;
+    assert_eq!(r.headers()["location"], "/devices?ok=removed");
+    assert_eq!(d.close_code(2000).await, Some(4003));
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn messages_load_more_pages() {
+    let s = server().await;
+    let key = s.api_key().await;
+    s.pair("Phone").await;
+    let to: Vec<String> = (0..60).map(|i| format!("+155500{i:05}")).collect();
+    s.api_post(
+        &key,
+        "/api/v1/messages",
+        serde_json::json!({"to": to, "body": "bulk"}),
+    )
+    .await;
+    let ui = Ui::new(&s).await;
+    let (_, page) = ui.get("/messages").await;
+    assert_eq!(page.matches("<tr>").count() - 1, 50);
+    let more = between(&page, "hx-get=\"/messages/rows?", "\"")
+        .replace("&amp;", "&")
+        .replace("&#38;", "&");
+    let (st, rows) = ui.get(&format!("/messages/rows?{more}")).await;
+    assert_eq!(st, 200);
+    assert_eq!(rows.matches("<tr>").count(), 10);
+    assert!(!rows.contains("Load more"));
+    s.stop().await;
+}

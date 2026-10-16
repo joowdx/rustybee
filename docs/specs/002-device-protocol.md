@@ -56,7 +56,7 @@ Every text frame is one JSON object:
 - `v` is always 1. A frame with a different `v`, malformed JSON, or an unknown `type` gets a `nack` (when it has an `id`) and is otherwise ignored.
 - **ack:** `{"v":1,"id":"<new ulid>","type":"ack","data":{"ref":"<id>"}}`. The receiver sends it **after** it has durably handled the frame. Acks are never acked.
 - **nack:** `{"type":"nack","data":{"ref":"<id>","code":"bad_frame|unsupported|invalid","message":"…"}}`. The sender must not retransmit a nacked frame.
-- **Retransmit rule:** neither side retransmits during a healthy connection. After every (re)connect, each side resends every frame it has not had acked, with the **same `id`**. The device sends its unacked frames after `hello`, and the server after `welcome`.
+- **Retransmit rule:** neither side retransmits during a healthy connection. After every (re)connect, each side resends every frame it has not had acked, with the **same `id`**. Both sides resend after the `welcome` exchange: the server right after sending `welcome`, the device right after receiving it.
 - **Idempotency:** a receiver that sees an `id` again, or a duplicate business key (`msg_id` + `state` for status, `uid` for inbound), acks it and does nothing else.
 
 ### Device → server
@@ -128,5 +128,6 @@ Every text frame is one JSON object:
 ## Assumptions
 - Ping frames come from the app only. The server never sends pings, which saves server-initiated wakeups on the phone.
 - The default `ping_s` is 270, set with `RUSTYBEE_PING_SECONDS`. Use 60 behind Cloudflare.
+- The idle-close timeout is derived from `ping_s` but can be injected directly, for tests only.
 
 ## Open questions
