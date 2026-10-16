@@ -11,8 +11,8 @@ Updated: 2026-10-16
 
 ### Login methods
 - The default is a one-time code texted to the admin phone through a connected device. The password is the fallback.
-- **Admin phone:** `settings.admin_phone`, set on the Settings page. A code is texted to the new number and must be entered there before the number is stored. It can be removed.
-- A **code** can be requested when an admin phone is set and at least one enabled device is connected.
+- **Admin phones:** one or more numbers in `settings.admin_phone`, newline-separated (an older single value reads as a list of one). Each is added on the Settings page: a code is texted to the new number and must be entered there before the number is stored. Adding a number already in the list is refused. Each can be removed on its own.
+- A **code** can be requested when at least one admin phone is set and at least one enabled device is connected.
 - The **password** is accepted only when a password is set and at least one of these holds:
   - no admin phone is set (bootstrap);
   - no device is connected;
@@ -20,10 +20,13 @@ Updated: 2026-10-16
 - `POST /login` re-checks this and returns 403 when the password is not allowed. `rustybee set-password` stays the recovery path.
 
 ### Login codes
-- `POST /login/code`:
-  - generates 6 random digits valid for 5 minutes, keeps only their SHA-256 in memory, and replaces any earlier pending code;
-  - queues `rustybee login code: 123456. Expires in 5 minutes.` to the admin phone on the default device if it is connected, otherwise on any connected device; the message is marked `internal`;
-  - is limited to one send per 30 s, 5 per 15 min per client IP, and 20 per hour overall. Over a limit it returns 429; with no phone or no connected device it returns 409.
+- The login page shows no hint of any admin number. It asks for the **last 4 digits** of the phone to text.
+- `POST /login/code` takes `last4` (exactly 4 digits):
+  - if no admin phone ends in those digits, nothing is sent and the page says "Sorry, that number isn't registered." with 404. The miss counts toward the login throttle (5 per minute per IP), so guessing is bounded;
+  - otherwise it 6 random digits valid for 5 minutes, keeps only their SHA-256 in memory, and replaces any earlier pending code;
+  - queues `rustybee login code: 123456. Expires in 5 minutes.` to every admin phone ending in those digits (the same code) on the default device if it is connected, otherwise on any connected device; the message is marked `internal`;
+  - is limited to one send per 30 s, 5 per 15 min per client IP, and 20 per hour overall. A whole request counts as one send. Over a limit it returns 429; with no phone or no connected device it returns 409.
+  - the code-entry page then names the number as `•••• 1234` and its "Send a new code" form carries the same `last4`.
 - `POST /login/verify`: constant-time compare; 5 wrong tries end the code. A right code creates a session (303), and the code can't be reused.
 - **Failure counter:** `otp_send_failures` goes up by one when a code message ends `failed` or `expired`, disappears, or is still not `sent` after 90 s. Each message counts once. It resets to 0 when a code message is `sent` or `delivered`, and on any successful login.
 - After a code message finishes, its body is replaced with "Login code (hidden)".
@@ -66,20 +69,24 @@ Updated: 2026-10-16
 9. AC-005-09 With no device connected, or no admin phone, the password is accepted and a code request returns 409.
 10. AC-005-10 A code dies after 5 wrong tries. A second send within 30 s returns 429.
 11. AC-005-11 Code messages are missing from `GET /api/v1/messages`, return 404 from `GET /api/v1/messages/{id}`, and fire no webhooks.
-12. AC-005-12 The admin phone is stored only after the code texted to it is entered in Settings.
+12. AC-005-12 An admin phone is stored only after the code texted to it is entered in Settings. Adding a second number keeps the first; a duplicate is refused; removing one keeps the others.
 13. AC-005-13 With Turnstile on and a `CF-Connecting-IP` header, `POST /login` and `POST /login/code` without a valid token return 403; with one Siteverify accepts, login succeeds and Siteverify gets the `CF-Connecting-IP` as `remoteip`. An unreachable Siteverify returns 403.
 14. AC-005-14 With Turnstile on but no `CF-Connecting-IP` header, the login page has no widget and login works without a token.
 15. AC-005-15 With `RUSTYBEE_TRUST_PROXY=1`, a spoofed leftmost `X-Forwarded-For` entry does not change the client IP used by the login throttle.
+16. AC-005-16 `POST /login/code` with last 4 digits that match no admin phone sends nothing and returns 404 with "isn't registered"; the 6th miss within a minute returns 429. Matching digits text the code to that number only.
+17. AC-005-17 The login page before a code is sent contains no digits of any admin phone.
 
 ## Test plan
 | AC | Test |
 |---|---|
 | 01–06 | `server/tests/auth.rs` |
-| 07–12 | `server/tests/otp.rs` |
+| 07–12, 16–17 | `server/tests/otp.rs` |
 | 13–15 | `server/tests/auth.rs` |
 
 ## Assumptions
 - Single admin with no username field.
+- Admin phones stay in the `settings` table as a newline list rather than a new table: no migration, and an existing single number keeps working.
+- Two admin phones sharing the same last 4 digits both get the code.
 - `rustybee set-password` run from the CLI deletes every session, since there is no current session to keep.
 - The login throttle window (1 min) can be injected, for tests only.
 

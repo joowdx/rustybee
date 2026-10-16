@@ -143,8 +143,8 @@ fn flash_text(key: &str) -> String {
         "password" => "Password changed. Other sessions were signed out.",
         "session" => "Browser signed out.",
         "phone_code" => "Code sent. Enter it below to confirm the number.",
-        "phone" => "Phone confirmed. Logins now use a texted code.",
-        "phone_removed" => "Phone removed. Password login is back on.",
+        "phone" => "Phone confirmed. It can now receive login codes.",
+        "phone_removed" => "Phone removed.",
         _ => "Done.",
     }
     .to_string()

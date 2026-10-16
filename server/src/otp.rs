@@ -80,23 +80,52 @@ pub struct Methods {
     pub otp: bool,
     pub password: bool,
     pub has_password: bool,
-    /// The admin phone with all but the last two digits hidden.
-    pub phone_hint: Option<String>,
+    /// At least one admin phone is set.
+    pub has_phone: bool,
     pub online: bool,
     pub failures: u32,
 }
 
-pub fn admin_phone(c: &Connection) -> rusqlite::Result<Option<String>> {
-    get_setting(c, PHONE_KEY)
+/// Admin phones, stored newline-separated; an older single value is a list of one.
+pub fn admin_phones(c: &Connection) -> rusqlite::Result<Vec<String>> {
+    Ok(get_setting(c, PHONE_KEY)?
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
-pub fn set_admin_phone(c: &Connection, phone: Option<&str>) -> rusqlite::Result<()> {
-    match phone {
-        Some(p) => set_setting(c, PHONE_KEY, p),
-        None => c
-            .execute("DELETE FROM settings WHERE key=?1", [PHONE_KEY])
-            .map(|_| ()),
+fn save_phones(c: &Connection, list: &[String]) -> rusqlite::Result<()> {
+    if list.is_empty() {
+        c.execute("DELETE FROM settings WHERE key=?1", [PHONE_KEY])
+            .map(|_| ())
+    } else {
+        set_setting(c, PHONE_KEY, &list.join("\n"))
     }
+}
+
+/// Add an admin phone; false when it is already in the list.
+pub fn add_admin_phone(c: &Connection, phone: &str) -> rusqlite::Result<bool> {
+    let mut list = admin_phones(c)?;
+    if list.iter().any(|p| p == phone) {
+        return Ok(false);
+    }
+    list.push(phone.to_string());
+    save_phones(c, &list).map(|_| true)
+}
+
+pub fn remove_admin_phone(c: &Connection, phone: &str) -> rusqlite::Result<()> {
+    let mut list = admin_phones(c)?;
+    list.retain(|p| p != phone);
+    save_phones(c, &list)
+}
+
+/// The last four digits of a phone number.
+pub fn last4(phone: &str) -> String {
+    let digits: Vec<char> = phone.chars().filter(char::is_ascii_digit).collect();
+    digits[digits.len().saturating_sub(4)..].iter().collect()
 }
 
 pub fn send_failures(c: &Connection) -> rusqlite::Result<u32> {
@@ -110,9 +139,7 @@ pub fn reset_failures(c: &Connection) -> rusqlite::Result<()> {
 }
 
 pub fn mask(phone: &str) -> String {
-    let n = phone.chars().count();
-    let tail: String = phone.chars().skip(n.saturating_sub(2)).collect();
-    format!("•••• {tail}")
+    format!("•••• {}", last4(phone))
 }
 
 /// Enabled devices with a live socket, the default one first.
@@ -127,17 +154,18 @@ pub async fn methods(app: &App) -> store::Result<Methods> {
     resolve(app).await?;
     let (hash, phone, failures) = app
         .store
-        .read(|c| Ok((auth::password_hash(c)?, admin_phone(c)?, send_failures(c)?)))
+        .read(|c| Ok((auth::password_hash(c)?, admin_phones(c)?, send_failures(c)?)))
         .await?;
     let online = !online_devices(app).await?.is_empty();
     let has_password = hash.is_some();
-    let otp = phone.is_some() && online;
-    let fallback = phone.is_none() || !online || failures >= app.cfg.otp_max_failures;
+    let has_phone = !phone.is_empty();
+    let otp = has_phone && online;
+    let fallback = !has_phone || !online || failures >= app.cfg.otp_max_failures;
     Ok(Methods {
         otp,
         password: has_password && fallback,
         has_password,
-        phone_hint: phone.as_deref().map(mask),
+        has_phone,
         online,
         failures,
     })
@@ -146,6 +174,12 @@ pub async fn methods(app: &App) -> store::Result<Methods> {
 #[derive(Debug)]
 pub enum SendError {
     NoPhone,
+    /// No admin phone ends in the given last four digits.
+    NotRegistered,
+    /// The last four digits were not exactly four digits.
+    BadDigits,
+    /// The number being confirmed is already an admin phone.
+    AlreadyAdded,
     InvalidPhone(String),
     Offline,
     TooSoon,
@@ -156,6 +190,9 @@ impl std::fmt::Display for SendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SendError::NoPhone => f.write_str("No admin phone is set."),
+            SendError::NotRegistered => f.write_str("Sorry, that number isn't registered."),
+            SendError::BadDigits => f.write_str("Enter the last 4 digits of your phone number."),
+            SendError::AlreadyAdded => f.write_str("That number is already a login phone."),
             SendError::InvalidPhone(e) => write!(f, "That phone number is not valid: {e}."),
             SendError::Offline => f.write_str("No device is online to send the code."),
             SendError::TooSoon => {
@@ -192,25 +229,36 @@ fn allow_send(st: &mut OtpState, ip: IpAddr, now: i64) -> bool {
     true
 }
 
-/// Text a fresh code. For `Login` the number is the stored admin phone; for
-/// `Verify` it is the number being confirmed. A new code replaces any
-/// pending one for the same purpose.
-pub async fn send(
-    app: &App,
-    purpose: Purpose,
-    to: Option<&str>,
-    ip: IpAddr,
-) -> Result<(), SendError> {
-    let to = match (purpose, to) {
-        (Purpose::Verify, Some(raw)) => phone::normalize(raw).map_err(SendError::InvalidPhone)?,
-        _ => app
-            .store
-            .read(admin_phone)
-            .await?
-            .ok_or(SendError::NoPhone)?,
-    };
+/// Text a fresh code. For `Login`, `to` is the last four digits and the code
+/// goes to every admin phone ending in them; for `Verify` it is the number
+/// being confirmed. A new code replaces any pending one for the same purpose.
+pub async fn send(app: &App, purpose: Purpose, to: &str, ip: IpAddr) -> Result<(), SendError> {
+    let phones = app.store.read(admin_phones).await?;
+    if purpose == Purpose::Login && phones.is_empty() {
+        return Err(SendError::NoPhone);
+    }
     let Some(&device_id) = online_devices(app).await?.first() else {
         return Err(SendError::Offline);
+    };
+    let to: Vec<String> = match purpose {
+        Purpose::Verify => {
+            let p = phone::normalize(to).map_err(SendError::InvalidPhone)?;
+            if phones.contains(&p) {
+                return Err(SendError::AlreadyAdded);
+            }
+            vec![p]
+        }
+        Purpose::Login => {
+            let digits = to.trim();
+            if digits.len() != 4 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(SendError::BadDigits);
+            }
+            let hits: Vec<String> = phones.into_iter().filter(|p| last4(p) == digits).collect();
+            if hits.is_empty() {
+                return Err(SendError::NotRegistered);
+            }
+            hits
+        }
     };
     let now = app.clock.now_ms();
     if !allow_send(&mut state(app), ip, now) {
@@ -218,35 +266,41 @@ pub async fn send(
     }
     let code = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
     let body = format!("rustybee login code: {code}. Expires in 5 minutes.");
-    let items = vec![NewMessage {
-        to: to.clone(),
-        body,
-    }];
-    let row = app
+    let items: Vec<NewMessage> = to
+        .iter()
+        .map(|p| NewMessage {
+            to: p.clone(),
+            body: body.clone(),
+        })
+        .collect();
+    let rows = app
         .store
         .write(move |c| {
             let (_, rows) = messages::create_batch(c, device_id, &items, None, now)?;
-            let row = rows.into_iter().next().expect("one message");
-            messages::mark_internal(c, row.id)?;
-            Ok(row)
+            for row in &rows {
+                messages::mark_internal(c, row.id)?;
+            }
+            Ok(rows)
         })
         .await?;
     {
         let mut st = state(app);
         *st.slot(purpose) = Some(Pending {
             hash: sha256(&code),
-            phone: to,
+            phone: to[0].clone(),
             expires_at: now + CODE_TTL_MS,
             attempts: 0,
         });
-        st.outstanding.push(Outstanding {
+        st.outstanding.extend(rows.iter().map(|row| Outstanding {
             msg_id: row.id,
             created_at: now,
             counted: false,
-        });
+        }));
     }
     app.hub.notify(device_id);
-    app.publish(UiEvent::Message(row.public_id));
+    for row in rows {
+        app.publish(UiEvent::Message(row.public_id));
+    }
     Ok(())
 }
 
@@ -292,6 +346,16 @@ pub fn pending(app: &App, purpose: Purpose) -> bool {
         .slot(purpose)
         .as_ref()
         .is_some_and(|p| p.expires_at > now)
+}
+
+/// Last four digits of the number a pending login code went to.
+pub fn pending_last4(app: &App) -> Option<String> {
+    let now = app.clock.now_ms();
+    state(app)
+        .login
+        .as_ref()
+        .filter(|p| p.expires_at > now)
+        .map(|p| last4(&p.phone))
 }
 
 /// Settle code messages that finished: a send resets the failure counter,
@@ -357,8 +421,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn masks_all_but_last_two() {
-        assert_eq!(mask("+639171234567"), "•••• 67");
+    fn masks_all_but_last_four() {
+        assert_eq!(mask("+639171234567"), "•••• 4567");
+        assert_eq!(last4("+12"), "12");
     }
 
     #[test]

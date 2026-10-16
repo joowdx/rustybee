@@ -184,6 +184,7 @@ h1+.group,.head+.group,.lede+.group{border-top:0;padding-top:0}.list+.group,.emp
 .f .val{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
 .f .val form{margin-left:auto}
 .f .val .hint{flex-basis:100%;margin:0}
+.f .vals{display:grid;gap:10px}
 .st-muted{color:var(--muted)}
 input.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.3em;font-weight:600}
 .in-unit{position:relative}.in-unit input{padding-right:42px}.in-unit span{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.85rem;pointer-events:none}

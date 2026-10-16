@@ -5,13 +5,15 @@
   <header><h2>Sign-in</h2><p>Logins use a one-time code texted to your phone through one of your gateway phones. The password is the fallback for when that can't work.</p></header>
   <div class="stack">
     <div class="fields">
-      <div class="f"><span>Login phone</span>
-        {% if let Some(p) = phone %}
+      <div class="f"><span>Login phones</span>
+        <div class="vals">
+        {% for p in phones %}
         <div class="val"><span class="mono">{{ p }}</span> <span class="badge on">Confirmed</span>
-          <form method="post" action="/settings/phone/remove" hx-confirm="Stop texting login codes to {{ p }}? The password becomes the only way in."><button class="danger sm">Remove</button></form></div>
+          <form method="post" action="/settings/phone/remove" hx-confirm="Stop texting login codes to {{ p }}?{% if phones.len() == 1 %} The password becomes the only way in.{% endif %}"><input type="hidden" name="phone" value="{{ p }}"><button class="danger sm">Remove</button></form></div>
         {% else %}
         <div class="val muted">Not set</div>
-        {% endif %}
+        {% endfor %}
+        </div>
       </div>
       <div class="f"><span>Password login</span><div class="val"><span class="st {% if password_open %}st-ok{% else %}st-muted{% endif %}">{% if password_open %}Open{% else %}Off{% endif %}</span><span class="hint">{{ password_note }}</span></div></div>
     </div>
@@ -21,13 +23,13 @@
       <div class="f-foot"><button>Confirm number</button></div>
     </form>
     {% endif %}
-    {% if phone.is_some() && !phone_pending %}<details class="adv">
-      <summary>Change number</summary>{% endif %}
+    {% if !phones.is_empty() && !phone_pending %}<details class="adv">
+      <summary>Add another number</summary>{% endif %}
     <form method="post" action="/settings/phone" class="fields">
-      <div class="f"><label for="ph">{% if phone.is_some() %}New number{% else %}Your phone number{% endif %}<span class="hint">{% if online %}We text it a code to confirm it.{% else %}Connect a gateway phone first; it sends the code.{% endif %}</span></label><input id="ph" type="tel" name="phone" autocomplete="tel" placeholder="+639171234567" required></div>
+      <div class="f"><label for="ph">{% if !phones.is_empty() %}Another number{% else %}Your phone number{% endif %}<span class="hint">{% if online %}We text it a code to confirm it.{% else %}Connect a gateway phone first; it sends the code.{% endif %}</span></label><input id="ph" type="tel" name="phone" autocomplete="tel" placeholder="+639171234567" required></div>
       <div class="f-foot"><button{% if !online %} disabled{% endif %}>Text a code</button></div>
     </form>
-    {% if phone.is_some() && !phone_pending %}</details>{% endif %}
+    {% if !phones.is_empty() && !phone_pending %}</details>{% endif %}
   </div>
 </section>
 <section class="group">
