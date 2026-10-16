@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Regenerates every rustybee icon from branding/bee.png
-# (cut from bee-source.jpg by branding/extract-bee.py).
-# Needs: python3 with numpy, scipy and pillow; ImageMagick (magick); cwebp.
+# Regenerates every rustybee icon. The colour icons come from branding/bee.svg,
+# the sticker bee traced from bee-source.jpg; the monochrome themed and
+# notification icons come from branding/bee.png (cut by branding/extract-bee.py).
+# Needs: python3 with numpy, scipy and pillow; ImageMagick (magick); rsvg-convert; cwebp.
 #   python3 -m venv .venv && .venv/bin/pip install numpy scipy pillow
 #   PYTHON=.venv/bin/python branding/generate-icons.sh
 set -euo pipefail
