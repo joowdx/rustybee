@@ -10,18 +10,23 @@ import dev.joowdx.rustybee.R
 import dev.joowdx.rustybee.ui.MainActivity
 
 object Notifications {
-    const val CHANNEL_GATEWAY = "gateway"
-    const val CHANNEL_ALERTS = "alerts"
+    // Channel settings are fixed once created, so turning badges off needed new ids.
+    const val CHANNEL_GATEWAY = "gateway_v2"
+    const val CHANNEL_ALERTS = "alerts_v2"
+    private val OLD_CHANNELS = listOf("gateway", "alerts")
     const val ID_GATEWAY = 1
     const val ID_STOPPED = 2
 
     fun ensureChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
+        OLD_CHANNELS.forEach(nm::deleteNotificationChannel)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_GATEWAY, context.getString(R.string.channel_gateway), NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(CHANNEL_GATEWAY, context.getString(R.string.channel_gateway), NotificationManager.IMPORTANCE_LOW)
+                .apply { setShowBadge(false) },
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ALERTS, context.getString(R.string.channel_alerts), NotificationManager.IMPORTANCE_HIGH),
+            NotificationChannel(CHANNEL_ALERTS, context.getString(R.string.channel_alerts), NotificationManager.IMPORTANCE_HIGH)
+                .apply { setShowBadge(false) },
         )
     }
 
