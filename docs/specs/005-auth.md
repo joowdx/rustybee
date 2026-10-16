@@ -9,6 +9,26 @@ Updated: 2026-10-16
 - `rustybee set-password` reads the password twice from the TTY, or once from stdin with `--stdin`. It needs at least 10 characters and stores an Argon2id hash with default params in `settings.admin_password`.
 - On `serve`, if no password is set and `RUSTYBEE_ADMIN_PASSWORD` is present, the server hashes and stores it once. If neither exists, the UI shows "run `rustybee set-password`" and login is disabled.
 
+### Login methods
+- The default is a one-time code texted to the admin phone through a connected device. The password is the fallback.
+- **Admin phone:** `settings.admin_phone`, set on the Settings page. A code is texted to the new number and must be entered there before the number is stored. It can be removed.
+- A **code** can be requested when an admin phone is set and at least one enabled device is connected.
+- The **password** is accepted only when a password is set and at least one of these holds:
+  - no admin phone is set (bootstrap);
+  - no device is connected;
+  - `settings.otp_send_failures` ≥ `RUSTYBEE_OTP_MAX_FAILURES` (default 3, minimum 1).
+- `POST /login` re-checks this and returns 403 when the password is not allowed. `rustybee set-password` stays the recovery path.
+
+### Login codes
+- `POST /login/code`:
+  - generates 6 random digits valid for 5 minutes, keeps only their SHA-256 in memory, and replaces any earlier pending code;
+  - queues `rustybee login code: 123456. Expires in 5 minutes.` to the admin phone on the default device if it is connected, otherwise on any connected device; the message is marked `internal`;
+  - is limited to one send per 30 s, 5 per 15 min per client IP, and 20 per hour overall. Over a limit it returns 429; with no phone or no connected device it returns 409.
+- `POST /login/verify`: constant-time compare; 5 wrong tries end the code. A right code creates a session (303), and the code can't be reused.
+- **Failure counter:** `otp_send_failures` goes up by one when a code message ends `failed` or `expired`, disappears, or is still not `sent` after 90 s. Each message counts once. It resets to 0 when a code message is `sent` or `delivered`, and on any successful login.
+- After a code message finishes, its body is replaced with "Login code (hidden)".
+- Pending codes live in memory, so a restart ends them.
+
 ### Sessions
 - A successful login creates a 32-byte random token. It is sent as the cookie `rb_session` (`HttpOnly; Secure` when the public URL is https; `SameSite=Strict; Path=/`), and the server stores its SHA-256.
 - Sessions last 30 days, sliding: `last_seen_at` and `expires_at` are bumped at most once an hour.
@@ -34,11 +54,18 @@ Updated: 2026-10-16
 4. AC-005-04 The 6th failed login within a minute returns 429.
 5. AC-005-05 An API key works until it is revoked, then gets 401. `?api_key=` gets 400.
 6. AC-005-06 After a password change, other sessions are invalid and the current one still works.
+7. AC-005-07 With an admin phone set and a device connected, the password is refused (403), and a texted code logs in once.
+8. AC-005-08 After `RUSTYBEE_OTP_MAX_FAILURES` code messages fail or time out unsent, the password is accepted, and the login resets the counter.
+9. AC-005-09 With no device connected, or no admin phone, the password is accepted and a code request returns 409.
+10. AC-005-10 A code dies after 5 wrong tries. A second send within 30 s returns 429.
+11. AC-005-11 Code messages are missing from `GET /api/v1/messages`, return 404 from `GET /api/v1/messages/{id}`, and fire no webhooks.
+12. AC-005-12 The admin phone is stored only after the code texted to it is entered in Settings.
 
 ## Test plan
 | AC | Test |
 |---|---|
 | 01–06 | `server/tests/auth.rs` |
+| 07–12 | `server/tests/otp.rs` |
 
 ## Assumptions
 - Single admin with no username field.

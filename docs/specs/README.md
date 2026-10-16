@@ -9,7 +9,7 @@ Spec-driven development with a soft gate: see `CLAUDE.md`. The template is `_tem
 | [002](002-device-protocol.md) | Device protocol, pairing, WebSocket | implemented |
 | [003](003-data-model.md) | SQLite schema, writer actor, backup | implemented |
 | [004](004-message-lifecycle.md) | State machine, expiry, segments | implemented |
-| [005](005-auth.md) | Admin password, sessions, API keys | implemented |
+| [005](005-auth.md) | Admin login (texted code, password fallback), sessions, API keys | implemented |
 | [006](006-dispatch.md) | Dispatcher, pacing, replay | implemented |
 | [007](007-public-api.md) | `/api/v1` | implemented |
 | [008](008-webhooks.md) | Webhooks | implemented |

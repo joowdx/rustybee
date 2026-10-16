@@ -66,6 +66,7 @@ Every text frame is one JSON object:
 | `status` | `{msg_id, state:"sent"\|"delivered"\|"failed", at, parts, error:{code,message}\|null}` | each change of a message's outcome |
 | `inbound` | `{uid, from, body, sim, received_at}` | each received SMS that passes the filters |
 | `health` | `{battery, network, permissions, outbox}` | every 15 min while connected, and on a change of charging state or permissions |
+| `set_filters` | `{base_rev, filters}` | the user saves filters edited on the phone |
 
 - `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100.
 - `inbound.uid` is the lowercase hex of the first 16 bytes of `SHA-256(from + "\n" + received_at + "\n" + body + "\n" + (sim ?: ""))`.
@@ -85,13 +86,20 @@ Every text frame is one JSON object:
 
 - `config` is:
   ```json
-  {"name":"…","ping_s":270,"receive_enabled":true,"sim":null,
+  {"name":"…","ping_s":270,"receive_enabled":true,"sim":null,"filters_rev":3,
    "filters":{"mode":"off"|"allow"|"block","rules":[{"field":"sender"|"body"|"any","op":"equals"|"contains"|"starts_with"|"ends_with","value":"…","ignore_case":true}]}}
   ```
 - Filter semantics:
   - `mode=off`: forward everything.
   - `allow`: forward only messages that match at least one rule.
   - `block`: drop messages that match any rule.
+  - `allow` with no rules forwards nothing. Both editors warn about this.
+- Filter sync: the server owns the filters, and `filters_rev` goes up by one on every change, from the web or the phone.
+  - The device sends `set_filters` with the `filters_rev` its edit started from as `base_rev`.
+  - If `base_rev` is current and the filters are valid (at most 100 rules; each value non-empty after trimming and at most 200 characters), the server stores them, acks, and sends `config` with the new rev.
+  - If `base_rev` is stale, the server nacks with `filters_conflict` and sends the current `config`. The phone reloads its editor.
+  - If the filters are invalid, the server nacks with `invalid`.
+  - Editing on the phone needs a live connection, so offline edits never have to be merged.
 
 ### Device handling of `send`
 1. Look up `msg_id` in the local `sent` table.
@@ -115,6 +123,7 @@ Every text frame is one JSON object:
 7. AC-002-07 Removing a device closes its socket with 4003, and the app wipes its credentials.
 8. AC-002-08 A malformed frame with an `id` gets a `nack`, and the connection stays open.
 9. AC-002-09 The server closes a socket that is silent for `2 × ping_s + 30` s.
+10. AC-002-10 `set_filters` with the current `base_rev` is stored and acked, and a `config` with the next `filters_rev` follows. With a stale `base_rev` it is nacked `filters_conflict`, a `config` with the current filters follows, and nothing is stored.
 
 ## Test plan
 | AC | Test |
@@ -124,6 +133,7 @@ Every text frame is one JSON object:
 | 04 | server: `device_ws.rs::ac_002_04_*`; app: `OutboxTest` |
 | 05 | `server/tests/device_ws.rs::ac_002_05_*` |
 | 09 | server test with a short `ping_s` |
+| 10 | `server/tests/device_ws.rs::set_filters_from_device_checks_rev`; `tests/ui.rs` (web save bumps the rev) |
 
 ## Assumptions
 - Ping frames come from the app only. The server never sends pings, which saves server-initiated wakeups on the phone.

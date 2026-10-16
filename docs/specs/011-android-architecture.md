@@ -16,6 +16,7 @@ Updated: 2026-10-16
   - `com.squareup.okhttp3:okhttp` (5.x, pinned to 5.4.0: 5.5.0 requires compileSdk 37). It brings `androidx.annotation` and `androidx.startup` transitively, so `android.useAndroidX=true` is set;
   - `org.jetbrains.kotlinx:kotlinx-serialization-json`;
   - `org.jetbrains.kotlinx:kotlinx-coroutines-android`;
+  - `com.google.zxing:core` for the in-app QR scanner (spec 013);
   - `gmsImplementation` `com.google.firebase:firebase-messaging` (without the BoM extras);
   - tests: junit and kotlinx-coroutines-test.
 

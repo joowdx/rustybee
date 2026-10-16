@@ -18,7 +18,7 @@ All pages except `/login` require a session (spec 005).
 
 | Route | Content |
 |---|---|
-| `/login` | Password form. Shows the "set password" hint when none is set. |
+| `/login` | "Text me a code" when a code can be sent, then the code form. The password form appears only when spec 005 allows it; otherwise a hint says when it opens. Shows the "set password" hint when none is set. |
 | `/` | Device cards: name, online dot, battery and charging, network, last seen, outbox depth, permission warnings. Today's counts: sent, delivered, failed, received, queued. Recent 10 messages. Updated live over SSE. |
 | `/send` | Recipient chip input. The body textarea shows encoding, characters, parts and remaining. Device and SIM selects. Submits via htmx and shows the result inline. |
 | `/bulk` | Step 1: upload a CSV (≤ 1 MB, ≤ 1000 rows), parsed on the server with the `csv` crate. Step 2: pick the phone column; the rest are variables. Step 3: write a `{{column}}` template with a preview of the first 5 rows and the segment count. Step 4: confirm, which calls the batch endpoint internally. The parsed CSV is kept in memory under a random token for 30 min, so there are no temp files. |
@@ -27,7 +27,7 @@ All pages except `/login` require a session (spec 005).
 | `/devices` | List. "Pair a phone" shows the QR code (inline SVG) plus the copyable link, with a countdown of the code's expiry; the page polls until a device pairs. Per device: rename, set default, enable/disable, send delay, receive toggle, preferred SIM, SMS filters editor, remove (with confirmation; closes the socket with 4003). |
 | `/keys` | Create (secret shown once with a copy button), rename, revoke, delete. |
 | `/webhooks` | Create, edit, delete, rotate secret, test. `/webhooks/{id}` shows the deliveries log, paged, with the payload, status and error, and a redeliver button. |
-| `/settings` | Change password; list sessions and revoke them. |
+| `/settings` | Login phone (set with a texted code, or remove); change password; list sessions and revoke them. |
 | `/events` | SSE stream. Event types: `device` (re-render device card) and `message` (re-render a row or counts). |
 | `/static/*` | Embedded assets, `Cache-Control: public, max-age=31536000, immutable`, with content-hashed names. |
 

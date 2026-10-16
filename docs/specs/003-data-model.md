@@ -61,6 +61,10 @@ CREATE INDEX deliveries_due ON webhook_deliveries(next_attempt_at) WHERE deliver
 CREATE TABLE seen_frames (device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
   frame_id TEXT NOT NULL, seen_at INTEGER NOT NULL, PRIMARY KEY (device_id, frame_id)) WITHOUT ROWID;
 ```
+- Migration `0002` adds:
+  - `messages.internal INTEGER NOT NULL DEFAULT 0`: 1 for admin login codes (spec 005). Internal messages never reach webhooks or the public API; the web UI lists them, with the body replaced once the message finishes.
+  - `devices.filters_rev INTEGER NOT NULL DEFAULT 0`: goes up by one on every filter change (spec 002).
+- Settings keys used by spec 005: `admin_phone` (E.164) and `otp_send_failures` (a count).
 - Batch counters are not stored. They are computed with `GROUP BY state` over `messages_batch`.
 - `seen_frames` makes inbound frames idempotent by envelope id. Rows older than 7 days are pruned daily.
 
