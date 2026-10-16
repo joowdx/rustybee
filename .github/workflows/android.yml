@@ -1,0 +1,31 @@
+name: android
+on:
+  push:
+    paths: ["android/**", "protocol/**", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["android/**", "protocol/**", ".github/workflows/android.yml"]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: android } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Release signing (optional)
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        if: env.KS != ''
+        run: |
+          echo "$KS" | base64 -d > release.jks
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$PWD/release.jks" "$KS_PASS" "$KEY_ALIAS" "$KEY_PASS" > keystore.properties
+      - run: ./gradlew --no-daemon testFossDebugUnitTest assembleFossRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustybee-foss-release
+          path: android/app/build/outputs/apk/foss/release/*.apk

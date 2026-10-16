@@ -1,0 +1,1 @@
+{"v":1,"id":"01JA000000000000000000000B","type":"health","data":{"battery":{"level":54,"charging":false},"network":"cellular","permissions":{"send_sms":true,"receive_sms":true,"notifications":true,"battery_unrestricted":false},"outbox":2}}

@@ -1,0 +1,1 @@
+{"v":1,"id":"01JA0000000000000000000003","type":"config","data":{"name":"Pixel 10","ping_s":60,"receive_enabled":true,"sim":1,"filters":{"mode":"block","rules":[{"field":"sender","op":"starts_with","value":"+1900","ignore_case":true},{"field":"body","op":"contains","value":"promo","ignore_case":true}]}}}

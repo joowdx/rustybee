@@ -1,0 +1,12 @@
+name: hygiene
+on: [push, pull_request]
+jobs:
+  no-legacy-names:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No legacy project names outside docs
+        run: |
+          if git grep -nIi -E 'textbee|vernu' -- . ':!docs/**' ':!CLAUDE.md' ':!.github/workflows/hygiene.yml'; then
+            echo "legacy names found"; exit 1
+          fi

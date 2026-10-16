@@ -1,0 +1,19 @@
+# Rust
+target/
+# Gradle / Android
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+# Secrets and local data
+android/keystore.properties
+*.jks
+*.keystore
+android/app/src/gms/google-services.json
+*.db
+*.db-*
+.env
+data/
+.DS_Store
