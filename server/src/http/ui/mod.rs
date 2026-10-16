@@ -77,6 +77,8 @@ pub struct Layout {
     pub js: String,
     pub htmx: String,
     pub sse: String,
+    pub favicon: String,
+    pub touch_icon: String,
     pub flash: Option<String>,
     pub error: Option<String>,
 }
@@ -90,6 +92,8 @@ impl Layout {
             js: assets::url("app.js"),
             htmx: assets::url("htmx.min.js"),
             sse: assets::url("sse.js"),
+            favicon: assets::url("favicon.ico"),
+            touch_icon: assets::url("apple-touch-icon.png"),
             flash: None,
             error: None,
         }

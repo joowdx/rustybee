@@ -36,7 +36,7 @@ object Notifications {
             if (state.connection == ConnectionState.CONNECTED) R.string.state_connected else R.string.state_reconnecting,
         )
         return Notification.Builder(context, CHANNEL_GATEWAY)
-            .setSmallIcon(R.drawable.ic_stat_bolt)
+            .setSmallIcon(R.drawable.ic_stat_bee)
             .setContentTitle(title)
             .setContentText(context.getString(R.string.sends_today, state.sendsToday))
             .setOngoing(true)
@@ -50,7 +50,7 @@ object Notifications {
     fun postStopped(context: Context) {
         ensureChannels(context)
         val n = Notification.Builder(context, CHANNEL_ALERTS)
-            .setSmallIcon(R.drawable.ic_stat_bolt)
+            .setSmallIcon(R.drawable.ic_stat_bee)
             .setContentTitle(context.getString(R.string.gateway_stopped))
             .setContentText(context.getString(R.string.tap_to_restart))
             .setAutoCancel(true)

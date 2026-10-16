@@ -46,7 +46,7 @@ Requested in one runtime request, with a short rationale, when the gateway is fi
 
 ### Copy and branding
 - App label `rustybee`.
-- The icon is a vector adaptive icon: a simple hexagon with a bolt mark, two colours (amber `#F59E0B` on charcoal `#1F2937`), plus a monochrome layer for themed icons.
+- The icon is a raster adaptive icon of the rusty bee: the bee as the foreground, a rust honeycomb as the background, plus a monochrome layer for themed icons. The notification icon is the same white silhouette. `branding/generate-icons.sh` builds every density from `branding/bee.png`.
 
 ## Acceptance criteria
 1. AC-013-01 Opening the deep link on the emulator pairs the app, shows the main screen and connects. Manual check.
