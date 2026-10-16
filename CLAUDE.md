@@ -27,4 +27,4 @@ A personal, single-user SMS gateway made of three parts:
 - Keep the footprint small. Every new dependency needs a reason.
 - Server: domain logic in `domain/` stays pure, with no IO. All SQLite writes go through the store's writer.
 - Android: no AppCompat, Material, Compose, Room, WorkManager or DI framework. Send and receive work runs inside `GatewayService`.
-- No upstream textbee/vernu names, links or package ids.
+- No upstream textbee/vernu names, links or package ids, except the credit note in the root README.
