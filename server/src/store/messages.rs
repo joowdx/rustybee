@@ -248,6 +248,15 @@ pub fn redact(c: &Connection, id: i64, body: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Redact every internal message created before `before` that still has its
+/// body; returns how many changed.
+pub fn redact_older(c: &Connection, before: i64, body: &str) -> rusqlite::Result<usize> {
+    c.execute(
+        "UPDATE messages SET body=?2 WHERE internal=1 AND created_at<?1 AND body<>?2",
+        params![before, body],
+    )
+}
+
 /// Insert an inbound SMS. `None` when `(device_id, uid)` was already stored.
 pub fn insert_inbound(
     c: &Connection,

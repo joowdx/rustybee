@@ -1,7 +1,7 @@
 # 010 — Web UI
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 
@@ -34,6 +34,9 @@ All pages except `/login` require a session (spec 005).
 ### Rules
 - Every form also works without JavaScript through full-page POSTs. htmx is a progressive enhancement.
 - The page includes a short curl example using the public API, under `/keys`.
+- **Security headers** on every response, unless the handler set them: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, and `Content-Security-Policy: script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'`. There is no `default-src` or `style-src`, so inline styles and `data:` images keep working.
+- **No inline script.** All page code lives in `app.js`, including the Turnstile `data-callback` (`rbTurnstileOk`, spec 005). The Turnstile loader is `defer`, so it runs after `app.js`.
+- **htmx config:** `allowEval: false`, `allowScriptTags: false`, `selfRequestsOnly: true`. Templates use no `hx-on`, `js:` values or trigger filters, and swapped partials carry no `<script>`.
 
 ## Acceptance criteria
 1. AC-010-01 Every listed route renders 200 with a session. Without one, `/login` renders and the others redirect.
@@ -42,6 +45,7 @@ All pages except `/login` require a session (spec 005).
 4. AC-010-04 Pairing from `/devices` produces a link that the pairing API accepts.
 5. AC-010-05 The total compressed weight of the embedded static assets is under 40 KB.
 6. AC-010-06 The layout has no horizontal scroll at 375 px width.
+7. AC-010-07 UI responses carry the four security headers above; the login page has no inline `<script>` and its htmx config sets `allowEval`, `allowScriptTags` and `selfRequestsOnly` as above.
 
 ## Test plan
 | AC | Test |
@@ -49,6 +53,7 @@ All pages except `/login` require a session (spec 005).
 | 01–04 | `server/tests/ui.rs`, HTTP-level checks on status, redirects and key markup |
 | 05 | Test that sums the gzip sizes of the embedded files |
 | 06 | Manual check in the browser pane during M7 |
+| 07 | `server/tests/ui.rs` |
 
 ## Assumptions
 - No command palette and no charts.

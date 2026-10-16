@@ -4,8 +4,7 @@
 {%- endmacro -%}
 {% block content %}
 {% if turnstile.is_some() %}
-<script>function rbTurnstileOk(){document.querySelectorAll("button[data-ts]").forEach(function(b){b.disabled=false})}</script>
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>
 {% endif %}
 <section class="login">
   <img class="mark" src="{{ l.logo }}" alt="" width="72" height="72">

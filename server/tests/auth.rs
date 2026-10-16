@@ -444,3 +444,36 @@ async fn ac_005_15_spoofed_forwarded_for_does_not_dodge_throttle() {
     assert_eq!(r.status(), 303);
     s.stop().await;
 }
+
+#[tokio::test]
+async fn ac_005_21_proxy_headers_ignored_from_public_peer() {
+    use axum::http::{HeaderMap, HeaderValue};
+    let s = server_with(|c| c.trust_proxy = true).await;
+    let mut h = HeaderMap::new();
+    h.insert("x-forwarded-for", HeaderValue::from_static("10.9.9.9"));
+    h.insert("cf-connecting-ip", HeaderValue::from_static("203.0.113.50"));
+    let public: std::net::SocketAddr = "198.51.100.7:40000".parse().unwrap();
+    let ip = rustybee::http::client_ip(s.app(), &h, Some(public));
+    assert_eq!(ip, public.ip());
+    assert!(!rustybee::http::via_cloudflare(s.app(), &h, Some(public)));
+    for local in [
+        "127.0.0.1:1",
+        "10.0.0.2:1",
+        "[fd00::2]:1",
+        "[::ffff:192.168.1.2]:1",
+    ] {
+        let peer = Some(local.parse().unwrap());
+        assert_eq!(
+            rustybee::http::client_ip(s.app(), &h, peer).to_string(),
+            "203.0.113.50"
+        );
+        assert!(rustybee::http::via_cloudflare(s.app(), &h, peer));
+    }
+    h.remove("cf-connecting-ip");
+    let peer = Some("172.20.0.3:1".parse().unwrap());
+    assert_eq!(
+        rustybee::http::client_ip(s.app(), &h, peer).to_string(),
+        "10.9.9.9"
+    );
+    s.stop().await;
+}

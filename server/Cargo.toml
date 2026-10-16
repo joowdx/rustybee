@@ -18,7 +18,7 @@ path = "src/lib.rs"
 # HTTP server, WebSocket and SSE
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query", "form", "ws", "multipart"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util"] }
-tower-http = { version = "0.6", features = ["limit", "trace"] }
+tower-http = { version = "0.6", features = ["limit", "set-header", "trace"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # Storage
 rusqlite = { version = "0.37", features = ["bundled"] }

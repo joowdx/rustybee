@@ -18,7 +18,10 @@ use std::net::IpAddr;
 use std::sync::MutexGuard;
 
 pub const CODE_TTL_MS: i64 = 5 * 60 * 1000;
+/// Wrong tries per client IP for one code.
 pub const MAX_ATTEMPTS: u32 = 5;
+/// Wrong tries from all IPs together before the code is dropped.
+pub const MAX_TOTAL_ATTEMPTS: u32 = 20;
 const SEND_GAP_MS: i64 = 30 * 1000;
 const SEND_WINDOW_MS: i64 = 15 * 60 * 1000;
 const SEND_WINDOW_MAX: usize = 5;
@@ -41,7 +44,10 @@ struct Pending {
     hash: Vec<u8>,
     phone: String,
     expires_at: i64,
-    attempts: u32,
+    /// Wrong tries per client IP.
+    attempts: HashMap<IpAddr, u32>,
+    /// Wrong tries from every IP.
+    total: u32,
 }
 
 struct Outstanding {
@@ -289,7 +295,8 @@ pub async fn send(app: &App, purpose: Purpose, to: &str, ip: IpAddr) -> Result<(
             hash: sha256(&code),
             phone: to[0].clone(),
             expires_at: now + CODE_TTL_MS,
-            attempts: 0,
+            attempts: HashMap::new(),
+            total: 0,
         });
         st.outstanding.extend(rows.iter().map(|row| Outstanding {
             msg_id: row.id,
@@ -309,7 +316,8 @@ pub enum Verify {
     /// The code matched; carries the phone it was sent to.
     Ok(String),
     Wrong,
-    /// No code pending, it expired, or it ran out of attempts.
+    /// No code pending, it expired, it ran out of attempts overall, or
+    /// this client IP used up its tries.
     Expired,
 }
 
@@ -317,8 +325,10 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Check a code. Each code allows `MAX_ATTEMPTS` tries and is single-use.
-pub fn verify(app: &App, purpose: Purpose, code: &str) -> Verify {
+/// Check a code. Each client IP gets `MAX_ATTEMPTS` tries; the code is
+/// dropped after `MAX_TOTAL_ATTEMPTS` wrong tries in all, on expiry, or once
+/// it matches, so one client guessing can't end another's code.
+pub fn verify(app: &App, purpose: Purpose, code: &str, ip: IpAddr) -> Verify {
     let now = app.clock.now_ms();
     let code: String = code.chars().filter(char::is_ascii_digit).collect();
     let mut st = state(app);
@@ -327,16 +337,28 @@ pub fn verify(app: &App, purpose: Purpose, code: &str) -> Verify {
         *slot = None;
         return Verify::Expired;
     };
+    if p.attempts.get(&ip).copied().unwrap_or(0) >= MAX_ATTEMPTS {
+        return Verify::Expired;
+    }
     if ct_eq(&p.hash, &sha256(&code)) {
         let phone = p.phone.clone();
         *slot = None;
         return Verify::Ok(phone);
     }
-    p.attempts += 1;
-    if p.attempts >= MAX_ATTEMPTS {
+    *p.attempts.entry(ip).or_default() += 1;
+    p.total += 1;
+    if p.total >= MAX_TOTAL_ATTEMPTS {
         *slot = None;
     }
     Verify::Wrong
+}
+
+/// Whether a code for `purpose` is waiting and `ip` still has tries left.
+pub fn pending_for(app: &App, purpose: Purpose, ip: IpAddr) -> bool {
+    let now = app.clock.now_ms();
+    state(app).slot(purpose).as_ref().is_some_and(|p| {
+        p.expires_at > now && p.attempts.get(&ip).copied().unwrap_or(0) < MAX_ATTEMPTS
+    })
 }
 
 /// Whether a code for `purpose` is waiting to be entered.
@@ -360,9 +382,14 @@ pub fn pending_last4(app: &App) -> Option<String> {
 
 /// Settle code messages that finished: a send resets the failure counter,
 /// a failure, expiry or no send within `otp_send_timeout` adds one. Bodies
-/// of finished code messages are redacted. Runs from the sweeper and
-/// before the login page decides which methods to offer.
+/// of finished code messages are redacted, and so is any internal message
+/// older than `CODE_TTL_MS` (one left behind by a restart). Runs from the
+/// sweeper and before the login page decides which methods to offer.
 pub async fn resolve(app: &App) -> store::Result<()> {
+    let now = app.clock.now_ms();
+    app.store
+        .write(move |c| messages::redact_older(c, now - CODE_TTL_MS, REDACTED))
+        .await?;
     let list: Vec<(i64, i64, bool)> = state(app)
         .outstanding
         .iter()
@@ -371,7 +398,6 @@ pub async fn resolve(app: &App) -> store::Result<()> {
     if list.is_empty() {
         return Ok(());
     }
-    let now = app.clock.now_ms();
     let timeout = app.cfg.otp_send_timeout.as_millis() as i64;
     let (done, counted) = app
         .store

@@ -479,3 +479,31 @@ async fn messages_load_more_pages() {
     assert!(!rows.contains("Load more"));
     s.stop().await;
 }
+
+#[tokio::test]
+async fn ac_010_07_security_headers_on_ui_responses() {
+    let s = server().await;
+    for path in ["/login", "/"] {
+        let r = s.http.get(s.url(path)).send().await.unwrap();
+        let h = r.headers();
+        assert_eq!(h["x-frame-options"], "DENY", "{path}");
+        assert_eq!(h["x-content-type-options"], "nosniff", "{path}");
+        assert_eq!(h["referrer-policy"], "same-origin", "{path}");
+        let csp = h["content-security-policy"].to_str().unwrap();
+        assert_eq!(csp, rustybee::http::CSP, "{path}");
+        assert!(csp.contains("script-src 'self' https://challenges.cloudflare.com"));
+        assert!(csp.contains("frame-ancestors 'none'") && !csp.contains("default-src"));
+    }
+    let page = s
+        .http
+        .get(s.url("/login"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!page.contains("<script>"), "no inline script");
+    assert!(page.contains(r#""allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true"#));
+    s.stop().await;
+}

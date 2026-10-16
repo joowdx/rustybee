@@ -45,10 +45,32 @@ struct LoginPage {
     turnstile: Option<String>,
 }
 
+/// What the login page shows besides the error.
+struct LoginView {
+    /// The code-entry form is shown.
+    code_sent: bool,
+    /// Name the number the code went to; only right after a successful send.
+    show_sent_to: bool,
+}
+
+const FORM: LoginView = LoginView {
+    code_sent: false,
+    show_sent_to: false,
+};
+const CODE: LoginView = LoginView {
+    code_sent: true,
+    show_sent_to: false,
+};
+
+fn code_form(pending: bool) -> LoginView {
+    if pending { CODE } else { FORM }
+}
+
 async fn login_render(
     app: &App,
     headers: &HeaderMap,
-    code_sent: bool,
+    peer: SocketAddr,
+    view: LoginView,
     err: Option<&str>,
     status: StatusCode,
 ) -> Response {
@@ -60,20 +82,26 @@ async fn login_render(
     if let Some(e) = err {
         l = l.err(e);
     }
-    let code_sent = code_sent && m.otp;
+    let code_sent = view.code_sent && m.otp;
     let mut r = render(&LoginPage {
         l,
-        sent_to: code_sent.then(|| otp::pending_last4(app)).flatten(),
+        sent_to: (code_sent && view.show_sent_to)
+            .then(|| otp::pending_last4(app))
+            .flatten(),
         code_sent,
         m,
-        turnstile: crate::turnstile::site_key(app, headers).map(str::to_string),
+        turnstile: crate::turnstile::site_key(app, headers, peer).map(str::to_string),
     });
     *r.status_mut() = status;
     r
 }
 
-pub async fn login_page(State(app): State<App>, headers: HeaderMap) -> Response {
-    login_render(&app, &headers, false, None, StatusCode::OK).await
+pub async fn login_page(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    login_render(&app, &headers, peer, FORM, None, StatusCode::OK).await
 }
 
 /// Failed attempts per IP within `login_window`; true when over the limit.
@@ -152,17 +180,19 @@ pub async fn login(
         return login_render(
             &app,
             &headers,
-            false,
+            peer,
+            FORM,
             Some(TOO_MANY),
             StatusCode::TOO_MANY_REQUESTS,
         )
         .await;
     }
-    if !crate::turnstile::passes(&app, &headers, &form.turnstile, ip).await {
+    if !crate::turnstile::passes(&app, &headers, peer, &form.turnstile, ip).await {
         return login_render(
             &app,
             &headers,
-            false,
+            peer,
+            FORM,
             Some(NOT_VERIFIED),
             StatusCode::FORBIDDEN,
         )
@@ -178,7 +208,7 @@ pub async fn login(
         } else {
             "No admin password is set."
         };
-        return login_render(&app, &headers, false, Some(msg), StatusCode::FORBIDDEN).await;
+        return login_render(&app, &headers, peer, FORM, Some(msg), StatusCode::FORBIDDEN).await;
     }
     let hash = match app.store.read(auth::password_hash).await {
         Ok(h) => h.unwrap_or_default(),
@@ -193,7 +223,8 @@ pub async fn login(
         return login_render(
             &app,
             &headers,
-            false,
+            peer,
+            FORM,
             Some("Wrong password."),
             StatusCode::UNAUTHORIZED,
         )
@@ -215,25 +246,33 @@ pub async fn send_code(
         return login_render(
             &app,
             &headers,
-            pending,
+            peer,
+            code_form(pending),
             Some(TOO_MANY),
             StatusCode::TOO_MANY_REQUESTS,
         )
         .await;
     }
-    if !crate::turnstile::passes(&app, &headers, &form.turnstile, ip).await {
+    if !crate::turnstile::passes(&app, &headers, peer, &form.turnstile, ip).await {
         let pending = otp::pending(&app, otp::Purpose::Login);
         return login_render(
             &app,
             &headers,
-            pending,
+            peer,
+            code_form(pending),
             Some(NOT_VERIFIED),
             StatusCode::FORBIDDEN,
         )
         .await;
     }
     match otp::send(&app, otp::Purpose::Login, &form.last4, ip).await {
-        Ok(()) => login_render(&app, &headers, true, None, StatusCode::OK).await,
+        Ok(()) => {
+            let view = LoginView {
+                code_sent: true,
+                show_sent_to: true,
+            };
+            login_render(&app, &headers, peer, view, None, StatusCode::OK).await
+        }
         Err(otp::SendError::Store(e)) => ise(e),
         Err(e @ otp::SendError::NotRegistered) => {
             // A miss counts toward the login throttle so the digits can't be guessed.
@@ -241,7 +280,8 @@ pub async fn send_code(
             login_render(
                 &app,
                 &headers,
-                false,
+                peer,
+                FORM,
                 Some(&e.to_string()),
                 StatusCode::NOT_FOUND,
             )
@@ -251,7 +291,8 @@ pub async fn send_code(
             login_render(
                 &app,
                 &headers,
-                false,
+                peer,
+                FORM,
                 Some(&e.to_string()),
                 StatusCode::BAD_REQUEST,
             )
@@ -263,7 +304,8 @@ pub async fn send_code(
             login_render(
                 &app,
                 &headers,
-                pending,
+                peer,
+                code_form(pending),
                 Some(&msg),
                 StatusCode::TOO_MANY_REQUESTS,
             )
@@ -273,7 +315,8 @@ pub async fn send_code(
             login_render(
                 &app,
                 &headers,
-                false,
+                peer,
+                FORM,
                 Some(&e.to_string()),
                 StatusCode::CONFLICT,
             )
@@ -299,30 +342,40 @@ pub async fn verify_code(
         return login_render(
             &app,
             &headers,
-            true,
+            peer,
+            CODE,
             Some(TOO_MANY),
             StatusCode::TOO_MANY_REQUESTS,
         )
         .await;
     }
-    match otp::verify(&app, otp::Purpose::Login, &form.code) {
+    match otp::verify(&app, otp::Purpose::Login, &form.code, ip) {
         otp::Verify::Ok(_) => start_session(&app, &headers).await,
         otp::Verify::Wrong => {
             record_failure(&app, ip);
-            let again = otp::pending(&app, otp::Purpose::Login);
+            let again = otp::pending_for(&app, otp::Purpose::Login, ip);
             let msg = if again {
                 "Wrong code."
             } else {
                 "Wrong code. Send a new one."
             };
-            login_render(&app, &headers, again, Some(msg), StatusCode::UNAUTHORIZED).await
+            login_render(
+                &app,
+                &headers,
+                peer,
+                code_form(again),
+                Some(msg),
+                StatusCode::UNAUTHORIZED,
+            )
+            .await
         }
         otp::Verify::Expired => {
             record_failure(&app, ip);
             login_render(
                 &app,
                 &headers,
-                false,
+                peer,
+                FORM,
                 Some("That code expired. Send a new one."),
                 StatusCode::UNAUTHORIZED,
             )

@@ -148,6 +148,11 @@
     if (e.key === "Escape") document.querySelectorAll("details.more[open],details.pop[open]").forEach(function (d) { d.open = false; d.querySelector("summary").focus(); });
   });
 
+  // Turnstile data-callback on the login page: enable the gated buttons.
+  window.rbTurnstileOk = function () {
+    document.querySelectorAll("button[data-ts]").forEach(function (b) { b.disabled = false; });
+  };
+
   document.addEventListener("DOMContentLoaded", function () { init(document); });
   document.addEventListener("htmx:load", function (e) { init(e.target); });
 })();

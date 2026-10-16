@@ -906,8 +906,15 @@ pub struct CodeForm {
     code: String,
 }
 
-pub async fn verify_phone(_: Session, State(app): State<App>, Form(f): Form<CodeForm>) -> Res {
-    match otp::verify(&app, otp::Purpose::Verify, &f.code) {
+pub async fn verify_phone(
+    _: Session,
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Form(f): Form<CodeForm>,
+) -> Res {
+    let ip = crate::http::client_ip(&app, &headers, Some(peer));
+    match otp::verify(&app, otp::Purpose::Verify, &f.code, ip) {
         otp::Verify::Ok(phone) => {
             app.store
                 .write(move |c| {
