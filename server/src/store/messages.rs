@@ -17,6 +17,7 @@ pub struct MessageRow {
     pub device_id: i64,
     pub device_public_id: String,
     pub device_name: String,
+    pub device_removed: bool,
     pub direction: String,
     pub peer: String,
     pub body: String,
@@ -38,7 +39,8 @@ pub struct MessageRow {
 
 const SELECT: &str = "SELECT m.id, m.public_id, b.public_id, m.device_id, d.public_id, d.name, m.direction, m.peer,
     m.body, m.sim, m.state, m.parts, m.error_code, m.error_message, m.frame_id, m.device_acked_at,
-    m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at, m.expired_at, m.received_at
+    m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at, m.expired_at, m.received_at,
+    d.removed_at IS NOT NULL
     FROM messages m JOIN devices d ON d.id=m.device_id LEFT JOIN batches b ON b.id=m.batch_id";
 
 fn from_row(r: &Row) -> rusqlite::Result<MessageRow> {
@@ -67,6 +69,7 @@ fn from_row(r: &Row) -> rusqlite::Result<MessageRow> {
         failed_at: r.get(20)?,
         expired_at: r.get(21)?,
         received_at: r.get(22)?,
+        device_removed: r.get(23)?,
     })
 }
 
@@ -96,6 +99,15 @@ impl MessageRow {
             "expired_at": ts(self.expired_at),
             "received_at": ts(self.received_at),
         })
+    }
+
+    /// Device name for the UI; removed devices are marked (spec 003).
+    pub fn device_label(&self) -> String {
+        if self.device_removed {
+            format!("{} (removed)", self.device_name)
+        } else {
+            self.device_name.clone()
+        }
     }
 
     /// `(label, timestamp)` pairs for the UI timeline.

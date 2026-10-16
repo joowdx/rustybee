@@ -134,7 +134,7 @@ impl DeviceRow {
 
 pub fn by_id(c: &Connection, id: i64) -> rusqlite::Result<Option<DeviceRow>> {
     opt(c.query_row(
-        &format!("SELECT {COLS} FROM devices WHERE id=?1"),
+        &format!("SELECT {COLS} FROM devices WHERE id=?1 AND removed_at IS NULL"),
         [id],
         from_row,
     ))
@@ -142,7 +142,7 @@ pub fn by_id(c: &Connection, id: i64) -> rusqlite::Result<Option<DeviceRow>> {
 
 pub fn by_public(c: &Connection, pid: &str) -> rusqlite::Result<Option<DeviceRow>> {
     opt(c.query_row(
-        &format!("SELECT {COLS} FROM devices WHERE public_id=?1"),
+        &format!("SELECT {COLS} FROM devices WHERE public_id=?1 AND removed_at IS NULL"),
         [pid],
         from_row,
     ))
@@ -150,14 +150,16 @@ pub fn by_public(c: &Connection, pid: &str) -> rusqlite::Result<Option<DeviceRow
 
 pub fn by_token(c: &Connection, sha: &[u8]) -> rusqlite::Result<Option<DeviceRow>> {
     opt(c.query_row(
-        &format!("SELECT {COLS} FROM devices WHERE token_sha256=?1"),
+        &format!("SELECT {COLS} FROM devices WHERE token_sha256=?1 AND removed_at IS NULL"),
         [sha],
         from_row,
     ))
 }
 
 pub fn list(c: &Connection) -> rusqlite::Result<Vec<DeviceRow>> {
-    let mut st = c.prepare(&format!("SELECT {COLS} FROM devices ORDER BY id"))?;
+    let mut st = c.prepare(&format!(
+        "SELECT {COLS} FROM devices WHERE removed_at IS NULL ORDER BY id"
+    ))?;
     st.query_map([], from_row)?.collect()
 }
 
@@ -168,7 +170,7 @@ pub fn create(
     now: i64,
 ) -> rusqlite::Result<DeviceRow> {
     let has_default: bool = c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM devices WHERE is_default=1)",
+        "SELECT EXISTS(SELECT 1 FROM devices WHERE is_default=1 AND removed_at IS NULL)",
         [],
         |r| r.get(0),
     )?;
@@ -227,7 +229,7 @@ pub fn apply_hello(c: &Connection, id: i64, h: &Hello, now: i64) -> rusqlite::Re
 
 pub fn apply_health(c: &Connection, id: i64, h: &Health, now: i64) -> rusqlite::Result<()> {
     let current: Option<String> = opt(c.query_row(
-        "SELECT telemetry_json FROM devices WHERE id=?1",
+        "SELECT telemetry_json FROM devices WHERE id=?1 AND removed_at IS NULL",
         [id],
         |r| r.get(0),
     ))?
@@ -327,7 +329,10 @@ pub fn update_settings(c: &Connection, id: i64, s: &Settings) -> rusqlite::Resul
 }
 
 pub fn set_default(c: &Connection, id: i64) -> rusqlite::Result<()> {
-    c.execute("UPDATE devices SET is_default=(id=?1)", [id])?;
+    c.execute(
+        "UPDATE devices SET is_default=(id=?1) WHERE removed_at IS NULL",
+        [id],
+    )?;
     Ok(())
 }
 
@@ -339,15 +344,20 @@ pub fn queued_count(c: &Connection, id: i64) -> rusqlite::Result<i64> {
     )
 }
 
-/// Remove a device. Queued messages are cancelled first (spec 004) so their
-/// webhooks fire; then everything cascades.
+/// Remove a device (spec 003 soft delete). Every outbound `queued` or
+/// `dispatched` message is cancelled (spec 004) so its webhooks fire; the
+/// row is kept for history but hidden from every lookup, its token can no
+/// longer authenticate and it is never chosen as the default again.
 pub fn delete(c: &Connection, id: i64, now: i64) -> rusqlite::Result<()> {
-    let queued: Vec<i64> = {
-        let mut st = c.prepare("SELECT id FROM messages WHERE device_id=?1 AND state='queued'")?;
+    let pending: Vec<i64> = {
+        let mut st = c.prepare(
+            "SELECT id FROM messages WHERE device_id=?1 AND direction='out'
+               AND state IN ('queued','dispatched') ORDER BY id",
+        )?;
         st.query_map([id], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?
     };
-    for m in queued {
+    for m in pending {
         super::messages::apply_event(
             c,
             m,
@@ -358,6 +368,10 @@ pub fn delete(c: &Connection, id: i64, now: i64) -> rusqlite::Result<()> {
             now,
         )?;
     }
-    c.execute("DELETE FROM devices WHERE id=?1", [id])?;
+    c.execute(
+        "UPDATE devices SET removed_at=?2, token_sha256=?3, fcm_token=NULL, is_default=0, connected=0
+         WHERE id=?1 AND removed_at IS NULL",
+        params![id, now, crate::util::random_bytes::<32>().as_slice()],
+    )?;
     Ok(())
 }

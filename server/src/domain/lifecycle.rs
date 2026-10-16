@@ -116,6 +116,7 @@ pub fn transition(from: State, event: Event) -> Option<State> {
         (S::Dispatched, E::StatusFailed) => Some(S::Failed),
         (S::Dispatched, E::Ttl) => Some(S::Expired),
         (S::Dispatched, E::StatusTimeout) => Some(S::Failed),
+        (S::Dispatched, E::Cancel) => Some(S::Failed),
         (S::Sent, E::StatusDelivered) => Some(S::Delivered),
         (S::Sent, E::StatusFailed) => Some(S::Failed),
         _ => None,
@@ -135,6 +136,7 @@ mod tests {
         (State::Dispatched, Event::StatusFailed, State::Failed),
         (State::Dispatched, Event::Ttl, State::Expired),
         (State::Dispatched, Event::StatusTimeout, State::Failed),
+        (State::Dispatched, Event::Cancel, State::Failed),
         (State::Sent, Event::StatusDelivered, State::Delivered),
         (State::Sent, Event::StatusFailed, State::Failed),
     ];
@@ -177,6 +179,19 @@ mod tests {
         let s = transition(State::Dispatched, Event::StatusDelivered).unwrap();
         assert_eq!(s, State::Delivered);
         assert_eq!(transition(s, Event::StatusSent), None);
+    }
+
+    #[test]
+    fn ac_004_cancel_fails_queued_and_dispatched() {
+        assert_eq!(
+            transition(State::Queued, Event::Cancel),
+            Some(State::Failed)
+        );
+        assert_eq!(
+            transition(State::Dispatched, Event::Cancel),
+            Some(State::Failed)
+        );
+        assert_eq!(transition(State::Sent, Event::Cancel), None);
     }
 
     #[test]

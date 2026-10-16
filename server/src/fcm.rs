@@ -155,7 +155,7 @@ pub async fn check_once(app: &App, fcm: &Fcm) -> crate::store::Result<Vec<i64>> 
         .store
         .write(move |c| {
             let mut st = c.prepare(
-                "SELECT id, fcm_token FROM devices d WHERE connected=0 AND fcm_token IS NOT NULL
+                "SELECT id, fcm_token FROM devices d WHERE removed_at IS NULL AND connected=0 AND fcm_token IS NOT NULL
                    AND (last_seen_at IS NULL OR last_seen_at<?1)
                    AND (last_wake_at IS NULL OR last_wake_at<?2)
                    AND EXISTS(SELECT 1 FROM messages m WHERE m.device_id=d.id AND (m.state='queued'

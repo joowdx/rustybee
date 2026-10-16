@@ -263,7 +263,7 @@ impl RowView {
             peer: m.peer.clone(),
             body: m.body.chars().take(140).collect(),
             state: m.state.as_str(),
-            device: m.device_name.clone(),
+            device: m.device_label(),
             created: human_time(m.created_at),
         }
     }

@@ -866,7 +866,7 @@ pub async fn message(
         peer: m.peer.clone(),
         body: m.body.clone(),
         state: m.state.as_str(),
-        device: m.device_name.clone(),
+        device: m.device_label(),
         batch: m.batch_public_id.clone(),
         sim: m.sim,
         parts: m.parts,

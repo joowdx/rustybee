@@ -73,6 +73,6 @@ Runs every 60 s with `RUSTYBEE_MESSAGE_TTL_HOURS`, default 24:
 | 06 | `domain::phone` unit tests |
 
 ## Assumptions
-- No user-facing cancel in the first release. The `cancel` transition exists only for deleting a device that still has queued messages.
+- No user-facing cancel in the first release. The `cancel` transition exists only for removing a device that still has `queued` or `dispatched` messages; history is kept (spec 003 soft delete).
 
 ## Open questions

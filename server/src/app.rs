@@ -151,7 +151,8 @@ impl Ctx {
         Ok(())
     }
 
-    /// Remove a device: close its socket with 4003, cancel queued messages, delete it.
+    /// Remove a device: close its socket with 4003, cancel its queued and
+    /// dispatched messages and soft-delete it (spec 003).
     pub async fn remove_device(&self, device_id: i64) -> store::Result<()> {
         self.hub
             .close(device_id, crate::hub::CLOSE_REVOKED, "revoked");
