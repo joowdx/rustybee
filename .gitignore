@@ -11,7 +11,8 @@ local.properties
 android/keystore.properties
 *.jks
 *.keystore
-android/app/src/gms/google-services.json
+google-services.json
+fcm.json
 *.db
 *.db-*
 .env
