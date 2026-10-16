@@ -1,31 +1,121 @@
+# PRs: test and build the app. master: also release it.
+#
+# Every push to master that touches the app publishes a GitHub release
+# v<version> with the signed foss APK, the gms APK when its Firebase config is
+# set, and SHA256SUMS. .github/scripts/next-version.sh picks the version from
+# the Conventional Commits since the last release (spec 001).
+#
+# Repository secrets:
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+#   ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD   release signing key (required on master)
+#   RUSTYBEE_GOOGLE_SERVICES_JSON             google-services.json for dev.joowdx.rustybee
+#                                             (optional; without it no gms APK is built)
 name: android
 on:
-  push:
-    paths: ["android/**", "protocol/**", ".github/workflows/android.yml"]
   pull_request:
-    paths: ["android/**", "protocol/**", ".github/workflows/android.yml"]
+    paths: ["android/**", "protocol/**", "VERSION", ".github/workflows/android.yml", ".github/scripts/next-version.sh"]
+  push:
+    branches: [master]
+    paths: ["android/**", "protocol/**", "VERSION", ".github/workflows/android.yml", ".github/scripts/next-version.sh"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  build:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: v
+        run: |
+          v=$(.github/scripts/next-version.sh)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Version: \`$v\`" >> "$GITHUB_STEP_SUMMARY"
+
+  apk:
+    needs: version
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: android } }
+    env:
+      RUSTYBEE_VERSION: ${{ needs.version.outputs.version }}
+      RELEASE: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "21" }
       - uses: gradle/actions/setup-gradle@v4
-      - name: Release signing (optional)
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Signing key
         env:
           KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        if: env.KS != ''
         run: |
-          echo "$KS" | base64 -d > release.jks
-          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
-            "$PWD/release.jks" "$KS_PASS" "$KEY_ALIAS" "$KEY_PASS" > keystore.properties
-      - run: ./gradlew --no-daemon testFossDebugUnitTest assembleFossRelease
+          if [ -z "$KS" ]; then
+            [ "$RELEASE" = true ] && { echo "::error::Set the ANDROID_KEYSTORE_* secrets"; exit 1; }
+            echo "No signing key; the APK is unsigned" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          printf '%s' "$KS" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "RUSTYBEE_STORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+      - name: Firebase config (optional)
+        env:
+          GSJ: ${{ secrets.RUSTYBEE_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ "$RELEASE" = true ] && [ -n "$GSJ" ]; then
+            printf '%s' "$GSJ" > app/src/gms/google-services.json
+            echo "TASKS=assembleFossRelease assembleGmsRelease" >> "$GITHUB_ENV"
+          else
+            echo "TASKS=assembleFossRelease" >> "$GITHUB_ENV"
+          fi
+      - name: Build
+        env:
+          RUSTYBEE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RUSTYBEE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          RUSTYBEE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon testFossDebugUnitTest $TASKS
+      - name: Collect and verify
+        run: |
+          mkdir -p ../apk
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          for flavor in foss gms; do
+            dir="app/build/outputs/apk/$flavor/release"
+            src=$(ls "$dir"/app-$flavor-release*.apk 2>/dev/null | head -1)
+            [ -n "$src" ] || continue
+            "$apksigner" verify --print-certs "$src" 2>/dev/null | grep 'SHA-256' | sed "s/^/$flavor: /" >> "$GITHUB_STEP_SUMMARY" || true
+            cp "$src" "../apk/rustybee-$RUSTYBEE_VERSION-$flavor.apk"
+          done
+          rm -f "$RUNNER_TEMP/release.jks" app/src/gms/google-services.json
       - uses: actions/upload-artifact@v4
         with:
-          name: rustybee-foss-release
-          path: android/app/build/outputs/apk/foss/release/*.apk
+          name: apk
+          path: apk/*
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 1 }}
+
+  release:
+    if: github.event_name != 'pull_request'
+    needs: [version, apk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: apk, path: assets }
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ needs.version.outputs.version }}
+        run: |
+          cd assets
+          sha256sum * > SHA256SUMS
+          gh release create "v$V" * -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "rustybee $V" \
+            --latest --generate-notes --notes "- \`rustybee-$V-foss.apk\`: the app without Google services (recommended).
+          - \`rustybee-$V-gms.apk\`, when present: adds the optional FCM wake-up.
+          - \`SHA256SUMS\`: checksums of the above."
