@@ -59,7 +59,7 @@ rustybee replaces a NestJS/Mongo/Redis/Mosquitto/Next.js stack and a legacy Andr
 | AC | Test |
 |---|---|
 | 01 | `deploy/Dockerfile` builds a `FROM scratch` image; the container starts |
-| 02 | CI step `! grep -RniE 'textbee\|vernu' --exclude-dir=docs .` |
+| 02 | Verified once at cutover with `git grep -nIiE 'textbee\|vernu' -- . ':!docs' ':!CLAUDE.md'` |
 | 03 | Manual measurement, recorded in `docs/specs/README.md` |
 
 ## Assumptions
