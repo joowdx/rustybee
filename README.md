@@ -93,7 +93,7 @@ docker compose up -d
 docker compose ps        # wait until it says "healthy"
 ```
 
-Open the public URL and log in with the password. Compose publishes port 8080 on `127.0.0.1` only, for a reverse proxy or tunnel on the same host; to reach it as `http://<server-ip>:8080` on your LAN with no proxy, change the mapping in `compose.yaml` to `"8080:8080"`. After the first login, remove `RUSTYBEE_ADMIN_PASSWORD` from `.env`: it is only read when no password is set yet. To change the password later:
+Open the public URL and log in with the password. Compose publishes port 8080 on `127.0.0.1` only, for a reverse proxy or tunnel on the same host; to reach it as `http://<server-ip>:8080` on your LAN with no proxy, change the mapping in `compose.yaml` to `"8080:8080"` and set `RUSTYBEE_PUBLIC_URL=http://<server-ip>:8080` in `.env`, since the phone pairs and connects through that URL (trusted LANs only; public access needs a TLS-terminating proxy or tunnel). After the first login, remove `RUSTYBEE_ADMIN_PASSWORD` from `.env`: it is only read when no password is set yet. To change the password later:
 
 ```sh
 docker exec -it rustybee /rustybee set-password
@@ -103,11 +103,13 @@ docker exec -it rustybee /rustybee set-password
 
 ```sh
 docker run -d --name rustybee --restart unless-stopped \
-  -p 8080:8080 -v rustybee-data:/data \
+  -p 127.0.0.1:8080:8080 -v rustybee-data:/data \
   -e RUSTYBEE_PUBLIC_URL=https://sms.example.com \
   -e RUSTYBEE_ADMIN_PASSWORD='pick-a-long-password' \
   ghcr.io/joowdx/rustybee:latest
 ```
+
+This binds to loopback for a proxy or tunnel on the same host; use `-p 8080:8080` only for direct access on a trusted LAN.
 
 Image tags: `latest`, the major version (e.g. `3`), and `sha-<commit>`. Pin the major version if you want to avoid surprise breaking changes.
 
@@ -323,7 +325,7 @@ Use the raw request body exactly as received, not re-encoded JSON.
 
 ## Exposing it to the internet
 
-The server speaks plain HTTP on port 8080 and does no TLS itself. On a LAN that is fine. For anything reachable from the internet, put HTTPS in front of it. Pick one:
+The server speaks plain HTTP on port 8080 and does no TLS itself. On a trusted LAN that is fine. For anything reachable from the internet, put HTTPS in front of it. Pick one:
 
 - **Cloudflare Tunnel.** No open ports and no public IP needed. Point the tunnel at `http://127.0.0.1:8080` and set:
   ```sh

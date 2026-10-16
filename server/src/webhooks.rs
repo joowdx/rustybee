@@ -98,7 +98,10 @@ async fn post(
             let mut buf = Vec::new();
             while buf.len() < MAX_RESPONSE_READ {
                 match r.chunk().await {
-                    Ok(Some(c)) => buf.extend_from_slice(&c),
+                    Ok(Some(c)) => {
+                        let room = MAX_RESPONSE_READ - buf.len();
+                        buf.extend_from_slice(&c[..c.len().min(room)]);
+                    }
                     _ => break,
                 }
             }
