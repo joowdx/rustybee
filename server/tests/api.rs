@@ -187,7 +187,17 @@ async fn ac_007_04_filters_narrow_results() {
         json!({"uid": "u1", "from": "+15550000009", "body": "Cherry", "sim": null, "received_at": 1}),
     );
     d.send(&f).await;
-    d.recv_type("ack").await;
+    // The dispatcher may push the queued "Apple pie" send before this ack.
+    loop {
+        let v = d.recv().await;
+        if v["type"] == "ack" && v["data"]["ref"] == f["id"] {
+            break;
+        }
+        assert!(
+            v["type"] == "send" || v["type"] == "config",
+            "unexpected {v}"
+        );
+    }
     let get = |q: &str| {
         let q = q.to_string();
         let s = &s;
