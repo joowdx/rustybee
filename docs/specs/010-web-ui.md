@@ -8,7 +8,7 @@ Updated: 2026-10-16
 ### Stack
 - **Rendering:** askama templates, rendered on the server.
 - **Interactivity:** htmx 2.x, vendored into `server/static/` and embedded with rust-embed. Live updates use htmx's SSE extension.
-- **Front-end code:** one `app.css` (hand-written, under about 12 KB) and one `app.js` (segment counter, recipient chips, copy buttons; under about 6 KB).
+- **Front-end code:** one `app.css` (hand-written, under about 24 KB) and one `app.js` (segment counter, recipient chips, copy buttons; under about 6 KB).
 - **No external requests.** No CDN, no web fonts; the system font stack only.
 - **Themes:** light and dark through `prefers-color-scheme`.
 - **Layout:** one centred column (max 1120 px) shared by the top bar and the page. Under 640 px the tabs move to a bottom bar with Home, Send, Messages and Devices, plus a "More" menu (a `<details>`, so it works without JavaScript) for Bulk, Keys, Webhooks and Settings.
@@ -24,7 +24,7 @@ All pages except `/login` require a session (spec 005).
 | `/bulk` | Step 1: upload a CSV (≤ 1 MB, ≤ 1000 rows), parsed on the server with the `csv` crate. Step 2: pick the phone column; the rest are variables. Step 3: write a `{{column}}` template with a preview of the first 5 rows and the segment count. Step 4: confirm, which calls the batch endpoint internally. The parsed CSV is kept in memory under a random token for 30 min, so there are no temp files. |
 | `/messages` | Unified history. Filters (direction, state, device, peer, q, date range) live in the query string. Keyset "Load more" via htmx. |
 | `/messages/{id}` | Detail view with the timeline (timestamps), error, webhook deliveries for the message, and a Reply form for the peer. |
-| `/devices` | List. "Pair a device" shows the QR code (inline SVG) plus the copyable link, with a countdown of the code's expiry; the page polls until a device pairs. Per device: rename, set default, enable/disable, send delay, receive toggle, preferred SIM, SMS filters editor, remove (with confirmation; closes the socket with 4003). |
+| `/devices` | List. "Pair a phone" shows the QR code (inline SVG) plus the copyable link, with a countdown of the code's expiry; the page polls until a device pairs. Per device: rename, set default, enable/disable, send delay, receive toggle, preferred SIM, SMS filters editor, remove (with confirmation; closes the socket with 4003). |
 | `/keys` | Create (secret shown once with a copy button), rename, revoke, delete. |
 | `/webhooks` | Create, edit, delete, rotate secret, test. `/webhooks/{id}` shows the deliveries log, paged, with the payload, status and error, and a redeliver button. |
 | `/settings` | Change password; list sessions and revoke them. |

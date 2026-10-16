@@ -2,14 +2,14 @@
 {% block content %}
 <div class="head">
   <h1>Devices</h1>
-  {% if pair.is_none() %}<form method="post" action="/devices/pair"><button>Pair a device</button></form>{% endif %}
+  {% if pair.is_none() %}<form method="post" action="/devices/pair"><button>Pair a phone</button></form>{% endif %}
 </div>
 {% if let Some(p) = pair %}
-<section class="card">
+<section class="card" style="margin-bottom:24px">
   <div class="pair">
     <div class="qr">{{ p.qr|safe }}</div>
     <div>
-      <h2>Pair a device</h2>
+      <h2 style="margin-top:0">Pair a phone</h2>
       <p>Scan this code with the rustybee app, or open the link on the phone. This page updates once the phone is paired.</p>
       <div class="secret"><code id="pair-link">{{ p.link }}</code><button class="ghost" data-copy="pair-link">Copy link</button></div>
       <p class="muted small">Code <code>{{ p.code }}</code>, <span data-expires="{{ p.expires }}">expires in 10:00</span></p>
@@ -18,50 +18,53 @@
   <div hx-get="/devices/paired?n={{ p.count }}" hx-trigger="every 3s" hx-swap="none"></div>
 </section>
 {% endif %}
-{% if devices.is_empty() && pair.is_none() %}<div class="empty"><p>No devices paired yet. Install the rustybee app on an Android phone, then pair it here.</p></div>{% endif %}
+{% if devices.is_empty() && pair.is_none() %}<div class="empty"><p>No phones paired yet. Install the rustybee app on an Android phone, then pair it here.</p></div>{% endif %}
 {% for d in devices %}
-<section class="card" id="d-{{ d.id }}">
-  <div class="dev-top">
-    <div>
-      <h3>{{ d.name }}{% if d.is_default %} <span class="st">default</span>{% endif %}{% if !d.enabled %} <span class="st st-failed">disabled</span>{% endif %}</h3>
-      <div class="muted small">{{ d.model }}, last seen {{ d.last_seen }}</div>
+<section class="dev" id="d-{{ d.id }}">
+  <div class="sb">
+    <span{% if d.online %} class="on"{% endif %}><span class="dot"></span> {% if d.online %}Online{% else %}Seen {{ d.last_seen }}{% endif %}</span>
+    <span class="gap"></span>
+    {% if let Some(n) = d.network %}<span class="net"><svg aria-hidden="true"><use href="#i-{% if n == "wifi" %}wifi{% else %}cell{% endif %}"/></svg>{{ n }}</span>{% endif %}
+    {% if let Some(p) = d.battery_pct %}<span class="bat{% if *p < 20 %} low{% endif %}{% if d.charging %} chg{% endif %}"><i><b style="width:{{ p }}%"></b></i>{{ p }}%</span>{% endif %}
+  </div>
+  <div class="dev-h">
+    <div class="grow">
+      <h3>{{ d.name }}{% if d.is_default %} <span class="badge on">Default</span>{% endif %}{% if !d.enabled %} <span class="badge">Not sending</span>{% endif %}</h3>
+      <div class="muted small">{{ d.model }}</div>
     </div>
-    <span class="state"><span class="dot{% if d.online %} on{% endif %}"></span>{% if d.online %}Online{% else %}Offline{% endif %}</span>
+    {% if !d.is_default %}<form method="post" action="/devices/{{ d.id }}/default"><button class="ghost sm">Make default</button></form>{% endif %}
   </div>
   <details>
     <summary>Settings</summary>
-    <form method="post" action="/devices/{{ d.id }}" class="stack">
-      <label>Name <input name="name" value="{{ d.name }}" required maxlength="64"></label>
-      <label class="check"><input type="checkbox" name="enabled"{% if d.enabled %} checked{% endif %}> Enabled for sending</label>
-      <label>Send delay <span class="hint">Milliseconds between messages, 0 to 3600000</span> <input type="number" name="send_delay_ms" min="0" max="3600000" value="{{ d.send_delay_ms }}"></label>
-      <label class="check"><input type="checkbox" name="receive_enabled"{% if d.receive_enabled %} checked{% endif %}> Forward received SMS</label>
-      <label>Preferred SIM
-        <select name="sim">
+    <form method="post" action="/devices/{{ d.id }}" class="fields">
+      <div class="f"><label for="n-{{ d.id }}">Name</label><input id="n-{{ d.id }}" name="name" value="{{ d.name }}" required maxlength="64"></div>
+      <label class="f sw-row"><span>Send messages<span class="hint">Off keeps the phone paired but skips it when sending</span></span><input class="sw" type="checkbox" name="enabled"{% if d.enabled %} checked{% endif %}></label>
+      <div class="f"><label for="dl-{{ d.id }}">Delay between messages<span class="hint">0 sends as fast as the phone allows</span></label><div class="in-unit"><input id="dl-{{ d.id }}" type="number" name="send_delay_ms" min="0" max="3600000" value="{{ d.send_delay_ms }}"><span>ms</span></div></div>
+      <div class="f"><label for="sim-{{ d.id }}">SIM for sending</label>
+        <select id="sim-{{ d.id }}" name="sim">
           <option value="">Phone default</option>
           {% for s in d.sims %}<option value="{{ s.value }}"{% if s.selected %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
         </select>
-      </label>
-      <label>SMS filter
-        <select name="filter_mode">
-          <option value="off"{% if d.filter_mode == "off" %} selected{% endif %}>Off</option>
-          <option value="allow"{% if d.filter_mode == "allow" %} selected{% endif %}>Allow only matching</option>
-          <option value="block"{% if d.filter_mode == "block" %} selected{% endif %}>Block matching</option>
+      </div>
+      <label class="f sw-row"><span>Forward received SMS<span class="hint">Texts that reach this phone show up in Messages</span></span><input class="sw" type="checkbox" name="receive_enabled"{% if d.receive_enabled %} checked{% endif %}></label>
+      <div class="f"><label for="fm-{{ d.id }}">Filter received SMS</label>
+        <select id="fm-{{ d.id }}" name="filter_mode">
+          <option value="off"{% if d.filter_mode == "off" %} selected{% endif %}>Forward everything</option>
+          <option value="allow"{% if d.filter_mode == "allow" %} selected{% endif %}>Forward only matching</option>
+          <option value="block"{% if d.filter_mode == "block" %} selected{% endif %}>Forward all except matching</option>
         </select>
-      </label>
-      <label>Rules <span class="hint">One per line as <code>field op value</code>. Fields: sender, body, any. Ops: equals, contains, starts_with, ends_with.</span>
-        <textarea name="rules" rows="3">{{ d.rules }}</textarea>
-      </label>
-      <label class="check"><input type="checkbox" name="ignore_case"{% if d.ignore_case %} checked{% endif %}> Ignore case</label>
-      <div><button>Save settings</button></div>
+      </div>
+      <div class="f wide"><label for="r-{{ d.id }}">Filter rules<span class="hint">One per line as <code>field op value</code>, for example <code>body contains promo</code>. Fields: sender, body, any. Ops: equals, contains, starts_with, ends_with.</span></label>
+        <textarea id="r-{{ d.id }}" name="rules" rows="3" class="mono">{{ d.rules }}</textarea>
+      </div>
+      <label class="f sw-row"><span>Ignore case in rules</span><input class="sw" type="checkbox" name="ignore_case"{% if d.ignore_case %} checked{% endif %}></label>
+      <div class="f-foot"><button>Save settings</button></div>
+    </form>
+    <form method="post" action="/devices/{{ d.id }}/delete" class="zone" hx-confirm="Remove {{ d.name }}? Queued messages are cancelled.">
+      <p><b>Remove this phone.</b> Its queued messages are cancelled; message history stays.</p>
+      <div class="actions"><label class="check small"><input type="checkbox" name="confirm" required> I'm sure</label><button class="danger sm">Remove phone</button></div>
     </form>
   </details>
-  <div class="actions">
-    {% if !d.is_default %}<form method="post" action="/devices/{{ d.id }}/default"><button class="ghost">Make default</button></form>{% endif %}
-    <form method="post" action="/devices/{{ d.id }}/delete" class="row" hx-confirm="Remove {{ d.name }}? Queued messages are cancelled.">
-      <label class="check"><input type="checkbox" name="confirm" required> Confirm removal</label>
-      <button class="danger">Remove</button>
-    </form>
-  </div>
 </section>
 {% endfor %}
 {% endblock %}

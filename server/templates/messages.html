@@ -1,35 +1,35 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="head"><h1>Messages</h1><a class="btn" href="/send">Send a message</a></div>
-<form method="get" action="/messages" class="row filters">
-  <label>Direction
-    <select name="direction">
-      <option value="">Any</option>
-      <option value="out"{% if f.direction == "out" %} selected{% endif %}>Outgoing</option>
-      <option value="in"{% if f.direction == "in" %} selected{% endif %}>Incoming</option>
-    </select>
-  </label>
-  <label>State
-    <select name="state">
-      <option value="">Any</option>
-      {% for s in states %}<option value="{{ s.value }}"{% if s.selected %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
-    </select>
-  </label>
-  <label>Device
-    <select name="device_id">
-      <option value="">Any</option>
-      {% for d in device_opts %}<option value="{{ d.id }}"{% if d.selected %} selected{% endif %}>{{ d.name }}</option>{% endfor %}
-    </select>
-  </label>
-  <label>Peer <input name="peer" value="{{ f.peer }}" inputmode="tel"></label>
-  <label>Search <input name="q" value="{{ f.q }}"></label>
-  <label>From <input type="date" name="since" value="{{ f.since }}"></label>
-  <label>To <input type="date" name="until" value="{{ f.until }}"></label>
+<form method="get" action="/messages" class="filters">
+  <input class="q" type="search" name="q" value="{{ f.q }}" placeholder="Search message text" aria-label="Search message text">
+  <div class="seg" role="radiogroup" aria-label="Direction">
+    <label><input type="radio" name="direction" value=""{% if f.direction == "" %} checked{% endif %}><span>All</span></label>
+    <label><input type="radio" name="direction" value="out"{% if f.direction == "out" %} checked{% endif %}><span>Sent</span></label>
+    <label><input type="radio" name="direction" value="in"{% if f.direction == "in" %} checked{% endif %}><span>Received</span></label>
+  </div>
+  <select name="state" aria-label="State">
+    <option value="">Any state</option>
+    {% for s in states %}<option value="{{ s.value }}"{% if s.selected %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
+  </select>
+  <select name="device_id" aria-label="Phone">
+    <option value="">Any phone</option>
+    {% for d in device_opts %}<option value="{{ d.id }}"{% if d.selected %} selected{% endif %}>{{ d.name }}</option>{% endfor %}
+  </select>
+  <button>Filter</button>
   {% if !f.batch_id.is_empty() %}<input type="hidden" name="batch_id" value="{{ f.batch_id }}">{% endif %}
-  <div class="actions"><button>Apply filters</button><a class="btn ghost" href="/messages">Reset</a></div>
+  <details class="adv"{% if !f.peer.is_empty() || !f.since.is_empty() || !f.until.is_empty() %} open{% endif %}>
+    <summary>Number and dates</summary>
+    <div class="row">
+      <label><span class="lbl">Number</span><input name="peer" value="{{ f.peer }}" inputmode="tel" placeholder="+15551234567"></label>
+      <label><span class="lbl">From</span><input type="date" name="since" value="{{ f.since }}"></label>
+      <label><span class="lbl">To</span><input type="date" name="until" value="{{ f.until }}"></label>
+      <a class="btn ghost" href="/messages">Clear filters</a>
+    </div>
+  </details>
 </form>
-{% if !f.batch_id.is_empty() %}<p class="muted small">Showing batch <code>{{ f.batch_id }}</code>. <a href="/messages">Show all messages</a></p>{% endif %}
-{% if rows.is_empty() %}<div class="empty"><p>No messages match these filters.</p></div>{% else %}
-<div class="tbl"><table>{% include "_table_head.html" %}<tbody>{% include "_rows.html" %}{% include "_more.html" %}</tbody></table></div>
+{% if !f.batch_id.is_empty() %}<p class="muted small">Showing one batch, <code>{{ f.batch_id }}</code>. <a href="/messages">Show all messages</a></p>{% endif %}
+{% if rows.is_empty() %}<div class="empty"><p>No messages match these filters.</p><a class="btn ghost" href="/messages">Clear filters</a></div>{% else %}
+<div class="list">{% include "_rows.html" %}{% include "_more.html" %}</div>
 {% endif %}
 {% endblock %}

@@ -32,7 +32,7 @@ The rewrite lives on the orphan branch `master`, which shares no history with th
 - Versioning:
   - The project starts at **3.0.0**, after the 2.x releases of the old fork, and follows semver from here with no upstream suffix.
   - The repository-root `VERSION` file is the single source. The app reads it at build time: `versionName = VERSION`, `versionCode = major×10000 + minor×100 + patch`. `server/Cargo.toml` repeats it because Cargo can't read files; `release.yml` refuses a tag when the two differ.
-- Branding: the legacy bee icons are not carried over. The rusty bee in `branding/` is the source for every icon: the Android adaptive and notification icons, and the web UI favicon. `branding/generate-icons.sh` regenerates them.
+- Branding: the legacy bee icons are not carried over. The rusty bee in `branding/` is the source for every icon: the Android adaptive and notification icons, the web UI favicon and the header and login logo. `branding/generate-icons.sh` regenerates them.
 
 ## Acceptance criteria
 1. AC-001-01 `git log master` has no commit shared with `main`.

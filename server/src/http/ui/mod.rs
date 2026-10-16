@@ -9,7 +9,7 @@ use crate::app::{App, UiEvent};
 use crate::assets;
 use crate::store::devices::DeviceRow;
 use crate::store::messages::MessageRow;
-use crate::util::{ago, human_time};
+use crate::util::{ago, human_time, short_time};
 use askama::Template;
 use axum::Router;
 use axum::http::StatusCode;
@@ -79,6 +79,7 @@ pub struct Layout {
     pub sse: String,
     pub favicon: String,
     pub touch_icon: String,
+    pub logo: String,
     pub flash: Option<String>,
     pub error: Option<String>,
 }
@@ -94,6 +95,7 @@ impl Layout {
             sse: assets::url("sse.js"),
             favicon: assets::url("favicon.ico"),
             touch_icon: assets::url("apple-touch-icon.png"),
+            logo: assets::url("bee.png"),
             flash: None,
             error: None,
         }
@@ -134,7 +136,7 @@ fn flash_text(key: &str) -> String {
         "redeliver" => "Delivery queued again.",
         "reply" => "Reply queued.",
         "password" => "Password changed. Other sessions were signed out.",
-        "session" => "Session revoked.",
+        "session" => "Browser signed out.",
         _ => "Done.",
     }
     .to_string()
@@ -251,24 +253,26 @@ pub fn sim_opts(devs: &[DeviceRow], selected: Option<i64>) -> Vec<Opt> {
 
 pub struct RowView {
     pub id: String,
-    pub arrow: &'static str,
+    pub out: bool,
     pub peer: String,
     pub body: String,
     pub state: &'static str,
     pub device: String,
     pub created: String,
+    pub when: String,
 }
 
 impl RowView {
     pub fn from(m: &MessageRow) -> RowView {
         RowView {
             id: m.public_id.clone(),
-            arrow: if m.direction == "in" { "←" } else { "→" },
+            out: m.direction != "in",
             peer: m.peer.clone(),
             body: m.body.chars().take(140).collect(),
             state: m.state.as_str(),
             device: m.device_label(),
             created: human_time(m.created_at),
+            when: short_time(m.created_at),
         }
     }
 }

@@ -35,11 +35,13 @@ magick "$T/hexbg.png" \( -size 1024x1024 xc:black -fill white -draw "polygon $he
   -trim +repage -background none -extent 1024x1024 $B/icon-server.png
 
 # web ui: embedded by the server binary, so both stay small enough for the
-# 40 KB asset budget (AC-010-05). transparent bee for the tab, the full square
-# for iOS, which applies its own mask
+# 40 KB asset budget (AC-010-05). transparent bee for the tab and the page
+# logo, the full square for iOS, which applies its own mask
 S=server/static
 magick $B/icon-bee.png -define icon:auto-resize=32,16 $S/favicon.ico
 magick $B/icon-master.png -resize 180x180 -strip -colors 128 PNG8:$S/apple-touch-icon.png
+# header and login logo (40px at 2x)
+magick $B/icon-bee.png -resize 80x80 -strip -colors 128 PNG8:$S/bee.png
 
 # android adaptive layers (108dp canvas, 72dp visible, 66dp safe zone). minSdk 36
 # always uses the adaptive icon, so there are no legacy square or round mipmaps

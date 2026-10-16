@@ -1,9 +1,9 @@
 {% for m in rows %}
-<tr>
-  <td><a href="/messages/{{ m.id }}">{{ m.arrow }} {{ m.peer }}</a></td>
-  <td class="body">{{ m.body }}</td>
-  <td><span class="st st-{{ m.state }}">{{ m.state }}</span></td>
-  <td class="muted hide-sm">{{ m.device }}</td>
-  <td class="muted small hide-sm">{{ m.created }}</td>
-</tr>
+<a class="li msg" href="/messages/{{ m.id }}">
+  <span class="ic{% if m.out %} out{% endif %}" title="{% if m.out %}Outgoing{% else %}Incoming{% endif %}"><svg aria-hidden="true"><use href="#i-{% if m.out %}out{% else %}in{% endif %}"/></svg></span>
+  <span class="top"><b>{{ m.peer }}</b><span class="hide-sm">via {{ m.device }}</span></span>
+  <span class="body">{{ m.body }}</span>
+  <time title="{{ m.created }}">{{ m.when }}</time>
+  <span class="st st-{{ m.state }}">{{ m.state }}</span>
+</a>
 {% endfor %}

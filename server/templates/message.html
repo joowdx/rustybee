@@ -1,41 +1,42 @@
 {% extends "base.html" %}
 {% block content %}
-<a class="back" href="/messages">← Messages</a>
-<div class="head"><h1>{{ m.arrow }} {{ m.peer }}</h1><span class="st st-{{ m.state }}">{{ m.state }}</span></div>
-<div class="split">
-<div>
-<p class="bubble">{{ m.body }}</p>
-<dl class="kv">
-  <dt>Id</dt><dd class="mono">{{ m.id }}</dd>
-  <dt>Device</dt><dd>{{ m.device }}</dd>
-  {% if let Some(b) = m.batch %}<dt>Batch</dt><dd><a href="/messages?batch_id={{ b }}">{{ b }}</a></dd>{% endif %}
-  {% if let Some(s) = m.sim %}<dt>SIM</dt><dd>{{ s }}</dd>{% endif %}
-  {% if let Some(p) = m.parts %}<dt>Parts</dt><dd>{{ p }}</dd>{% endif %}
-  {% if let Some(e) = m.error %}<dt>Error</dt><dd class="error">{{ e }}</dd>{% endif %}
-</dl>
-</div>
-<div class="card">
-<h2>Timeline</h2>
-<ul class="timeline">
-{% for t in m.timeline %}<li><b>{{ t.0 }}</b> <span class="muted">{{ t.1 }}</span></li>{% endfor %}
-</ul>
-</div>
+<a class="back" href="/messages"><svg aria-hidden="true" width="16" height="16"><use href="#i-back"/></svg>Messages</a>
+<div class="head"><h1>{{ m.peer }}</h1></div>
+<div class="thread">
+  <section class="convo{% if m.out %} out{% endif %}" aria-label="Message">
+    <p class="bubble">{{ m.body }}</p>
+    <span class="st st-{{ m.state }}">{{ m.state }}{% if !m.out %} on {{ m.device }}{% endif %}</span>
+    <form method="post" action="/messages/{{ m.id }}/reply" class="composer">
+      <textarea name="body" rows="3" data-counter="reply-count" required maxlength="1600" placeholder="Reply to {{ m.peer }}" aria-label="Reply to {{ m.peer }}"></textarea>
+      <div class="foot"><output id="reply-count"></output><button>Send reply</button></div>
+    </form>
+  </section>
+  <aside class="side card">
+    <h2>Details</h2>
+    <dl class="kv">
+      <dt>Direction</dt><dd>{% if m.out %}Sent{% else %}Received{% endif %}</dd>
+      <dt>Phone</dt><dd>{{ m.device }}</dd>
+      {% if let Some(s) = m.sim %}<dt>SIM</dt><dd>{{ s }}</dd>{% endif %}
+      {% if let Some(p) = m.parts %}<dt>Parts</dt><dd>{{ p }}</dd>{% endif %}
+      {% if let Some(b) = m.batch %}<dt>Batch</dt><dd><a href="/messages?batch_id={{ b }}">{{ b }}</a></dd>{% endif %}
+      {% if let Some(e) = m.error %}<dt>Error</dt><dd class="error">{{ e }}</dd>{% endif %}
+      <dt>Id</dt><dd class="mono">{{ m.id }}</dd>
+    </dl>
+    <h2>Timeline</h2>
+    <ol class="timeline">
+    {% for t in m.timeline %}<li>{{ t.0 }}<span>{{ t.1 }}</span></li>{% endfor %}
+    </ol>
+  </aside>
 </div>
 <h2>Webhook deliveries</h2>
-{% if deliveries.is_empty() %}<p class="muted">None.</p>{% else %}
-<div class="tbl"><table>
-  <thead><tr><th>Event</th><th>Status</th><th class="hide-sm">Attempts</th><th>Last</th></tr></thead>
-  <tbody>
-  {% for d in deliveries %}<tr><td><a href="/webhooks/{{ d.webhook }}">{{ d.event }}</a></td><td>{{ d.status }}</td><td class="hide-sm">{{ d.attempts }}</td><td class="small">{{ d.last }}</td></tr>{% endfor %}
-  </tbody>
-</table></div>
+{% if deliveries.is_empty() %}<p class="muted">No webhook was sent for this message.</p>{% else %}
+<div class="list">
+{% for d in deliveries %}
+  <a class="li" href="/webhooks/{{ d.webhook }}">
+    <div class="grow"><div class="t">{{ d.event }}</div><div class="s"><span>{{ d.attempts }} attempt{% if d.attempts != 1 %}s{% endif %}</span><span>{{ d.last }}</span></div></div>
+    <span class="st st-{{ d.status }}">{{ d.status }}</span>
+  </a>
+{% endfor %}
+</div>
 {% endif %}
-<h2>Reply</h2>
-<form method="post" action="/messages/{{ m.id }}/reply" class="stack panel">
-  <label>Message to {{ m.peer }}
-    <textarea name="body" rows="3" data-counter="reply-count" required maxlength="1600"></textarea>
-  </label>
-  <output id="reply-count" class="muted small"></output>
-  <div><button>Send reply</button></div>
-</form>
 {% endblock %}

@@ -87,6 +87,15 @@ pub fn human_time(ms: i64) -> String {
         .unwrap_or_default()
 }
 
+/// Compact timestamp for lists, like "Oct 16, 01:37".
+pub fn short_time(ms: i64) -> String {
+    let fmt = time::macros::format_description!("[month repr:short] [day padding:none], [hour]:[minute]");
+    OffsetDateTime::from_unix_timestamp_nanos(ms as i128 * 1_000_000)
+        .ok()
+        .and_then(|t| t.format(&fmt).ok())
+        .unwrap_or_default()
+}
+
 pub fn ago(now: i64, then: i64) -> String {
     let s = ((now - then) / 1000).max(0);
     match s {

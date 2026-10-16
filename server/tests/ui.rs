@@ -399,13 +399,13 @@ async fn messages_load_more_pages() {
     .await;
     let ui = Ui::new(&s).await;
     let (_, page) = ui.get("/messages").await;
-    assert_eq!(page.matches("<tr>").count() - 1, 50);
+    assert_eq!(page.matches("class=\"li msg\"").count(), 50);
     let more = between(&page, "hx-get=\"/messages/rows?", "\"")
         .replace("&amp;", "&")
         .replace("&#38;", "&");
     let (st, rows) = ui.get(&format!("/messages/rows?{more}")).await;
     assert_eq!(st, 200);
-    assert_eq!(rows.matches("<tr>").count(), 10);
+    assert_eq!(rows.matches("class=\"li msg\"").count(), 10);
     assert!(!rows.contains("Load more"));
     s.stop().await;
 }

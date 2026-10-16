@@ -1,40 +1,43 @@
 {% extends "base.html" %}
 {% block content %}
-<a class="back" href="/webhooks">← Webhooks</a>
-<h1>{{ form.name }}</h1>
-<section class="card">
-  <h2>Signing secret</h2>
-  <p class="muted small">Sent in the <code>X-Rustybee-Signature</code> header so you can check each request came from rustybee.</p>
-  <div class="secret"><code id="wh-secret">{{ secret }}</code><button class="ghost" data-copy="wh-secret">Copy</button></div>
+<a class="back" href="/webhooks"><svg aria-hidden="true" width="16" height="16"><use href="#i-back"/></svg>Webhooks</a>
+<div class="head">
+  <h1>{{ form.name }}</h1>
   <div class="actions">
     <form method="post" action="/webhooks/{{ id }}/test"><button class="ghost">Send test</button></form>
-    <form method="post" action="/webhooks/{{ id }}/rotate" hx-confirm="Rotate the secret? The old one stops working."><button class="ghost">Rotate secret</button></form>
     <form method="post" action="/webhooks/{{ id }}/delete" hx-confirm="Delete this webhook and its delivery log?"><button class="danger">Delete</button></form>
   </div>
+</div>
+<section class="group">
+  <header><h2>Signing secret</h2><p>Sent in the <code>X-Rustybee-Signature</code> header so you can check each request came from rustybee.</p></header>
+  <div class="card">
+    <div class="secret" style="margin-top:0"><code id="wh-secret">{{ secret }}</code><button class="ghost" data-copy="wh-secret">Copy</button></div>
+    <form method="post" action="/webhooks/{{ id }}/rotate" hx-confirm="Rotate the secret? The old one stops working."><button class="ghost sm">Rotate secret</button></form>
+  </div>
 </section>
-<h2>Edit</h2>
-<form method="post" action="/webhooks/{{ id }}" class="stack panel">
+<section class="group">
+  <header><h2>Settings</h2></header>
+  <form method="post" action="/webhooks/{{ id }}" class="fields">
 {% include "_webhook_form.html" %}
-  <div><button>Save changes</button></div>
-</form>
+    <div class="f-foot"><button>Save changes</button></div>
+  </form>
+</section>
 <h2>Deliveries</h2>
-{% if deliveries.is_empty() %}<p class="muted">No deliveries.</p>{% else %}
-<div class="tbl"><table>
-  <thead><tr><th>Event</th><th style="width:7em">Status</th><th class="hide-sm" style="width:5em">Tries</th><th>Detail</th></tr></thead>
-  <tbody>
-  {% for d in deliveries %}
-  <tr>
-    <td>{{ d.event }}{% if let Some(m) = d.message %}<br><a class="small" href="/messages/{{ m }}">message</a>{% endif %}<br><span class="muted small">{{ d.created }}</span></td>
-    <td>{{ d.status }}</td>
-    <td class="hide-sm">{{ d.attempts }}</td>
-    <td class="small">{{ d.last }}
-      <details><summary>Payload</summary><pre>{{ d.payload }}</pre></details>
-      <form method="post" action="/webhooks/deliveries/{{ d.id }}/redeliver"><button class="link">Redeliver</button></form>
-    </td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table></div>
-{% if let Some(b) = older %}<p><a href="/webhooks/{{ id }}?before={{ b }}">Older deliveries</a></p>{% endif %}
+{% if deliveries.is_empty() %}<div class="empty"><p>Nothing sent yet. Use Send test to try it.</p></div>{% else %}
+<div class="list">
+{% for d in deliveries %}
+  <div class="li dl">
+    <div class="grow">
+      <div class="t">{{ d.event }}</div>
+      <div class="s"><span>{{ d.created }}</span><span>{{ d.attempts }} attempt{% if d.attempts != 1 %}s{% endif %}</span>{% if let Some(m) = d.message %}<a href="/messages/{{ m }}">Message</a>{% endif %}</div>
+      {% if !d.last.is_empty() %}<div class="s"><span>{{ d.last }}</span></div>{% endif %}
+      <details class="payload"><summary>Payload</summary><pre>{{ d.payload }}</pre></details>
+    </div>
+    <span class="st st-{{ d.status }}">{{ d.status }}</span>
+    <form method="post" action="/webhooks/deliveries/{{ d.id }}/redeliver"><button class="ghost sm">Redeliver</button></form>
+  </div>
+{% endfor %}
+</div>
+{% if let Some(b) = older %}<p style="margin-top:12px"><a href="/webhooks/{{ id }}?before={{ b }}">Older deliveries</a></p>{% endif %}
 {% endif %}
 {% endblock %}

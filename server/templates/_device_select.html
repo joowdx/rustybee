@@ -1,12 +1,12 @@
-<label>Device
+<label><span class="lbl">Send from</span>
   <select name="device_id">
-    <option value="">Default</option>
-    {% for d in device_opts %}<option value="{{ d.id }}"{% if d.selected %} selected{% endif %}>{{ d.name }}{% if !d.enabled %} (disabled){% endif %}</option>{% endfor %}
+    <option value="">Default phone</option>
+    {% for d in device_opts %}<option value="{{ d.id }}"{% if d.selected %} selected{% endif %}>{{ d.name }}{% if !d.enabled %} (not sending){% endif %}</option>{% endfor %}
   </select>
 </label>
-<label>SIM
+<label><span class="lbl">SIM</span>
   <select name="sim">
-    <option value="">Device default</option>
+    <option value="">Phone's choice</option>
     {% for s in sim_opts %}<option value="{{ s.value }}"{% if s.selected %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
   </select>
 </label>

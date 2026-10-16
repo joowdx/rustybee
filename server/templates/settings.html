@@ -1,26 +1,29 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Settings</h1>
-<h2>Change password</h2>
-<form method="post" action="/settings/password" class="stack panel">
-  <label>Current password <input type="password" name="current" autocomplete="current-password" required></label>
-  <label>New password <span class="hint">At least 10 characters</span> <input type="password" name="new" autocomplete="new-password" minlength="10" required></label>
-  <label>Repeat new password <input type="password" name="repeat" autocomplete="new-password" minlength="10" required></label>
-  <div><button>Change password</button></div>
-</form>
-<h2>Sessions</h2>
-<div class="tbl"><table>
-  <thead><tr><th>Browser</th><th class="hide-sm">Signed in</th><th>Last seen</th><th style="width:7em"></th></tr></thead>
-  <tbody>
+<section class="group">
+  <header><h2>Password</h2><p>The one password for this dashboard. Changing it signs out every other browser.</p></header>
+  <form method="post" action="/settings/password" class="fields">
+    <div class="f"><label for="pw-cur">Current password</label><input id="pw-cur" type="password" name="current" autocomplete="current-password" required></div>
+    <div class="f"><label for="pw-new">New password<span class="hint">At least 10 characters</span></label><input id="pw-new" type="password" name="new" autocomplete="new-password" minlength="10" required></div>
+    <div class="f"><label for="pw-rep">Repeat new password</label><input id="pw-rep" type="password" name="repeat" autocomplete="new-password" minlength="10" required></div>
+    <div class="f-foot"><button>Change password</button></div>
+  </form>
+</section>
+<section class="group">
+  <header><h2>Sessions</h2><p>Browsers signed in to this dashboard. Sign out any you don't recognise.</p></header>
+  <div class="list">
   {% for s in sessions %}
-  <tr>
-    <td class="small">{{ s.agent }}{% if s.current %} <span class="st st-sent">this one</span>{% endif %}</td>
-    <td class="small hide-sm">{{ s.created }}</td>
-    <td class="small">{{ s.last_seen }}</td>
-    <td><form method="post" action="/settings/sessions/{{ s.id }}/revoke"><button class="danger">Revoke</button></form></td>
-  </tr>
+    <div class="li">
+      <span class="ic"><svg aria-hidden="true"><use href="#i-{% if s.mobile %}phone{% else %}laptop{% endif %}"/></svg></span>
+      <div class="grow">
+        <div class="t" title="{{ s.agent }}">{{ s.browser }}{% if s.current %} <span class="badge on">This browser</span>{% endif %}</div>
+        <div class="s"><span>Signed in {{ s.created }}</span><span>Active {{ s.last_seen }}</span></div>
+      </div>
+      {% if !s.current %}<form method="post" action="/settings/sessions/{{ s.id }}/revoke"><button class="danger sm">Sign out</button></form>{% endif %}
+    </div>
   {% endfor %}
-  </tbody>
-</table></div>
-<p class="muted small foot">rustybee {{ version }}</p>
+  </div>
+</section>
+<p class="foot">rustybee {{ version }}</p>
 {% endblock %}

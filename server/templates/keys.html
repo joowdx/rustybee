@@ -3,37 +3,38 @@
 <h1>API keys</h1>
 <p class="lede">Keys let scripts and other apps send SMS through the API.</p>
 {% if let Some(k) = created %}
-<section class="card">
-  <p>Key <b>{{ k.0 }}</b> created. Copy it now; it is not shown again.</p>
+<section class="card" style="margin-bottom:24px">
+  <p><b>{{ k.0 }}</b> is ready. Copy the key now; it isn't shown again.</p>
   <div class="secret"><code id="new-key">{{ k.1 }}</code><button class="ghost" data-copy="new-key">Copy</button></div>
 </section>
 {% endif %}
-<form method="post" action="/keys" class="row panel">
-  <label>Name <input name="name" required maxlength="64" placeholder="e.g. home automation"></label>
-  <div><button>Create key</button></div>
+<form method="post" action="/keys" class="filters">
+  <input class="q" name="name" required maxlength="64" placeholder="Name a new key, like home automation" aria-label="Key name">
+  <button>Create key</button>
 </form>
-<h2>Your keys</h2>
-{% if keys.is_empty() %}<p class="muted">No keys yet.</p>{% else %}
-<div class="tbl"><table>
-  <thead><tr><th>Name</th><th class="hide-sm">Prefix</th><th class="hide-sm">Last used</th><th>Status</th><th style="width:40%">Actions</th></tr></thead>
-  <tbody>
-  {% for k in keys %}
-  <tr>
-    <td>{{ k.name }}</td>
-    <td class="mono hide-sm">{{ k.prefix }}…</td>
-    <td class="small hide-sm">{{ k.last_used }}</td>
-    <td>{% if k.revoked %}<span class="st st-failed">revoked</span>{% else %}<span class="st st-sent">active</span>{% endif %}</td>
-    <td>
-      <form method="post" action="/keys/{{ k.id }}/rename" class="row"><input name="name" value="{{ k.name }}" required maxlength="64" aria-label="New name"><button class="ghost">Rename</button></form>
-      <div class="actions">
-      {% if !k.revoked %}<form method="post" action="/keys/{{ k.id }}/revoke" hx-confirm="Revoke {{ k.name }}?"><button class="danger">Revoke</button></form>{% endif %}
-      <form method="post" action="/keys/{{ k.id }}/delete" hx-confirm="Delete {{ k.name }}?"><button class="danger">Delete</button></form>
+{% if keys.is_empty() %}<div class="empty"><p>No keys yet. Create one above to call the API.</p></div>{% else %}
+<div class="list">
+{% for k in keys %}
+  <div class="li">
+    <span class="ic"><svg aria-hidden="true"><use href="#i-key"/></svg></span>
+    <div class="grow">
+      <div class="t">{{ k.name }}</div>
+      <div class="s"><span class="mono">{{ k.prefix }}…</span><span>Last used {{ k.last_used }}</span></div>
+    </div>
+    {% if k.revoked %}<span class="st st-revoked">revoked</span>{% endif %}
+    <details class="pop">
+      <summary class="btn ghost sm">Manage</summary>
+      <div class="pop-b">
+        <form method="post" action="/keys/{{ k.id }}/rename" class="row"><label><span class="lbl">Name</span><input name="name" value="{{ k.name }}" required maxlength="64"></label><button class="ghost">Rename</button></form>
+        <div class="actions">
+        {% if !k.revoked %}<form method="post" action="/keys/{{ k.id }}/revoke" hx-confirm="Revoke {{ k.name }}? Apps using it stop working."><button class="danger sm">Revoke</button></form>{% endif %}
+        <form method="post" action="/keys/{{ k.id }}/delete" hx-confirm="Delete {{ k.name }}?"><button class="danger sm">Delete</button></form>
+        </div>
       </div>
-    </td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table></div>
+    </details>
+  </div>
+{% endfor %}
+</div>
 {% endif %}
 <h2>Using the API</h2>
 <pre>curl -X POST {{ base }}/api/v1/messages \

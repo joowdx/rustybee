@@ -1,15 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="login card">
-  <div class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.5 7.4v9.2L12 21.5l-8.5-4.9V7.4z"/></svg>rustybee</div>
-  <h1 class="login-h">Log in to your SMS gateway</h1>
+<section class="login">
+  <img class="mark" src="{{ l.logo }}" alt="" width="72" height="72">
+  <h1>rustybee</h1>
+  <p class="lede">Log in to your SMS gateway</p>
   {% if has_password %}
-  <form method="post" action="/login" class="stack" hx-boost="false">
-    <label>Password <input type="password" name="password" autocomplete="current-password" required autofocus></label>
+  <form method="post" action="/login" class="card stack" hx-boost="false">
+    <label><span class="lbl">Password</span><input type="password" name="password" autocomplete="current-password" required autofocus></label>
     <button>Log in</button>
   </form>
   {% else %}
-  <p>No admin password is set. Run <code>rustybee set-password</code> on the server, or start it once with <code>RUSTYBEE_ADMIN_PASSWORD</code>.</p>
+  <p class="card" style="text-align:left">No admin password is set. Run <code>rustybee set-password</code> on the server, or start it once with <code>RUSTYBEE_ADMIN_PASSWORD</code>.</p>
   {% endif %}
 </section>
 {% endblock %}

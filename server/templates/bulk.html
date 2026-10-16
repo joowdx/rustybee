@@ -1,41 +1,40 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Bulk send</h1>
-
+<ol class="steps">
+  <li{% if token.is_empty() %} aria-current="step"{% else %} class="done"{% endif %}>Upload a CSV</li>
+  <li{% if !token.is_empty() && preview.is_empty() %} aria-current="step"{% else if !preview.is_empty() %} class="done"{% endif %}>Write the message</li>
+  <li{% if !preview.is_empty() %} aria-current="step"{% endif %}>Check and send</li>
+</ol>
 {% if let Some(r) = result %}<p class="flash">Queued {{ r.count }} messages. <a href="/messages?batch_id={{ r.batch_id }}">View batch</a></p>{% endif %}
 {% if token.is_empty() %}
-<form method="post" action="/bulk/upload" enctype="multipart/form-data" class="stack panel">
-  <p class="muted">Upload a CSV with a header row, up to 1 MB and 1000 rows. Next you pick the phone column and write the message.</p>
-  <label>CSV file <input type="file" name="file" accept=".csv,text/csv" required></label>
+<form method="post" action="/bulk/upload" enctype="multipart/form-data" class="card stack send">
+  <p class="muted" style="margin:0">A CSV with a header row, up to 1 MB and 1000 rows. One column holds the phone numbers; the others can fill in the message.</p>
+  <input type="file" name="file" accept=".csv,text/csv" required aria-label="CSV file">
   <div><button>Upload CSV</button></div>
 </form>
 {% else %}
-<form method="post" action="/bulk/preview" class="stack panel">
+<form method="post" action="/bulk/preview" class="send">
   <input type="hidden" name="token" value="{{ token }}">
-  <p class="muted">{{ total }} rows. Pick the column that holds phone numbers, then write the message. Other columns work as variables, like <code>{% raw %}{{name}}{% endraw %}</code>.</p>
-  <label>Phone column
+  <p class="muted">{{ total }} rows. Use other columns in the message, like <code>{% raw %}{{name}}{% endraw %}</code>.</p>
+  <label style="max-width:320px;margin-bottom:16px"><span class="lbl">Phone number column</span>
     <select name="phone">
       {% for h in headers %}<option value="{{ h.value }}"{% if h.selected %} selected{% endif %}>{{ h.value }}</option>{% endfor %}
     </select>
   </label>
-  <label>Template
-    <textarea name="template" rows="5" data-counter="tpl-count" required>{{ template }}</textarea>
-  </label>
-  <output id="tpl-count" class="muted small"></output>
-  <div class="row">{% include "_device_select.html" %}</div>
-  <div class="actions">
-    <button class="ghost">Preview</button>
-    <button formaction="/bulk/send">Send {{ total }} messages</button>
+  <div class="composer">
+    <textarea name="template" rows="5" data-counter="tpl-count" required aria-label="Message template">{{ template }}</textarea>
+    <div class="foot"><output id="tpl-count"></output><button class="ghost">Preview</button><button formaction="/bulk/send">Send {{ total }} messages</button></div>
   </div>
+  <div class="sendto">{% include "_device_select.html" %}</div>
 </form>
 {% if !preview.is_empty() %}
-<h2>Preview</h2>
-<div class="tbl"><table>
-  <thead><tr><th style="width:30%">To</th><th>Body</th><th style="width:5em">Parts</th></tr></thead>
-  <tbody>
-  {% for p in preview %}<tr><td>{{ p.to }}</td><td>{{ p.body }}</td><td>{{ p.parts }}</td></tr>{% endfor %}
-  </tbody>
-</table></div>
+<h2>Preview of the first rows</h2>
+<div class="list send">
+{% for p in preview %}
+  <div class="li"><div class="grow"><div class="t">{{ p.to }}</div><div class="s"><span>{{ p.body }}</span></div></div><span class="muted small">{{ p.parts }} part{% if p.parts != 1 %}s{% endif %}</span></div>
+{% endfor %}
+</div>
 {% endif %}
 {% endif %}
 {% endblock %}

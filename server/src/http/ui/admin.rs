@@ -9,7 +9,7 @@ use crate::app::{App, VERSION};
 use crate::domain::filters::{Filters, Mode};
 use crate::http::auth::Session;
 use crate::store::{auth, devices, devices::DeviceRow, webhooks};
-use crate::util::human_time;
+use crate::util::{ago, human_time, short_time};
 use askama::Template;
 use axum::Form;
 use axum::extract::{Path, Query, State};
@@ -28,6 +28,9 @@ struct DeviceView {
     model: String,
     online: bool,
     last_seen: String,
+    battery_pct: Option<i64>,
+    charging: bool,
+    network: Option<String>,
     is_default: bool,
     enabled: bool,
     send_delay_ms: i64,
@@ -65,6 +68,9 @@ fn device_view(now: i64, d: &DeviceRow) -> DeviceView {
             .join(" "),
         online: d.connected,
         last_seen: last_seen(now, d),
+        battery_pct: d.battery_level().map(|b| b.clamp(0, 100)),
+        charging: d.charging().unwrap_or(false),
+        network: d.network(),
         is_default: d.is_default,
         enabled: d.enabled,
         send_delay_ms: d.send_delay_ms,
@@ -283,7 +289,7 @@ async fn keys_page(app: &App, l: Layout, created: Option<(String, String)>) -> R
                 prefix: k.prefix,
                 last_used: k
                     .last_used_at
-                    .map(human_time)
+                    .map(short_time)
                     .unwrap_or_else(|| "never".into()),
                 revoked: k.revoked_at.is_some(),
             })
@@ -638,9 +644,52 @@ pub async fn redeliver(_: Session, State(app): State<App>, Path(id): Path<String
 struct SessionView {
     id: i64,
     agent: String,
+    browser: String,
+    mobile: bool,
     created: String,
     last_seen: String,
     current: bool,
+}
+
+/// A readable name for a session's user agent, like "Chrome 155 on macOS",
+/// and whether it is a phone or tablet.
+fn browser_label(ua: &str) -> (String, bool) {
+    let ver = |tok: &str| -> Option<String> {
+        let rest = &ua[ua.find(tok)? + tok.len()..];
+        Some(rest.chars().take_while(|c| c.is_ascii_digit()).collect())
+    };
+    let browser = [
+        ("Edg/", "Edge"),
+        ("OPR/", "Opera"),
+        ("SamsungBrowser/", "Samsung Internet"),
+        ("Firefox/", "Firefox"),
+        ("FxiOS/", "Firefox"),
+        ("CriOS/", "Chrome"),
+        ("Chrome/", "Chrome"),
+    ]
+    .iter()
+    .find_map(|(t, n)| ver(t).map(|v| format!("{n} {v}")))
+    .or_else(|| ua.contains("Safari/").then(|| ver("Version/").map_or("Safari".into(), |v| format!("Safari {v}"))));
+    let os = [
+        ("Android", "Android"),
+        ("iPhone", "iOS"),
+        ("iPad", "iPadOS"),
+        ("CrOS", "ChromeOS"),
+        ("Mac OS X", "macOS"),
+        ("Windows", "Windows"),
+        ("Linux", "Linux"),
+    ]
+    .iter()
+    .find(|(t, _)| ua.contains(t))
+    .map(|(_, n)| *n);
+    let mobile = matches!(os, Some("Android" | "iOS" | "iPadOS"));
+    let label = match (browser, os) {
+        (Some(b), Some(o)) => format!("{b} on {o}"),
+        (Some(b), None) => b,
+        (None, Some(o)) => format!("Browser on {o}"),
+        (None, None) => ua.split([' ', '/']).find(|s| !s.is_empty()).unwrap_or("Unknown browser").to_string(),
+    };
+    (label, mobile)
 }
 
 #[derive(Template)]
@@ -662,13 +711,18 @@ pub async fn settings(s: Session, State(app): State<App>, Query(n): Query<Notice
         l: Layout::new("Settings", "settings").notice(&n),
         sessions: list
             .into_iter()
-            .map(|r| SessionView {
+            .map(|r| {
+                let agent = r.user_agent.unwrap_or_default();
+                let (browser, mobile) = browser_label(&agent);
+                SessionView {
                 id: r.id,
-                agent: r.user_agent.unwrap_or_else(|| "unknown".into()),
-                created: human_time(r.created_at),
-                last_seen: human_time(r.last_seen_at),
+                agent,
+                browser,
+                mobile,
+                created: short_time(r.created_at),
+                last_seen: if r.id == s.id { "now".into() } else { ago(now, r.last_seen_at) },
                 current: r.id == s.id,
-            })
+            }})
             .collect(),
         version: VERSION,
     }))
@@ -769,5 +823,17 @@ mod tests {
         assert!(active);
         f.insert("url".to_string(), "ftp://x".to_string());
         assert!(parse_hook(&f).is_err());
+    }
+
+    #[test]
+    fn names_common_browsers() {
+        let mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
+        assert_eq!(browser_label(mac), ("Chrome 155 on macOS".into(), false));
+        let iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+        assert_eq!(browser_label(iphone), ("Safari 18 on iOS".into(), true));
+        let android = "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/28.0 Chrome/130.0 Mobile Safari/537.36";
+        assert_eq!(browser_label(android), ("Samsung Internet 28 on Android".into(), true));
+        assert_eq!(browser_label("curl/8.7.1").0, "curl");
+        assert_eq!(browser_label("").0, "Unknown browser");
     }
 }

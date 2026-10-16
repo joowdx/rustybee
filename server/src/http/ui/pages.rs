@@ -799,7 +799,7 @@ pub async fn message_rows(_: Session, State(app): State<App>, Query(f): Query<Ms
 
 struct MessageView {
     id: String,
-    arrow: &'static str,
+    out: bool,
     peer: String,
     body: String,
     state: &'static str,
@@ -864,7 +864,7 @@ pub async fn message(
     };
     let view = MessageView {
         id: m.public_id.clone(),
-        arrow: if m.direction == "in" { "←" } else { "→" },
+        out: m.direction != "in",
         peer: m.peer.clone(),
         body: m.body.clone(),
         state: m.state.as_str(),

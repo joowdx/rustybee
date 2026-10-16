@@ -1,7 +1,6 @@
-<label>Name <input name="name" value="{{ form.name }}" required maxlength="64"></label>
-<label>URL <input type="url" name="url" value="{{ form.url }}" required placeholder="https://example.org/hook"></label>
-<fieldset class="row">
-  <legend class="muted small">Events</legend>
-  {% for e in form.events %}<label class="check"><input type="checkbox" name="ev_{{ e.key }}"{% if e.on %} checked{% endif %}> {{ e.name }}</label>{% endfor %}
+<div class="f"><label for="wh-name">Name</label><input id="wh-name" name="name" value="{{ form.name }}" required maxlength="64"></div>
+<div class="f"><label for="wh-url">URL</label><input id="wh-url" type="url" name="url" value="{{ form.url }}" required placeholder="https://example.org/hook"></div>
+<fieldset class="f"><legend class="sr">Events</legend><span>Events<span class="hint">When to post</span></span>
+  <div class="evs">{% for e in form.events %}<label class="check"><input type="checkbox" name="ev_{{ e.key }}"{% if e.on %} checked{% endif %}> {{ e.name }}</label>{% endfor %}</div>
 </fieldset>
-<label class="check"><input type="checkbox" name="active"{% if form.active %} checked{% endif %}> Active</label>
+<label class="f sw-row"><span>Active<span class="hint">Paused webhooks don't post</span></span><input class="sw" type="checkbox" name="active"{% if form.active %} checked{% endif %}></label>
