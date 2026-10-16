@@ -25,7 +25,7 @@ The rewrite lives on the orphan branch `master`, which shares no history with th
   - `pr.yml` runs on every PR and fails unless the title is a Conventional Commit (`feat(android): ...`, `fix: ...`, `feat!: ...`). It is the check to require in branch protection; the path-filtered workflows below skip when their files are untouched.
   - `server.yml`, triggered by `server/**`, `protocol/**`, `deploy/**`:
     - on a PR: runs `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, then builds the image natively on amd64 and arm64 runners without pushing;
-    - on a push to `master` (the package): also publishes the multi-arch image `ghcr.io/joowdx/rustybee` tagged `latest`, `sha-<short>` and the major version of `server/Cargo.toml`.
+    - on a push to `master` that touches what goes into the image (`server/**`, `deploy/Dockerfile`, `deploy/Dockerfile.dockerignore`): also publishes the multi-arch image `ghcr.io/joowdx/rustybee` tagged `latest`, `sha-<short>` and the major version of `server/Cargo.toml`.
   - `android.yml`, triggered by `android/**`, `protocol/**`, `VERSION`, on JDK 21:
     - on a PR: runs `./gradlew testFossDebugUnitTest assembleFossRelease`, signed when the `ANDROID_KEYSTORE_*` secrets are present, and uploads the APK as a run artifact;
     - on a push to `master` (the release): computes the next version, builds and signs the foss APK (the `ANDROID_KEYSTORE_*` secrets are required) and the gms APK when the `RUSTYBEE_GOOGLE_SERVICES_JSON` secret exists, and creates the GitHub release and tag `v<version>` with the APKs and `SHA256SUMS`.
@@ -41,7 +41,7 @@ The rewrite lives on the orphan branch `master`, which shares no history with th
 2. AC-001-02 Secrets matching the `.gitignore` patterns can never be committed.
 3. AC-001-03 Both CI workflows pass on a clean checkout.
 4. AC-001-04 Merging a PR that touches `android/` publishes the signed APK in a GitHub release `v<version>`, versioned by its Conventional Commit title.
-5. AC-001-05 Merging a PR that touches `server/` publishes the multi-arch image to ghcr.
+5. AC-001-05 Merging a PR that touches `server/` publishes the multi-arch image to ghcr. A PR that only changes docs, `deploy/compose.yaml` or `deploy/.env.example` publishes nothing.
 6. AC-001-06 A PR whose title is not a Conventional Commit fails `pr.yml`.
 
 ## Test plan
