@@ -1,7 +1,7 @@
 # 013 — Android UI
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 
@@ -18,11 +18,13 @@ Updated: 2026-10-16
   - the deep link `rustybee://pair?u=…&c=…` (intent filter: scheme `rustybee`, host `pair`, `BROWSABLE`);
   - or a text field to paste the link;
   - an "Allow insecure http (LAN)" checkbox, shown only for `http://` URLs.
+- **Incoming links:** the deep link, a new intent and a scan result only fill the text field (and show the insecure checkbox for `http://`). They never pair on their own.
+- **Confirmation:** Pair first shows a platform `AlertDialog` naming the server host. If the app is already paired, it says this replaces the current server and wipes the local data. Nothing is requested or wiped until the user confirms.
 - **Pairing:** calls the pairing API from spec 002 and shows errors inline. On success it stores the credentials and opens `MainActivity`.
 
 ### `ScanActivity`
 - A full-screen camera preview (platform Camera2 on a `TextureView`, back camera) with a hint and Cancel.
-- Frames go through ZXing core's QR reader on a background thread. The first `rustybee://pair?…` text is returned to `SetupActivity`, which handles it like the deep link: an `https://` server pairs at once, an `http://` one waits for the insecure checkbox. Any other QR code shows "That QR code isn't a rustybee pairing code."
+- Frames go through ZXing core's QR reader on a background thread. The first `rustybee://pair?…` text is returned to `SetupActivity`, which handles it like the deep link: the link fills the field, and pairing waits for Pair and the confirmation. Any other QR code shows "That QR code isn't a rustybee pairing code."
 - `CAMERA` is requested when the screen opens. If it is refused, Setup says so and the paste field stays as the fallback.
 - No camera, or a camera error, shows a message pointing to the paste field.
 
@@ -69,20 +71,25 @@ Requested in one runtime request, with a short rationale, when the gateway is fi
 - The icon is a raster adaptive icon of the rusty bee: the bee as the foreground, a rust honeycomb as the background, plus a monochrome layer for themed icons. The foreground is the sticker bee with its white border, flap lines and stinger swoosh. The monochrome layer and the notification icon are the plain white silhouette, without the sticker. `branding/generate-icons.sh` builds every density: the colour layers from `branding/bee.svg`, the monochrome ones from `branding/bee.png`.
 
 ## Acceptance criteria
-1. AC-013-01 Opening the deep link on the emulator pairs the app, shows the main screen and connects. Manual check.
+1. AC-013-01 Opening the deep link on the emulator, then Pair and confirm, pairs the app, shows the main screen and connects. Manual check.
 2. AC-013-02 The checklist reflects the real state after each permission is granted or revoked. Manual check.
 3. AC-013-03 There is no layout overlap with the system bars in portrait and landscape. Manual check, screenshots at 0.5 scale.
 4. AC-013-04 Unpairing returns to Setup and the service stops.
 5. AC-013-05 Scanning the Devices-page QR from inside the app pairs it, in portrait and landscape. Refusing the camera leaves Setup usable with a message. Manual check.
 6. AC-013-06 The Forwarding screen locks the filter while the switch is off, and turning the switch off while offline stops forwarding at once. Manual check.
+7. AC-013-07 A deep link, new intent or scan result fills the link field but does not pair. Pair shows a confirmation naming the host; when already paired it says it replaces the current server and wipes local data. Nothing is sent or wiped before confirming.
 
 ## Test plan
-Manual checks in M7, with screenshots attached to the M7 notes.
+Manual checks in M7, with screenshots attached to the M7 notes, except:
+
+| AC | Test |
+|---|---|
+| 07 | `SetupFlowTest` (JVM, on the pure `PairConfirm` helper) plus a manual check of the dialog |
 
 ## Assumptions
 - The phone's camera app can also open the `rustybee://` link from the QR code, and pasting the link is the fallback.
 - The scanner uses Camera2 rather than CameraX, because CameraX needs AndroidX lifecycle (spec 011).
-- A deep link with an `https://` server pairs immediately; an `http://` one waits for the insecure checkbox and the Pair button.
-- A successful pairing enables the gateway and opens `MainActivity`, which shows the permission rationale and request at once, so the deep link alone leads to a connected gateway (AC-013-01).
+- No link pairs on its own: a malicious link or QR code could otherwise point the phone at a hostile server or wipe an existing pairing. Pair and the confirmation are always needed.
+- A successful pairing enables the gateway and opens `MainActivity`, which shows the permission rationale and request at once, so the deep link plus one confirmation leads to a connected gateway (AC-013-01).
 
 ## Open questions

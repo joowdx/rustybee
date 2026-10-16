@@ -25,6 +25,9 @@ object SentState {
     const val SENT = "sent"
     const val DELIVERED = "delivered"
     const val FAILED = "failed"
+
+    /** Terminal states; rows in them are pruned after 7 days (AC-011-08). */
+    val FINAL = listOf(SENT, DELIVERED, FAILED)
 }
 
 data class SentRow(

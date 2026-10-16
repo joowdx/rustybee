@@ -1,6 +1,7 @@
 package dev.joowdx.rustybee.ui
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -107,11 +108,10 @@ class SetupActivity : Activity() {
     }
 
     private fun handle(intent: Intent?) {
-        val data = intent?.data ?: return
-        if (data.scheme == "rustybee") {
-            link.setText(data.toString())
-            if (parse(data.toString())?.first?.startsWith("https://") == true) pair()
-        }
+        // Incoming links only fill the field; pairing needs the Pair button and the confirm dialog (AC-013-07).
+        val raw = PairConfirm.linkFromIntent(intent?.data?.toString()) ?: return
+        link.setText(raw)
+        updateInsecureVisibility()
     }
 
     /** Returns (base URL, code) or null. */
@@ -144,6 +144,18 @@ class SetupActivity : Activity() {
             return showError("This server uses plain http. Tick \"Allow insecure http (LAN)\" to continue.")
         }
         showError(null)
+        val host = Uri.parse(base).host ?: base
+        val paired = Graph.of(this).prefs.paired
+        AlertDialog.Builder(this)
+            .setTitle(PairConfirm.title(paired))
+            .setMessage(PairConfirm.message(host, paired))
+            .setPositiveButton(if (paired) "Replace and pair" else "Pair") { _, _ -> startPairing(base, code, allowInsecure) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun startPairing(base: String, code: String, allowInsecure: Boolean) {
+        if (pairing?.isActive == true) return
         pairButton.isEnabled = false
         pairButton.text = "Pairing…"
         onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, cancelPairing)
