@@ -1,6 +1,6 @@
 # 002 — Device protocol
 
-Status: approved (self, one-shot)
+Status: implemented
 Updated: 2026-10-16
 
 ## Context

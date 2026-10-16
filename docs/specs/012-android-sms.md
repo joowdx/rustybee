@@ -1,6 +1,6 @@
 # 012 — Android SMS send and receive
 
-Status: approved (self, one-shot)
+Status: implemented
 Updated: 2026-10-16
 
 ## Design

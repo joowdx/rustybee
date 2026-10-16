@@ -1,6 +1,6 @@
 # 005 — Authentication
 
-Status: approved (self, one-shot)
+Status: implemented
 Updated: 2026-10-16
 
 ## Design
