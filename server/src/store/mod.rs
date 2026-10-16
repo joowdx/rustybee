@@ -12,8 +12,13 @@ use tokio::sync::{Semaphore, oneshot};
 
 pub use rusqlite;
 
-const MIGRATIONS: &[(&str, &str)] =
-    &[("0001_init", include_str!("../../migrations/0001_init.sql"))];
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("0001_init", include_str!("../../migrations/0001_init.sql")),
+    (
+        "0002_otp_filters",
+        include_str!("../../migrations/0002_otp_filters.sql"),
+    ),
+];
 
 pub const READERS: usize = 3;
 

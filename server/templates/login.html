@@ -4,12 +4,29 @@
   <img class="mark" src="{{ l.logo }}" alt="" width="72" height="72">
   <h1>rustybee</h1>
   <p class="lede">Log in to your SMS gateway</p>
-  {% if has_password %}
-  <form method="post" action="/login" class="card stack" hx-boost="false">
-    <label><span class="lbl">Password</span><input type="password" name="password" autocomplete="current-password" required autofocus></label>
+  {% if m.otp %}
+    {% if code_sent %}
+  <form method="post" action="/login/verify" class="card stack" hx-boost="false">
+    <label><span class="lbl">Code sent to {% if let Some(p) = m.phone_hint %}{{ p }}{% endif %}</span><input name="code" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" autocomplete="one-time-code" required autofocus></label>
     <button>Log in</button>
   </form>
-  {% else %}
+  <form method="post" action="/login/code" hx-boost="false"><button class="ghost sm">Send a new code</button></form>
+    {% else %}
+  <form method="post" action="/login/code" class="card stack" hx-boost="false">
+    <p>We'll text a login code to {% if let Some(p) = m.phone_hint %}{{ p }}{% endif %}.</p>
+    <button>Text me a code</button>
+  </form>
+    {% endif %}
+  {% endif %}
+  {% if m.password %}
+  <form method="post" action="/login" class="card stack" hx-boost="false">
+    <label><span class="lbl">Password</span><input type="password" name="password" autocomplete="current-password" required{% if !m.otp %} autofocus{% endif %}></label>
+    <button{% if m.otp %} class="ghost"{% endif %}>Log in with password</button>
+  </form>
+  {% else if m.otp %}
+  <p class="hint">Password login opens when every device is offline or codes fail to send.</p>
+  {% endif %}
+  {% if !m.has_password && !m.otp %}
   <p class="card" style="text-align:left">No admin password is set. Run <code>rustybee set-password</code> on the server, or start it once with <code>RUSTYBEE_ADMIN_PASSWORD</code>.</p>
   {% endif %}
 </section>

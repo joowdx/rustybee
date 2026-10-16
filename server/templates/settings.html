@@ -2,6 +2,23 @@
 {% block content %}
 <h1>Settings</h1>
 <section class="group">
+  <header><h2>Login phone</h2><p>Logins use a code texted to this number through one of your devices. The password works only when every device is offline or codes keep failing to send.</p></header>
+  {% if let Some(p) = phone %}
+  <div class="list"><div class="li"><div class="grow"><div class="t">{{ p }}</div></div>
+    <form method="post" action="/settings/phone/remove"><button class="danger sm">Remove</button></form></div></div>
+  {% endif %}
+  {% if phone_pending %}
+  <form method="post" action="/settings/phone/verify" class="fields">
+    <div class="f"><label for="ph-code">Code</label><input id="ph-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required autofocus></div>
+    <div class="f-foot"><button>Confirm number</button></div>
+  </form>
+  {% endif %}
+  <form method="post" action="/settings/phone" class="fields">
+    <div class="f"><label for="ph">{% if phone.is_some() %}New number{% else %}Phone number{% endif %}<span class="hint">{% if online %}A code is texted to confirm it{% else %}Connect a device first{% endif %}</span></label><input id="ph" type="tel" name="phone" autocomplete="tel" required></div>
+    <div class="f-foot"><button{% if !online %} disabled{% endif %}>Send code</button></div>
+  </form>
+</section>
+<section class="group">
   <header><h2>Password</h2><p>The one password for this dashboard. Changing it signs out every other browser.</p></header>
   <form method="post" action="/settings/password" class="fields">
     <div class="f"><label for="pw-cur">Current password</label><input id="pw-cur" type="password" name="current" autocomplete="current-password" required></div>

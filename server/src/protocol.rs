@@ -135,6 +135,16 @@ pub struct DeviceConfig {
     pub receive_enabled: bool,
     pub sim: Option<i64>,
     pub filters: Filters,
+    /// Bumped on every filter change; the device echoes it in `set_filters`.
+    #[serde(default)]
+    pub filters_rev: i64,
+}
+
+/// Filters edited on the device, based on the `filters_rev` it last saw.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetFilters {
+    pub base_rev: i64,
+    pub filters: Filters,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -183,6 +193,7 @@ pub enum Frame {
     Send(Send),
     Ack(Ack),
     Nack(Nack),
+    SetFilters(SetFilters),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -206,6 +217,7 @@ impl Frame {
             Frame::Send(_) => "send",
             Frame::Ack(_) => "ack",
             Frame::Nack(_) => "nack",
+            Frame::SetFilters(_) => "set_filters",
         }
     }
 
@@ -220,6 +232,7 @@ impl Frame {
             Frame::Send(d) => serde_json::to_value(d),
             Frame::Ack(d) => serde_json::to_value(d),
             Frame::Nack(d) => serde_json::to_value(d),
+            Frame::SetFilters(d) => serde_json::to_value(d),
         };
         v.unwrap_or(Value::Null)
     }
@@ -260,6 +273,7 @@ pub fn decode(text: &str) -> Result<(String, Frame), DecodeError> {
         "send" => typed(env.data).map(Frame::Send),
         "ack" => typed(env.data).map(Frame::Ack),
         "nack" => typed(env.data).map(Frame::Nack),
+        "set_filters" => typed(env.data).map(Frame::SetFilters),
         other => return Err(err("unsupported", format!("unknown type {other:?}"))),
     }
     .map_err(|m| err("invalid", m))?;

@@ -9,6 +9,7 @@ use crate::domain::lifecycle::State as MsgState;
 use crate::domain::{render_template, sms};
 use crate::http::api::{ListParams, encode_cursor, parse_list};
 use crate::http::auth::{COOKIE, Session, clear_cookie, cookie, session_cookie};
+use crate::otp;
 use crate::store::{auth, devices, messages, webhooks};
 use crate::util::{human_time, random_token};
 use askama::Template;
@@ -20,7 +21,7 @@ use axum::response::{IntoResponse, Response};
 use futures_util::Stream;
 use serde::Deserialize;
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -36,15 +37,79 @@ const PREVIEW_ROWS: usize = 5;
 #[template(path = "login.html")]
 struct LoginPage {
     l: Layout,
-    has_password: bool,
+    m: otp::Methods,
+    code_sent: bool,
+}
+
+async fn login_render(app: &App, code_sent: bool, err: Option<&str>, status: StatusCode) -> Response {
+    let m = match otp::methods(app).await {
+        Ok(m) => m,
+        Err(e) => return ise(e),
+    };
+    let mut l = Layout::new("Log in", "");
+    if let Some(e) = err {
+        l = l.err(e);
+    }
+    let mut r = render(&LoginPage {
+        l,
+        code_sent: code_sent && m.otp,
+        m,
+    });
+    *r.status_mut() = status;
+    r
 }
 
 pub async fn login_page(State(app): State<App>) -> Response {
-    render(&LoginPage {
-        l: Layout::new("Log in", ""),
-        has_password: app.has_password().await,
-    })
+    login_render(&app, false, None, StatusCode::OK).await
 }
+
+/// Failed attempts per IP within `login_window`; true when over the limit.
+fn throttled(app: &App, ip: IpAddr) -> bool {
+    let window = app.cfg.login_window;
+    let mut map = app.login_failures.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    map.retain(|_, v| {
+        v.retain(|t| now.duration_since(*t) < window);
+        !v.is_empty()
+    });
+    map.get(&ip).is_some_and(|v| v.len() >= LOGIN_MAX_FAILURES)
+}
+
+fn record_failure(app: &App, ip: IpAddr) {
+    app.login_failures
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(ip)
+        .or_default()
+        .push(Instant::now());
+}
+
+/// Create a session, reset the code-send failure counter, set the cookie.
+async fn start_session(app: &App, headers: &HeaderMap) -> Response {
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.chars().take(200).collect::<String>());
+    let now = app.clock.now_ms();
+    let token = match app
+        .store
+        .write(move |c| {
+            otp::reset_failures(c)?;
+            auth::create_session(c, ua.as_deref(), now)
+        })
+        .await
+    {
+        Ok((_, t)) => t,
+        Err(e) => return ise(e),
+    };
+    (
+        [(header::SET_COOKIE, session_cookie(app, &token))],
+        see_other("/"),
+    )
+        .into_response()
+}
+
+const TOO_MANY: &str = "Too many attempts. Wait a minute and try again.";
 
 #[derive(Deserialize)]
 pub struct LoginForm {
@@ -59,67 +124,83 @@ pub async fn login(
     Form(form): Form<LoginForm>,
 ) -> Response {
     let ip = crate::http::client_ip(&app, &headers, Some(peer));
-    let window = app.cfg.login_window;
-    let page = |msg: &str| LoginPage {
-        l: Layout::new("Log in", "").err(msg),
-        has_password: true,
-    };
-    {
-        let mut map = app.login_failures.lock().unwrap_or_else(|e| e.into_inner());
-        let now = Instant::now();
-        map.retain(|_, v| {
-            v.retain(|t| now.duration_since(*t) < window);
-            !v.is_empty()
-        });
-        if map.get(&ip).is_some_and(|v| v.len() >= LOGIN_MAX_FAILURES) {
-            let mut r = render(&page("Too many attempts. Wait a minute and try again."));
-            *r.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-            return r;
-        }
+    if throttled(&app, ip) {
+        return login_render(&app, false, Some(TOO_MANY), StatusCode::TOO_MANY_REQUESTS).await;
     }
-    let hash = match app.store.read(auth::password_hash).await {
-        Ok(h) => h,
+    let m = match otp::methods(&app).await {
+        Ok(m) => m,
         Err(e) => return ise(e),
     };
-    let Some(hash) = hash else {
-        return render(&LoginPage {
-            l: Layout::new("Log in", ""),
-            has_password: false,
-        });
+    if !m.password {
+        let msg = if m.has_password {
+            "Password login is off while a device can text you a code."
+        } else {
+            "No admin password is set."
+        };
+        return login_render(&app, false, Some(msg), StatusCode::FORBIDDEN).await;
+    }
+    let hash = match app.store.read(auth::password_hash).await {
+        Ok(h) => h.unwrap_or_default(),
+        Err(e) => return ise(e),
     };
     let pw = form.password;
     let ok = tokio::task::spawn_blocking(move || auth::verify_password(&hash, &pw))
         .await
         .unwrap_or(false);
     if !ok {
-        app.login_failures
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .entry(ip)
-            .or_default()
-            .push(Instant::now());
-        let mut r = render(&page("Wrong password."));
-        *r.status_mut() = StatusCode::UNAUTHORIZED;
-        return r;
+        record_failure(&app, ip);
+        return login_render(&app, false, Some("Wrong password."), StatusCode::UNAUTHORIZED).await;
     }
-    let ua = headers
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.chars().take(200).collect::<String>());
-    let now = app.clock.now_ms();
-    let token = match app
-        .store
-        .write(move |c| auth::create_session(c, ua.as_deref(), now))
-        .await
-    {
-        Ok((_, t)) => t,
-        Err(e) => return ise(e),
-    };
-    (
-        [(header::SET_COOKIE, session_cookie(&app, &token))],
-        see_other("/"),
-    )
-        .into_response()
+    start_session(&app, &headers).await
+}
+
+pub async fn send_code(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let ip = crate::http::client_ip(&app, &headers, Some(peer));
+    match otp::send(&app, otp::Purpose::Login, None, ip).await {
+        Ok(()) => login_render(&app, true, None, StatusCode::OK).await,
+        Err(otp::SendError::Store(e)) => ise(e),
+        Err(otp::SendError::TooSoon) => {
+            let pending = otp::pending(&app, otp::Purpose::Login);
+            let msg = otp::SendError::TooSoon.to_string();
+            login_render(&app, pending, Some(&msg), StatusCode::TOO_MANY_REQUESTS).await
+        }
+        Err(e) => login_render(&app, false, Some(&e.to_string()), StatusCode::CONFLICT).await,
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CodeForm {
+    #[serde(default)]
+    code: String,
+}
+
+pub async fn verify_code(
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Form(form): Form<CodeForm>,
+) -> Response {
+    let ip = crate::http::client_ip(&app, &headers, Some(peer));
+    if throttled(&app, ip) {
+        return login_render(&app, true, Some(TOO_MANY), StatusCode::TOO_MANY_REQUESTS).await;
+    }
+    match otp::verify(&app, otp::Purpose::Login, &form.code) {
+        otp::Verify::Ok(_) => start_session(&app, &headers).await,
+        otp::Verify::Wrong => {
+            record_failure(&app, ip);
+            let again = otp::pending(&app, otp::Purpose::Login);
+            let msg = if again { "Wrong code." } else { "Wrong code. Send a new one." };
+            login_render(&app, again, Some(msg), StatusCode::UNAUTHORIZED).await
+        }
+        otp::Verify::Expired => {
+            record_failure(&app, ip);
+            login_render(&app, false, Some("That code expired. Send a new one."), StatusCode::UNAUTHORIZED).await
+        }
+    }
 }
 
 pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
@@ -190,6 +271,7 @@ async fn dashboard_data(
                 c,
                 &messages::Query {
                     limit: 10,
+                    include_internal: true,
                     ..Default::default()
                 },
             )?;
@@ -727,7 +809,8 @@ async fn query_rows(app: &App, f: &MsgFilter) -> Result<(Vec<RowView>, Option<St
         limit: None,
         cursor: Some(f.cursor.clone()),
     };
-    let q = parse_list(p, 50).map_err(|e| e.message)?;
+    let mut q = parse_list(p, 50).map_err(|e| e.message)?;
+    q.include_internal = true;
     let (rows, next) = app
         .store
         .read(move |c| messages::list(c, &q))

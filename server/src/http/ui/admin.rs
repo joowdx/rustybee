@@ -8,17 +8,19 @@ use super::{
 use crate::app::{App, VERSION};
 use crate::domain::filters::{Filters, Mode};
 use crate::http::auth::Session;
+use crate::otp;
 use crate::store::{auth, devices, devices::DeviceRow, webhooks};
 use crate::util::{ago, human_time, short_time};
 use askama::Template;
 use axum::Form;
-use axum::extract::{Path, Query, State};
+use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use qrcode::QrCode;
 use qrcode::render::svg;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 
 // ---------- devices ----------
 
@@ -218,6 +220,9 @@ pub async fn save_device(
         sim: f.sim.trim().parse().ok(),
         filters: Filters { mode, rules },
     };
+    if let Err(e) = s.filters.validate() {
+        return Ok(back_err("/devices", format!("filter rules: {e}")));
+    }
     let did = d.id;
     app.store
         .write(move |c| devices::update_settings(c, did, &s))
@@ -703,6 +708,9 @@ fn browser_label(ua: &str) -> (String, bool) {
 #[template(path = "settings.html")]
 struct SettingsPage {
     l: Layout,
+    phone: Option<String>,
+    phone_pending: bool,
+    online: bool,
     sessions: Vec<SessionView>,
     version: &'static str,
 }
@@ -711,11 +719,16 @@ pub async fn settings(s: Session, State(app): State<App>, Query(n): Query<Notice
     let now = app.clock.now_ms();
     let list = app
         .store
-        .read(move |c| auth::list_sessions(c, now))
+        .read(move |c| Ok((auth::list_sessions(c, now)?, otp::admin_phone(c)?)))
         .await
         .map_err(ise)?;
+    let (list, phone) = list;
+    let online = otp::methods(&app).await.map_err(ise)?.online;
     Ok(render(&SettingsPage {
         l: Layout::new("Settings", "settings").notice(&n),
+        phone,
+        phone_pending: otp::pending(&app, otp::Purpose::Verify),
+        online,
         sessions: list
             .into_iter()
             .map(|r| {
@@ -792,6 +805,59 @@ pub async fn change_password(
         .await
         .map_err(ise)?;
     Ok(see_other("/settings?ok=password"))
+}
+
+#[derive(Deserialize)]
+pub struct PhoneForm {
+    #[serde(default)]
+    phone: String,
+}
+
+/// Text a code to a new admin phone; it is saved once the code is entered.
+pub async fn send_phone_code(
+    _: Session,
+    State(app): State<App>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Form(f): Form<PhoneForm>,
+) -> Res {
+    let ip = crate::http::client_ip(&app, &headers, Some(peer));
+    match otp::send(&app, otp::Purpose::Verify, Some(&f.phone), ip).await {
+        Ok(()) => Ok(see_other("/settings?ok=phone_code")),
+        Err(otp::SendError::Store(e)) => Err(ise(e)),
+        Err(e) => Ok(back_err("/settings", e)),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CodeForm {
+    #[serde(default)]
+    code: String,
+}
+
+pub async fn verify_phone(_: Session, State(app): State<App>, Form(f): Form<CodeForm>) -> Res {
+    match otp::verify(&app, otp::Purpose::Verify, &f.code) {
+        otp::Verify::Ok(phone) => {
+            app.store
+                .write(move |c| {
+                    otp::set_admin_phone(c, Some(&phone))?;
+                    otp::reset_failures(c)
+                })
+                .await
+                .map_err(ise)?;
+            Ok(see_other("/settings?ok=phone"))
+        }
+        otp::Verify::Wrong => Ok(back_err("/settings", "wrong code")),
+        otp::Verify::Expired => Ok(back_err("/settings", "that code expired; send a new one")),
+    }
+}
+
+pub async fn remove_phone(_: Session, State(app): State<App>) -> Res {
+    app.store
+        .write(|c| otp::set_admin_phone(c, None))
+        .await
+        .map_err(ise)?;
+    Ok(see_other("/settings?ok=phone_removed"))
 }
 
 pub async fn revoke_session(

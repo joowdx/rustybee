@@ -46,6 +46,7 @@ pub struct Ctx {
     pub http: reqwest::Client,
     pub login_failures: Mutex<HashMap<IpAddr, Vec<Instant>>>,
     pub bulk: Mutex<HashMap<String, BulkUpload>>,
+    pub otp: Mutex<crate::otp::OtpState>,
 }
 
 pub type App = Arc<Ctx>;
@@ -292,6 +293,7 @@ pub async fn start(cfg: Config) -> Result<Running, String> {
         http,
         login_failures: Mutex::new(HashMap::new()),
         bulk: Mutex::new(HashMap::new()),
+        otp: Mutex::new(Default::default()),
     });
     let mut tasks = vec![
         tokio::spawn(crate::webhooks::run(app.clone())),

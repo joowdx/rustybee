@@ -22,6 +22,8 @@ use std::fmt::Display;
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/login", get(pages::login_page).post(pages::login))
+        .route("/login/code", post(pages::send_code))
+        .route("/login/verify", post(pages::verify_code))
         .route("/logout", post(pages::logout))
         .route("/", get(pages::dashboard))
         .route("/partials/dashboard", get(pages::dashboard_partial))
@@ -62,6 +64,9 @@ pub fn routes() -> Router<App> {
         )
         .route("/settings", get(admin::settings))
         .route("/settings/password", post(admin::change_password))
+        .route("/settings/phone", post(admin::send_phone_code))
+        .route("/settings/phone/verify", post(admin::verify_phone))
+        .route("/settings/phone/remove", post(admin::remove_phone))
         .route(
             "/settings/sessions/{id}/revoke",
             post(admin::revoke_session),
@@ -137,6 +142,9 @@ fn flash_text(key: &str) -> String {
         "reply" => "Reply queued.",
         "password" => "Password changed. Other sessions were signed out.",
         "session" => "Browser signed out.",
+        "phone_code" => "Code sent. Enter it below to confirm the number.",
+        "phone" => "Phone confirmed. Logins now use a texted code.",
+        "phone_removed" => "Phone removed. Password login is back on.",
         _ => "Done.",
     }
     .to_string()

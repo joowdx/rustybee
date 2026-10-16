@@ -35,12 +35,14 @@ pub struct MessageRow {
     pub failed_at: Option<i64>,
     pub expired_at: Option<i64>,
     pub received_at: Option<i64>,
+    /// Sent by the server itself (login codes): no webhooks, hidden from the API.
+    pub internal: bool,
 }
 
 const SELECT: &str = "SELECT m.id, m.public_id, b.public_id, m.device_id, d.public_id, d.name, m.direction, m.peer,
     m.body, m.sim, m.state, m.parts, m.error_code, m.error_message, m.frame_id, m.device_acked_at,
     m.created_at, m.dispatched_at, m.sent_at, m.delivered_at, m.failed_at, m.expired_at, m.received_at,
-    d.removed_at IS NOT NULL
+    d.removed_at IS NOT NULL, m.internal
     FROM messages m JOIN devices d ON d.id=m.device_id LEFT JOIN batches b ON b.id=m.batch_id";
 
 fn from_row(r: &Row) -> rusqlite::Result<MessageRow> {
@@ -70,6 +72,7 @@ fn from_row(r: &Row) -> rusqlite::Result<MessageRow> {
         expired_at: r.get(21)?,
         received_at: r.get(22)?,
         device_removed: r.get(23)?,
+        internal: r.get(24)?,
     })
 }
 
@@ -179,7 +182,7 @@ pub fn apply_event(
         params![id, to.as_str(), at, parts, code, message],
     )?;
     let row = by_id(c, id)?.expect("row exists");
-    if let Some(ev) = to.webhook_event() {
+    if let Some(ev) = to.webhook_event().filter(|_| !row.internal) {
         super::webhooks::enqueue(c, ev, &row, now)?;
     }
     Ok(Some(row))
@@ -228,6 +231,21 @@ pub fn create_batch(
         rows.extend(by_id(c, id)?);
     }
     Ok((batch_pid, rows))
+}
+
+/// Mark a message as server-internal (no webhooks, hidden from the API).
+pub fn mark_internal(c: &Connection, id: i64) -> rusqlite::Result<()> {
+    c.execute("UPDATE messages SET internal=1 WHERE id=?1", [id])?;
+    Ok(())
+}
+
+/// Replace an internal message's body once its code is no longer needed.
+pub fn redact(c: &Connection, id: i64, body: &str) -> rusqlite::Result<()> {
+    c.execute(
+        "UPDATE messages SET body=?2 WHERE id=?1 AND internal=1",
+        params![id, body],
+    )?;
+    Ok(())
 }
 
 /// Insert an inbound SMS. `None` when `(device_id, uid)` was already stored.
@@ -366,6 +384,8 @@ pub struct Query {
     pub until: Option<i64>,
     pub before_id: Option<i64>,
     pub limit: i64,
+    /// Include server-internal messages (login codes); only the web UI does.
+    pub include_internal: bool,
 }
 
 /// Keyset page over `id DESC`. Returns rows and the id to continue before.
@@ -378,6 +398,9 @@ pub fn list(c: &Connection, q: &Query) -> rusqlite::Result<(Vec<MessageRow>, Opt
         args.extend(vals);
     };
     let text = |v: &String| SqlValue::Text(v.clone());
+    if !q.include_internal {
+        add("m.internal=0", vec![]);
+    }
     if let Some(v) = &q.direction {
         add("m.direction=?", vec![text(v)]);
     }

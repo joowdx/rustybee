@@ -343,6 +343,30 @@ impl Conn {
                 self.notify.notify_one();
                 Ok(vec![])
             }
+            Frame::SetFilters(f) => {
+                if let Err(e) = f.filters.validate() {
+                    return Ok(vec![nack(&id, "invalid", &e)]);
+                }
+                let res = app
+                    .store
+                    .write(move |c| {
+                        let r = devices::set_filters(c, device_id, f.base_rev, &f.filters)?;
+                        Ok((r, devices::by_id(c, device_id)?))
+                    })
+                    .await?;
+                let (res, Some(dev)) = res else {
+                    return Ok(vec![]);
+                };
+                let config = Envelope::new("config", dev.config(app.cfg.ping_s)).to_text();
+                app.publish(UiEvent::Device(dev.public_id));
+                Ok(match res {
+                    Ok(_) => vec![ack(&id), config],
+                    Err(_) => vec![
+                        nack(&id, "filters_conflict", "filters changed on the server"),
+                        config,
+                    ],
+                })
+            }
             Frame::Welcome(_) | Frame::Config(_) | Frame::Send(_) => Ok(vec![nack(
                 &id,
                 "unsupported",

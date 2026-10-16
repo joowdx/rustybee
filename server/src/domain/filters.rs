@@ -42,12 +42,34 @@ fn yes() -> bool {
     true
 }
 
+pub const MAX_RULES: usize = 100;
+pub const MAX_VALUE_CHARS: usize = 200;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Filters {
     #[serde(default)]
     pub mode: Mode,
     #[serde(default)]
     pub rules: Vec<Rule>,
+}
+
+impl Filters {
+    /// Limits shared by the web form and the device's `set_filters`.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.rules.len() > MAX_RULES {
+            return Err(format!("at most {MAX_RULES} rules"));
+        }
+        for (i, r) in self.rules.iter().enumerate() {
+            let n = r.value.chars().count();
+            if r.value.trim().is_empty() || n > MAX_VALUE_CHARS {
+                return Err(format!(
+                    "rule {}: value must be 1 to {MAX_VALUE_CHARS} characters",
+                    i + 1
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Rule {

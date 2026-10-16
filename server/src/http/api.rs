@@ -195,6 +195,7 @@ pub fn parse_list(p: ListParams, default_limit: i64) -> Result<messages::Query, 
         until: time(p.until, "until")?,
         before_id,
         limit,
+        include_internal: false,
     })
 }
 
@@ -221,6 +222,7 @@ async fn get_message(
         .store
         .read(move |c| messages::by_public(c, &id))
         .await?
+        .filter(|m| !m.internal)
         .ok_or_else(ApiError::not_found)?;
     Ok(Json(m.to_json()))
 }

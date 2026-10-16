@@ -7,7 +7,7 @@ The normative spec is [`docs/specs/002-device-protocol.md`](../docs/specs/002-de
 | File | Direction | Type |
 |---|---|---|
 | `pair_request.json` / `pair_response.json` | HTTP | pairing |
-| `hello.json`, `status_*.json`, `inbound.json`, `health.json` | device → server | |
+| `hello.json`, `status_*.json`, `inbound.json`, `health.json`, `set_filters.json` | device → server | |
 | `welcome.json`, `config.json`, `send.json` | server → device | |
 | `ack.json`, `nack.json` | both | |
 

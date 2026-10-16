@@ -15,6 +15,9 @@ pub async fn run(app: App) {
         if let Err(e) = sweep_once(&app).await {
             tracing::warn!(error = %e, "sweep");
         }
+        if let Err(e) = crate::otp::resolve(&app).await {
+            tracing::warn!(error = %e, "login code sweep");
+        }
         let now = app.clock.now_ms();
         if last_prune.is_none_or(|t| now - t >= DAY_MS) {
             last_prune = Some(now);

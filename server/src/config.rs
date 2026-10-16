@@ -28,6 +28,10 @@ pub struct Config {
     pub fcm_base_url: String,
     /// Login throttle: failures allowed per window.
     pub login_window: Duration,
+    /// Failed login-code sends in a row before password login unlocks.
+    pub otp_max_failures: u32,
+    /// A login code not sent within this long counts as a failed send.
+    pub otp_send_timeout: Duration,
 }
 
 fn env(key: &str) -> Option<String> {
@@ -63,6 +67,7 @@ impl Config {
         c.message_ttl = Duration::from_secs(ttl_h * 3600);
         c.trust_proxy = trust_proxy;
         c.fcm_credentials = env("RUSTYBEE_FCM_CREDENTIALS").map(PathBuf::from);
+        c.otp_max_failures = env_num("RUSTYBEE_OTP_MAX_FAILURES")?.unwrap_or(3).max(1);
         Ok(c)
     }
 
@@ -87,6 +92,8 @@ impl Config {
             fcm_oauth_url: "https://oauth2.googleapis.com/token".into(),
             fcm_base_url: "https://fcm.googleapis.com".into(),
             login_window: Duration::from_secs(60),
+            otp_max_failures: 3,
+            otp_send_timeout: Duration::from_secs(90),
         }
     }
 

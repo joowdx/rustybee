@@ -29,11 +29,12 @@ pub struct DeviceRow {
     pub last_seen_at: Option<i64>,
     pub last_wake_at: Option<i64>,
     pub created_at: i64,
+    pub filters_rev: i64,
 }
 
 const COLS: &str = "id, public_id, name, enabled, is_default, send_delay_ms, receive_enabled, sim, \
     filters_json, fcm_token, manufacturer, model, os_version, app_version, app_build, telemetry_json, \
-    sims_json, connected, last_seen_at, last_wake_at, created_at";
+    sims_json, connected, last_seen_at, last_wake_at, created_at, filters_rev";
 
 fn from_row(r: &Row) -> rusqlite::Result<DeviceRow> {
     let filters: String = r.get(8)?;
@@ -65,6 +66,7 @@ fn from_row(r: &Row) -> rusqlite::Result<DeviceRow> {
         last_seen_at: r.get(18)?,
         last_wake_at: r.get(19)?,
         created_at: r.get(20)?,
+        filters_rev: r.get(21)?,
     })
 }
 
@@ -76,6 +78,7 @@ impl DeviceRow {
             receive_enabled: self.receive_enabled,
             sim: self.sim,
             filters: self.filters.clone(),
+            filters_rev: self.filters_rev,
         }
     }
 
@@ -313,7 +316,8 @@ pub struct Settings {
 
 pub fn update_settings(c: &Connection, id: i64, s: &Settings) -> rusqlite::Result<()> {
     c.execute(
-        "UPDATE devices SET name=?2, enabled=?3, send_delay_ms=?4, receive_enabled=?5, sim=?6, filters_json=?7
+        "UPDATE devices SET name=?2, enabled=?3, send_delay_ms=?4, receive_enabled=?5, sim=?6,
+           filters_rev=filters_rev + (filters_json IS NOT ?7), filters_json=?7
          WHERE id=?1",
         params![
             id,
@@ -326,6 +330,22 @@ pub fn update_settings(c: &Connection, id: i64, s: &Settings) -> rusqlite::Resul
         ],
     )?;
     Ok(())
+}
+
+/// Save filters edited on the device when `base_rev` is still current.
+/// `Ok(new_rev)` on success, `Err(current_rev)` when the web changed them first.
+pub fn set_filters(
+    c: &Connection,
+    id: i64,
+    base_rev: i64,
+    f: &Filters,
+) -> rusqlite::Result<Result<i64, i64>> {
+    let n = c.execute(
+        "UPDATE devices SET filters_json=?3, filters_rev=filters_rev+1 WHERE id=?1 AND filters_rev=?2",
+        params![id, base_rev, serde_json::to_string(f).unwrap_or_default()],
+    )?;
+    let rev: i64 = c.query_row("SELECT filters_rev FROM devices WHERE id=?1", [id], |r| r.get(0))?;
+    Ok(if n == 1 { Ok(rev) } else { Err(rev) })
 }
 
 pub fn set_default(c: &Connection, id: i64) -> rusqlite::Result<()> {

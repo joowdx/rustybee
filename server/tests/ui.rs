@@ -335,6 +335,7 @@ async fn device_settings_keys_and_webhooks_forms() {
     assert_eq!(cfg["data"]["receive_enabled"], false);
     assert_eq!(cfg["data"]["filters"]["mode"], "block");
     assert_eq!(cfg["data"]["filters"]["rules"][1]["op"], "contains");
+    assert_eq!(cfg["data"]["filters_rev"], 1, "filter change bumps rev");
     let (_, page) = ui.get("/devices?ok=saved").await;
     assert!(page.contains("Renamed") && page.contains("body contains promo"));
     let r = ui

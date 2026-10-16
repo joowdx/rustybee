@@ -1,1 +1,1 @@
-{"v":1,"id":"01JA0000000000000000000002","type":"welcome","data":{"device_id":"01JA0000000000000000DEV001","server_time":1760000000000,"config":{"name":"Pixel 10","ping_s":270,"receive_enabled":true,"sim":null,"filters":{"mode":"off","rules":[]}}}}
+{"v":1,"id":"01JA0000000000000000000002","type":"welcome","data":{"device_id":"01JA0000000000000000DEV001","server_time":1760000000000,"config":{"name":"Pixel 10","ping_s":270,"receive_enabled":true,"sim":null,"filters":{"mode":"off","rules":[]},"filters_rev":0}}}
