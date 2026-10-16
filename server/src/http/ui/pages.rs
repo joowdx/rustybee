@@ -14,6 +14,7 @@ use crate::store::{auth, devices, messages, webhooks};
 use crate::util::{human_time, random_token};
 use askama::Template;
 use axum::Form;
+use axum::extract::rejection::FormRejection;
 use axum::extract::{ConnectInfo, Multipart, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -39,10 +40,12 @@ struct LoginPage {
     l: Layout,
     m: otp::Methods,
     code_sent: bool,
+    turnstile: Option<String>,
 }
 
 async fn login_render(
     app: &App,
+    headers: &HeaderMap,
     code_sent: bool,
     err: Option<&str>,
     status: StatusCode,
@@ -59,13 +62,14 @@ async fn login_render(
         l,
         code_sent: code_sent && m.otp,
         m,
+        turnstile: crate::turnstile::site_key(app, headers).map(str::to_string),
     });
     *r.status_mut() = status;
     r
 }
 
-pub async fn login_page(State(app): State<App>) -> Response {
-    login_render(&app, false, None, StatusCode::OK).await
+pub async fn login_page(State(app): State<App>, headers: HeaderMap) -> Response {
+    login_render(&app, &headers, false, None, StatusCode::OK).await
 }
 
 /// Failed attempts per IP within `login_window`; true when over the limit.
@@ -115,11 +119,20 @@ async fn start_session(app: &App, headers: &HeaderMap) -> Response {
 }
 
 const TOO_MANY: &str = "Too many attempts. Wait a minute and try again.";
+const NOT_VERIFIED: &str = "Couldn't verify this browser. Reload the page and try again.";
 
 #[derive(Deserialize)]
 pub struct LoginForm {
     #[serde(default)]
     password: String,
+    #[serde(default, rename = "cf-turnstile-response")]
+    turnstile: String,
+}
+
+#[derive(Deserialize, Default)]
+pub struct CodeSendForm {
+    #[serde(default, rename = "cf-turnstile-response")]
+    turnstile: String,
 }
 
 pub async fn login(
@@ -130,7 +143,24 @@ pub async fn login(
 ) -> Response {
     let ip = crate::http::client_ip(&app, &headers, Some(peer));
     if throttled(&app, ip) {
-        return login_render(&app, false, Some(TOO_MANY), StatusCode::TOO_MANY_REQUESTS).await;
+        return login_render(
+            &app,
+            &headers,
+            false,
+            Some(TOO_MANY),
+            StatusCode::TOO_MANY_REQUESTS,
+        )
+        .await;
+    }
+    if !crate::turnstile::passes(&app, &headers, &form.turnstile, ip).await {
+        return login_render(
+            &app,
+            &headers,
+            false,
+            Some(NOT_VERIFIED),
+            StatusCode::FORBIDDEN,
+        )
+        .await;
     }
     let m = match otp::methods(&app).await {
         Ok(m) => m,
@@ -142,7 +172,7 @@ pub async fn login(
         } else {
             "No admin password is set."
         };
-        return login_render(&app, false, Some(msg), StatusCode::FORBIDDEN).await;
+        return login_render(&app, &headers, false, Some(msg), StatusCode::FORBIDDEN).await;
     }
     let hash = match app.store.read(auth::password_hash).await {
         Ok(h) => h.unwrap_or_default(),
@@ -156,6 +186,7 @@ pub async fn login(
         record_failure(&app, ip);
         return login_render(
             &app,
+            &headers,
             false,
             Some("Wrong password."),
             StatusCode::UNAUTHORIZED,
@@ -169,17 +200,46 @@ pub async fn send_code(
     State(app): State<App>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
+    form: Result<Form<CodeSendForm>, FormRejection>,
 ) -> Response {
     let ip = crate::http::client_ip(&app, &headers, Some(peer));
+    let form = form.map(|f| f.0).unwrap_or_default();
+    if !crate::turnstile::passes(&app, &headers, &form.turnstile, ip).await {
+        let pending = otp::pending(&app, otp::Purpose::Login);
+        return login_render(
+            &app,
+            &headers,
+            pending,
+            Some(NOT_VERIFIED),
+            StatusCode::FORBIDDEN,
+        )
+        .await;
+    }
     match otp::send(&app, otp::Purpose::Login, None, ip).await {
-        Ok(()) => login_render(&app, true, None, StatusCode::OK).await,
+        Ok(()) => login_render(&app, &headers, true, None, StatusCode::OK).await,
         Err(otp::SendError::Store(e)) => ise(e),
         Err(otp::SendError::TooSoon) => {
             let pending = otp::pending(&app, otp::Purpose::Login);
             let msg = otp::SendError::TooSoon.to_string();
-            login_render(&app, pending, Some(&msg), StatusCode::TOO_MANY_REQUESTS).await
+            login_render(
+                &app,
+                &headers,
+                pending,
+                Some(&msg),
+                StatusCode::TOO_MANY_REQUESTS,
+            )
+            .await
         }
-        Err(e) => login_render(&app, false, Some(&e.to_string()), StatusCode::CONFLICT).await,
+        Err(e) => {
+            login_render(
+                &app,
+                &headers,
+                false,
+                Some(&e.to_string()),
+                StatusCode::CONFLICT,
+            )
+            .await
+        }
     }
 }
 
@@ -197,7 +257,14 @@ pub async fn verify_code(
 ) -> Response {
     let ip = crate::http::client_ip(&app, &headers, Some(peer));
     if throttled(&app, ip) {
-        return login_render(&app, true, Some(TOO_MANY), StatusCode::TOO_MANY_REQUESTS).await;
+        return login_render(
+            &app,
+            &headers,
+            true,
+            Some(TOO_MANY),
+            StatusCode::TOO_MANY_REQUESTS,
+        )
+        .await;
     }
     match otp::verify(&app, otp::Purpose::Login, &form.code) {
         otp::Verify::Ok(_) => start_session(&app, &headers).await,
@@ -209,12 +276,13 @@ pub async fn verify_code(
             } else {
                 "Wrong code. Send a new one."
             };
-            login_render(&app, again, Some(msg), StatusCode::UNAUTHORIZED).await
+            login_render(&app, &headers, again, Some(msg), StatusCode::UNAUTHORIZED).await
         }
         otp::Verify::Expired => {
             record_failure(&app, ip);
             login_render(
                 &app,
+                &headers,
                 false,
                 Some("That code expired. Send a new one."),
                 StatusCode::UNAUTHORIZED,

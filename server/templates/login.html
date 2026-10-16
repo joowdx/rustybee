@@ -1,5 +1,12 @@
 {% extends "base.html" %}
+{%- macro ts(key) -%}
+{%- if let Some(k) = key %}<div class="cf-turnstile" data-sitekey="{{ k }}" data-callback="rbTurnstileOk"></div>{% endif -%}
+{%- endmacro -%}
 {% block content %}
+{% if turnstile.is_some() %}
+<script>function rbTurnstileOk(){document.querySelectorAll("button[data-ts]").forEach(function(b){b.disabled=false})}</script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+{% endif %}
 <section class="login">
   <img class="mark" src="{{ l.logo }}" alt="" width="72" height="72">
   <h1>rustybee</h1>
@@ -10,12 +17,13 @@
     <button>Log in</button>
   </form>
   <form method="post" action="/login/code" class="resend" hx-boost="false">
-    <span class="muted">Didn't get it? It can take a minute.</span> <button class="link">Send a new code</button>
+    <span class="muted">Didn't get it? It can take a minute.</span> {% call ts(turnstile) %}<button class="link"{% if turnstile.is_some() %} disabled data-ts{% endif %}>Send a new code</button>
   </form>
   {% else if m.otp %}
   <p class="lede">We'll text a one-time code to {% if let Some(p) = m.phone_hint %}<b class="nowrap">{{ p }}</b>{% else %}your phone{% endif %} through one of your gateway phones.</p>
   <form method="post" action="/login/code" class="card stack" hx-boost="false">
-    <button>Text me a code</button>
+    {% call ts(turnstile) %}
+    <button{% if turnstile.is_some() %} disabled data-ts{% endif %}>Text me a code</button>
   </form>
   {% else %}
   <p class="lede">Log in to your SMS gateway</p>
@@ -27,13 +35,15 @@
     <form method="post" action="/login" class="card stack" hx-boost="false">
       <p class="small muted">Open because {% if !m.online %}no device is online{% else %}recent codes failed to send{% endif %}.</p>
       <label><span class="lbl">Password</span><input type="password" name="password" autocomplete="current-password" required></label>
-      <button class="ghost">Log in with password</button>
+      {% call ts(turnstile) %}
+      <button class="ghost"{% if turnstile.is_some() %} disabled data-ts{% endif %}>Log in with password</button>
     </form>
   </details>
   {% else if m.password %}
   <form method="post" action="/login" class="card stack" hx-boost="false">
     <label><span class="lbl">Password</span><input type="password" name="password" autocomplete="current-password" required autofocus></label>
-    <button>Log in</button>
+    {% call ts(turnstile) %}
+    <button{% if turnstile.is_some() %} disabled data-ts{% endif %}>Log in</button>
   </form>
   {% if m.phone_hint.is_some() && !m.online %}<p class="note">No gateway phone is online, so codes can't be texted. The password works until one reconnects.</p>{% endif %}
   {% else if m.otp %}

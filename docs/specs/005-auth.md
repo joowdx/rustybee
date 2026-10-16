@@ -35,7 +35,14 @@ Updated: 2026-10-16
 - Logout deletes the session. Changing the password deletes every other session.
 - **CSRF:** non-GET UI requests must carry an `Origin` header (or `Referer` if `Origin` is absent) that matches the request host. SameSite=Strict is the second layer.
 - **Login throttle:** 5 failures per minute per client IP, then `429`. Counted in memory.
-- **Client IP:** taken from `X-Forwarded-For` only when `RUSTYBEE_TRUST_PROXY=1`; otherwise the peer address.
+- **Client IP:** with `RUSTYBEE_TRUST_PROXY=1`, taken from `CF-Connecting-IP` when present, else from the **rightmost** `X-Forwarded-For` entry (the one the proxy appended; entries to its left are client-supplied). Otherwise, and when neither header parses, the peer address.
+
+### Turnstile (optional)
+- Enabled when both `RUSTYBEE_TURNSTILE_SITE_KEY` and `RUSTYBEE_TURNSTILE_SECRET` are set. Setting only one fails startup.
+- It applies only to requests that came through Cloudflare: `RUSTYBEE_TRUST_PROXY=1` and a `CF-Connecting-IP` header is present. Cloudflare always sets that header and a client cannot remove it. Requests without it (LAN, or a non-Cloudflare proxy) skip Turnstile, so local login keeps working when the internet or tunnel is down.
+- When it applies, the login page loads the Turnstile widget inside the password form and the code-send forms. The widget is meant to be created in **Invisible** mode in the Cloudflare dashboard. Those forms' buttons start disabled and are enabled once a token arrives.
+- `POST /login` and `POST /login/code` then require the `cf-turnstile-response` field. The server checks it with Cloudflare Siteverify (`secret`, `response`, `remoteip` = client IP) before doing anything else except the login throttle. A missing or rejected token, a Siteverify error, timeout (10 s) or `success: false` all return `403` (fail closed). A Turnstile failure does not count toward the login throttle.
+- `POST /login/verify` is not gated; it is already bounded by 5 tries per code and the login throttle.
 
 ### API keys
 - Format: `rbk_` followed by 43 base64url characters. The secret is shown **once** at creation.
@@ -60,12 +67,16 @@ Updated: 2026-10-16
 10. AC-005-10 A code dies after 5 wrong tries. A second send within 30 s returns 429.
 11. AC-005-11 Code messages are missing from `GET /api/v1/messages`, return 404 from `GET /api/v1/messages/{id}`, and fire no webhooks.
 12. AC-005-12 The admin phone is stored only after the code texted to it is entered in Settings.
+13. AC-005-13 With Turnstile on and a `CF-Connecting-IP` header, `POST /login` and `POST /login/code` without a valid token return 403; with one Siteverify accepts, login succeeds and Siteverify gets the `CF-Connecting-IP` as `remoteip`. An unreachable Siteverify returns 403.
+14. AC-005-14 With Turnstile on but no `CF-Connecting-IP` header, the login page has no widget and login works without a token.
+15. AC-005-15 With `RUSTYBEE_TRUST_PROXY=1`, a spoofed leftmost `X-Forwarded-For` entry does not change the client IP used by the login throttle.
 
 ## Test plan
 | AC | Test |
 |---|---|
 | 01–06 | `server/tests/auth.rs` |
 | 07–12 | `server/tests/otp.rs` |
+| 13–15 | `server/tests/auth.rs` |
 
 ## Assumptions
 - Single admin with no username field.

@@ -278,3 +278,169 @@ async fn env_password_applies_only_when_unset() {
     assert!(auth::verify_password(&hash, "from the environment"));
     s.stop().await;
 }
+
+// ---------- Turnstile and client IP ----------
+
+/// Fake Siteverify: accepts the token "good" and records each `remoteip`.
+async fn siteverify() -> (std::sync::Arc<std::sync::Mutex<Vec<String>>>, String) {
+    use axum::{Form, Json, Router, extract::State, routing::post};
+    use std::collections::HashMap;
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+    async fn handle(
+        State(seen): State<Seen>,
+        Form(f): Form<HashMap<String, String>>,
+    ) -> Json<Value> {
+        seen.lock()
+            .unwrap()
+            .push(f.get("remoteip").cloned().unwrap_or_default());
+        let ok = f.get("secret").map(String::as_str) == Some("sekret")
+            && f.get("response").map(String::as_str) == Some("good");
+        Json(serde_json::json!({ "success": ok }))
+    }
+    let seen = Seen::default();
+    let app = Router::new()
+        .route("/", post(handle))
+        .with_state(seen.clone());
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", l.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    (seen, url)
+}
+
+async fn turnstile_server(verify_url: &str) -> Server {
+    let url = verify_url.to_string();
+    let s = server_with(move |c| {
+        c.trust_proxy = true;
+        c.turnstile = Some(rustybee::config::Turnstile {
+            site_key: "site-key-1".into(),
+            secret: "sekret".into(),
+        });
+        c.turnstile_verify_url = url;
+    })
+    .await;
+    s.set_password().await;
+    s
+}
+
+async fn login_via(s: &Server, cf_ip: Option<&str>, token: Option<&str>) -> u16 {
+    let mut form = vec![("password", PASSWORD)];
+    if let Some(t) = token {
+        form.push(("cf-turnstile-response", t));
+    }
+    let mut r = s
+        .http
+        .post(s.url("/login"))
+        .header("Origin", &s.base)
+        .form(&form);
+    if let Some(ip) = cf_ip {
+        r = r.header("CF-Connecting-IP", ip);
+    }
+    r.send().await.unwrap().status().as_u16()
+}
+
+#[tokio::test]
+async fn ac_005_13_cloudflare_login_needs_turnstile() {
+    let (seen, url) = siteverify().await;
+    let s = turnstile_server(&url).await;
+    assert_eq!(login_via(&s, Some("203.0.113.7"), None).await, 403);
+    assert_eq!(login_via(&s, Some("203.0.113.7"), Some("bad")).await, 403);
+    assert_eq!(login_via(&s, Some("203.0.113.7"), Some("good")).await, 303);
+    assert_eq!(
+        seen.lock().unwrap().as_slice(),
+        ["203.0.113.7", "203.0.113.7"]
+    );
+    // Code sends are gated before anything else (409 would mean no phone).
+    let r = s
+        .http
+        .post(s.url("/login/code"))
+        .header("Origin", &s.base)
+        .header("CF-Connecting-IP", "203.0.113.7")
+        .form(&[("x", "")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_005_13_siteverify_unreachable_fails_closed() {
+    let s = turnstile_server("http://127.0.0.1:1/").await;
+    assert_eq!(login_via(&s, Some("203.0.113.7"), Some("good")).await, 403);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_005_14_lan_login_skips_turnstile() {
+    let (seen, url) = siteverify().await;
+    let s = turnstile_server(&url).await;
+    let page = |ip: Option<&'static str>| {
+        let mut r = s.http.get(s.url("/login"));
+        if let Some(ip) = ip {
+            r = r.header("CF-Connecting-IP", ip);
+        }
+        r.send()
+    };
+    let lan = page(None).await.unwrap().text().await.unwrap();
+    assert!(!lan.contains("cf-turnstile") && !lan.contains("challenges.cloudflare.com"));
+    let cf = page(Some("203.0.113.7"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(cf.contains(r#"data-sitekey="site-key-1""#) && cf.contains("data-ts"));
+    let r = s
+        .http
+        .post(s.url("/login/code"))
+        .header("Origin", &s.base)
+        .form(&[("x", "")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 409);
+    assert_eq!(login_via(&s, None, None).await, 303);
+    assert!(seen.lock().unwrap().is_empty());
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_005_15_spoofed_forwarded_for_does_not_dodge_throttle() {
+    let s = server_with(|c| c.trust_proxy = true).await;
+    s.set_password().await;
+    for i in 0..5 {
+        let r = s
+            .http
+            .post(s.url("/login"))
+            .header("Origin", &s.base)
+            .header("X-Forwarded-For", format!("10.0.0.{i}, 198.51.100.9"))
+            .form(&[("password", "nope nope nope")])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 401);
+    }
+    let r = s
+        .http
+        .post(s.url("/login"))
+        .header("Origin", &s.base)
+        .header("X-Forwarded-For", "10.0.0.99, 198.51.100.9")
+        .form(&[("password", PASSWORD)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 429);
+    // CF-Connecting-IP wins over X-Forwarded-For: a different client is not throttled.
+    let r = s
+        .http
+        .post(s.url("/login"))
+        .header("Origin", &s.base)
+        .header("X-Forwarded-For", "198.51.100.9")
+        .header("CF-Connecting-IP", "203.0.113.50")
+        .form(&[("password", PASSWORD)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 303);
+    s.stop().await;
+}
