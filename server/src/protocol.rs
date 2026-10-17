@@ -70,6 +70,9 @@ pub struct Permissions {
     pub receive_sms: Option<bool>,
     pub notifications: Option<bool>,
     pub battery_unrestricted: Option<bool>,
+    /// Optional, newer apps only: `READ_PHONE_STATE` granted (spec 002).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_phone_state: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

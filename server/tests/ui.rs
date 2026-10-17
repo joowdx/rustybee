@@ -617,7 +617,7 @@ async fn ac_010_08_unreachable_and_last_restart() {
                 params![
                     id,
                     now - 120_000,
-                    r#"{"permissions":{"notifications":false,"send_sms":true}}"#,
+                    r#"{"permissions":{"notifications":false,"send_sms":true,"read_phone_state":false}}"#,
                     lifecycle
                 ],
             )?;
@@ -643,6 +643,10 @@ async fn ac_010_08_unreachable_and_last_restart() {
         assert!(!page.contains("was force-stopped"), "{path}");
         assert!(
             page.contains("Notifications are off on the phone, so wake-ups will not work"),
+            "{path}"
+        );
+        assert!(
+            page.contains("Missing permission: read phone state"),
             "{path}"
         );
     }

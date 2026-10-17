@@ -64,7 +64,7 @@ Every text frame is one JSON object:
 ### Device → server
 | type | data | when |
 |---|---|---|
-| `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted}, outbox, lifecycle}` | first frame after every connect |
+| `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted, read_phone_state?}, outbox, lifecycle}` | first frame after every connect |
 | `status` | `{msg_id, state:"sent"\|"delivered"\|"failed", at, parts, error:{code,message}\|null}` | each change of a message's outcome |
 | `inbound` | `{uid, from, body, sim, received_at}` | each received SMS, while forwarding is on, that passes the filters |
 | `health` | `{battery, network, permissions, outbox, fcm_token?}` | every 15 min while connected, on a change of charging state or permissions, and at once when FCM issues a new token |
@@ -83,6 +83,7 @@ Every text frame is one JSON object:
   - `at` values are epoch milliseconds from the phone's clock.
   - `lifecycle` is optional so older apps keep working. A missing or malformed `lifecycle` is ignored, not nacked; every other `hello` field is checked as before.
 - `permissions.notifications` is true only when `POST_NOTIFICATIONS` is granted **and** the gateway notification channel is not blocked. FCM wakes depend on both (spec 009).
+- `permissions.read_phone_state` is optional: newer apps send whether `READ_PHONE_STATE` is granted, older apps omit it. When omitted the server stores and re-encodes nothing for it; when `false` the web UI lists it with the other missing permissions.
 - `health.fcm_token` is sent only when the token changed; when present, the server replaces the stored token.
 - `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100.
 - `inbound.uid` is the lowercase hex of the first 16 bytes of `SHA-256(from + "\n" + received_at + "\n" + body + "\n" + (sim ?: ""))`.
@@ -179,3 +180,4 @@ Every text frame is one JSON object:
 - The idle-close timeout is derived from `ping_s` but can be injected directly, for tests only.
 
 ## Open questions
+- `permissions.read_phone_state` came from the 2026-10-17 Android review; the server only stores and shows it.
