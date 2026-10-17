@@ -359,3 +359,102 @@ async fn ac_007_08_short_codes_need_opt_in() {
     assert_eq!(v["messages"][0]["peer"], "2336");
     s.stop().await;
 }
+
+async fn post_keyed(
+    s: &Server,
+    api_key: &str,
+    path: &str,
+    idem: &str,
+    body: &str,
+) -> (u16, Option<String>, Value) {
+    let r = s
+        .http
+        .post(s.url(path))
+        .bearer_auth(api_key)
+        .header("Idempotency-Key", idem)
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
+        .send()
+        .await
+        .unwrap();
+    let st = r.status().as_u16();
+    let replayed = r
+        .headers()
+        .get("idempotent-replayed")
+        .map(|v| v.to_str().unwrap().to_string());
+    (st, replayed, r.json().await.unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn ac_007_09_idempotency_key_replays_the_original_response() {
+    let s = server().await;
+    let key = s.api_key().await;
+    s.pair("A").await;
+    let body = r#"{"to": ["+15550000001", "+15550000002"], "body": "hi"}"#;
+    let (st, replayed, first) = post_keyed(&s, &key, "/api/v1/messages", "k-1", body).await;
+    assert_eq!((st, replayed), (202, None), "{first}");
+    // Same key, same request (different formatting): same ids, nothing new written.
+    let same = r#"{"body":"hi","to":["+15550000001","+15550000002"]}"#;
+    let (st, replayed, again) = post_keyed(&s, &key, "/api/v1/messages", "k-1", same).await;
+    assert_eq!((st, replayed.as_deref()), (202, Some("true")));
+    assert_eq!(again, first);
+    assert_eq!(count_messages(&s).await, 2);
+    // Same key, different request: 422 and nothing written.
+    let other = r#"{"to": ["+15550000003"], "body": "hi"}"#;
+    let (st, _, v) = post_keyed(&s, &key, "/api/v1/messages", "k-1", other).await;
+    assert_eq!(st, 422);
+    assert_eq!(v["error"]["code"], "idempotency_key_reused");
+    // The same body on the other endpoint counts as a different request.
+    let items = r#"{"items": [{"to": "+15550000001", "body": "hi"}]}"#;
+    let (st, _, _) = post_keyed(&s, &key, "/api/v1/batches", "k-1", items).await;
+    assert_eq!(st, 422);
+    assert_eq!(count_messages(&s).await, 2);
+    // Batches replay too.
+    let (st, _, b1) = post_keyed(&s, &key, "/api/v1/batches", "k-2", items).await;
+    assert_eq!(st, 202);
+    let (st, replayed, b2) = post_keyed(&s, &key, "/api/v1/batches", "k-2", items).await;
+    assert_eq!((st, replayed.as_deref()), (202, Some("true")));
+    assert_eq!(b1["batch_id"], b2["batch_id"]);
+    assert_eq!(count_messages(&s).await, 3);
+    // A malformed key is refused.
+    let (st, _, _) = post_keyed(&s, &key, "/api/v1/messages", &"x".repeat(256), body).await;
+    assert_eq!(st, 400);
+    // Without a key, every request queues.
+    let (st, v) = s
+        .api_post(
+            &key,
+            "/api/v1/messages",
+            serde_json::from_str(body).unwrap(),
+        )
+        .await;
+    assert_eq!(st, 202);
+    assert_ne!(v["batch_id"], first["batch_id"]);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_007_10_idempotency_key_expires_after_24_hours() {
+    let s = server().await;
+    let key = s.api_key().await;
+    s.pair("A").await;
+    let body = r#"{"to": ["+15550000001"], "body": "hi"}"#;
+    let (_, _, first) = post_keyed(&s, &key, "/api/v1/messages", "k", body).await;
+    s.app().clock.advance_ms(23 * 3600 * 1000);
+    let (_, _, again) = post_keyed(&s, &key, "/api/v1/messages", "k", body).await;
+    assert_eq!(again["batch_id"], first["batch_id"]);
+    s.app().clock.advance_ms(3600 * 1000);
+    let (st, replayed, later) = post_keyed(&s, &key, "/api/v1/messages", "k", body).await;
+    assert_eq!((st, replayed), (202, None));
+    assert_ne!(later["batch_id"], first["batch_id"]);
+    // The daily prune forgets expired keys.
+    s.app().clock.advance_ms(25 * 3600 * 1000);
+    rustybee::sweeper::prune_once(s.app()).await.unwrap();
+    let n: i64 = s
+        .app()
+        .store
+        .read(|c| c.query_row("SELECT count(*) FROM idempotency_keys", [], |r| r.get(0)))
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    s.stop().await;
+}

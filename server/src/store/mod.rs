@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod devices;
+pub mod idempotency;
 pub mod messages;
 pub mod webhooks;
 
@@ -21,6 +22,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0003_fcm_wake",
         include_str!("../../migrations/0003_fcm_wake.sql"),
+    ),
+    (
+        "0004_idempotency_indexes",
+        include_str!("../../migrations/0004_idempotency_indexes.sql"),
     ),
 ];
 
@@ -271,7 +276,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(tables, 10);
+        assert_eq!(tables, 11);
     }
 
     #[tokio::test]

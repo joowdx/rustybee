@@ -48,6 +48,7 @@ pub async fn prune_once(app: &App) -> store::Result<(usize, usize)> {
                 [now - 7 * DAY_MS],
             )?;
             store::auth::prune(c, now)?;
+            store::idempotency::prune(c, now)?;
             let Some(before) = retention else {
                 return Ok((0, 0));
             };

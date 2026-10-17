@@ -14,6 +14,7 @@ Updated: 2026-10-17
   | 404 | `not_found` |
   | 409 | `device_disabled` |
   | 413 | (payload too large) |
+  | 422 | `idempotency_key_reused` |
   | 429 | `queue_full` |
 
 ### Message object
@@ -41,6 +42,13 @@ Timestamps are RFC 3339 UTC strings with milliseconds.
 - **Paging:** keyset over `id DESC`. The cursor is the opaque base64url of the last row's id.
 - All validation happens before anything is written. An invalid recipient rejects the whole request and names its index: `message: "to[3]: …"`.
 - Recipients need at least 7 digits (spec 004). `RUSTYBEE_ALLOW_SHORT_CODES=1` lowers that to 3 so short codes can be texted.
+- **Idempotency:** `POST /messages` and `POST /batches` accept an optional `Idempotency-Key` header (1–255 visible ASCII characters; anything else is 400 `bad_request`).
+  - The key is bound to the endpoint and a SHA-256 of the parsed request, so whitespace and field order do not matter.
+  - The first successful request stores the key with its 202 body in `idempotency_keys` (migration 0004, `key` UNIQUE), in the same transaction as the batch. Two concurrent requests with one key therefore queue the messages once.
+  - A repeat with the same key and request returns `202` with the original body (same `batch_id` and message ids, states as they were then) and the header `Idempotent-Replayed: true`. Nothing is queued.
+  - A repeat with the same key and a different request (or the other endpoint) returns `422 idempotency_key_reused` and writes nothing.
+  - Only successes are stored: a request that fails validation can be retried with the same key.
+  - Keys expire 24 hours after first use, independent of `RUSTYBEE_RETENTION_DAYS`; an expired key is treated as new, and the daily prune deletes expired rows.
 - **Backlog cap:** a send is refused with 429 `queue_full`, writing nothing, when the chosen device's `queued` messages plus the new ones would exceed `RUSTYBEE_MAX_QUEUED` (default 1000). The web send forms use the same path.
 
 ## Acceptance criteria
@@ -52,11 +60,13 @@ Timestamps are RFC 3339 UTC strings with milliseconds.
 6. AC-007-06 Batch counts and status follow spec 004.
 7. AC-007-07 With `RUSTYBEE_MAX_QUEUED=3` and 2 messages queued, sending 2 more returns 429 `queue_full` and writes nothing; sending 1 more succeeds.
 8. AC-007-08 A recipient with fewer than 7 digits, such as `2336`, returns 400 `invalid_recipient`, unless `RUSTYBEE_ALLOW_SHORT_CODES=1`.
+9. AC-007-09 Repeating a send with the same `Idempotency-Key` and request returns 202 with the same `batch_id` and message ids and writes nothing; the same key with a different request returns 422 `idempotency_key_reused`; a malformed key returns 400.
+10. AC-007-10 An `Idempotency-Key` is honoured for 24 hours; after that the same key queues a new batch, and the daily prune deletes it.
 
 ## Test plan
 | AC | Test |
 |---|---|
-| 01–08 | `server/tests/api.rs` |
+| 01–10 | `server/tests/api.rs` |
 | 08 | `domain::phone` unit tests |
 
 ## Assumptions
@@ -64,3 +74,4 @@ Timestamps are RFC 3339 UTC strings with milliseconds.
 - `body` is limited to 1600 characters, about 10 GSM segments.
 
 ## Open questions
+- AC-007-09 and AC-007-10 (`Idempotency-Key`) came from the 2026-10-17 review. Keys expire after a fixed 24 h rather than with retention, so a deployment without retention does not keep them forever.

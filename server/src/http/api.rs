@@ -1,19 +1,21 @@
 //! Public API `/api/v1` (spec 007).
 
 use super::auth::ApiKey;
-use crate::app::{App, Draft, VERSION};
+use crate::app::{App, Draft, Idempotency, Queued, VERSION, accepted_json};
 use crate::domain::batch_status;
 use crate::domain::lifecycle::State as MsgState;
 use crate::error::ApiError;
-use crate::store::{devices, messages};
+use crate::store::{devices, idempotency, messages};
 use crate::util::{b64url, b64url_decode, parse_rfc3339};
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 pub fn routes() -> Router<App> {
     Router::new()
@@ -34,7 +36,7 @@ async fn not_found() -> ApiError {
     ApiError::not_found()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct SendReq {
     to: Vec<String>,
     body: String,
@@ -42,33 +44,85 @@ struct SendReq {
     sim: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct BatchItem {
     to: String,
     body: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct BatchReq {
     items: Vec<BatchItem>,
     device_id: Option<String>,
     sim: Option<i64>,
 }
 
-fn accepted(batch: String, rows: Vec<messages::MessageRow>) -> (StatusCode, Json<Value>) {
-    let msgs: Vec<Value> = rows.iter().map(|r| r.to_json()).collect();
-    (
-        StatusCode::ACCEPTED,
-        Json(json!({"batch_id": batch, "messages": msgs})),
-    )
+const IDEMPOTENCY_KEY: &str = "idempotency-key";
+
+/// The optional `Idempotency-Key` header, bound to a hash of the endpoint and
+/// the parsed request (so whitespace and key order do not matter).
+fn idempotency<T: Serialize>(
+    headers: &HeaderMap,
+    endpoint: &str,
+    req: &T,
+) -> Result<Option<Idempotency>, ApiError> {
+    let Some(v) = headers.get(IDEMPOTENCY_KEY) else {
+        return Ok(None);
+    };
+    let key = v
+        .to_str()
+        .ok()
+        .filter(|k| {
+            (1..=idempotency::MAX_KEY_LEN).contains(&k.len())
+                && k.bytes().all(|b| b.is_ascii_graphic())
+        })
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "Idempotency-Key must be 1 to {} visible ASCII characters",
+                idempotency::MAX_KEY_LEN
+            ))
+        })?;
+    let mut h = Sha256::new();
+    h.update(endpoint.as_bytes());
+    h.update(b"\n");
+    h.update(serde_json::to_vec(req).unwrap_or_default());
+    Ok(Some(Idempotency {
+        key: key.to_string(),
+        request_sha256: h.finalize().to_vec(),
+    }))
+}
+
+fn accepted(q: Queued) -> Response {
+    match q {
+        Queued::New(batch, rows) => {
+            (StatusCode::ACCEPTED, Json(accepted_json(&batch, &rows))).into_response()
+        }
+        Queued::Replay(body) => (
+            StatusCode::ACCEPTED,
+            [
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/json"),
+                ),
+                (
+                    header::HeaderName::from_static("idempotent-replayed"),
+                    HeaderValue::from_static("true"),
+                ),
+            ],
+            body,
+        )
+            .into_response(),
+    }
 }
 
 async fn send_messages(
     _: ApiKey,
     State(app): State<App>,
+    headers: HeaderMap,
     req: Result<Json<SendReq>, JsonRejection>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+) -> Result<Response, ApiError> {
     let Json(req) = req?;
+    let idem = idempotency(&headers, "/api/v1/messages", &req)?;
     let drafts = req
         .to
         .into_iter()
@@ -79,16 +133,19 @@ async fn send_messages(
             body: req.body.clone(),
         })
         .collect();
-    let (batch, rows) = app.queue(drafts, req.device_id, req.sim).await?;
-    Ok(accepted(batch, rows))
+    Ok(accepted(
+        app.queue_with(drafts, req.device_id, req.sim, idem).await?,
+    ))
 }
 
 async fn send_batch(
     _: ApiKey,
     State(app): State<App>,
+    headers: HeaderMap,
     req: Result<Json<BatchReq>, JsonRejection>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+) -> Result<Response, ApiError> {
     let Json(req) = req?;
+    let idem = idempotency(&headers, "/api/v1/batches", &req)?;
     let drafts = req
         .items
         .into_iter()
@@ -99,8 +156,9 @@ async fn send_batch(
             body: it.body,
         })
         .collect();
-    let (batch, rows) = app.queue(drafts, req.device_id, req.sim).await?;
-    Ok(accepted(batch, rows))
+    Ok(accepted(
+        app.queue_with(drafts, req.device_id, req.sim, idem).await?,
+    ))
 }
 
 async fn get_batch(

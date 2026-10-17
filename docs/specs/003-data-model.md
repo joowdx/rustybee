@@ -71,6 +71,9 @@ CREATE TABLE seen_frames (device_id INTEGER NOT NULL REFERENCES devices(id) ON D
   - `devices.lifecycle_json TEXT`: the last `hello.lifecycle`, as sent. Kept apart from `telemetry_json`, which `health` overwrites.
 
   Removing a device also clears `unreachable_at` and resets `wake_attempts`.
+- Migration `0004` adds:
+  - `idempotency_keys (id INTEGER PRIMARY KEY, key TEXT NOT NULL UNIQUE, request_sha256 BLOB NOT NULL, response TEXT NOT NULL, created_at INTEGER NOT NULL)` with an index on `created_at`, for the `Idempotency-Key` header (spec 007). Rows older than 24 hours are pruned daily.
+  - Indexes for hot queries, checked with `EXPLAIN QUERY PLAN`: `messages_frame (device_id, frame_id) WHERE frame_id IS NOT NULL` for device acks; `messages_state (state, id)` for the queued count and the sweeper's `queued`/`dispatched` scans; partial indexes on `sent_at`, `delivered_at`, `failed_at` and `expired_at` (each `WHERE … IS NOT NULL`) for the dashboard's day counts.
 - Settings keys used by spec 005: `admin_phone` (E.164) and `otp_send_failures` (a count).
 - Batch counters are not stored. They are computed with `GROUP BY state` over `messages_batch`.
 - `seen_frames` makes inbound frames idempotent by envelope id. Rows older than 7 days are pruned daily.
