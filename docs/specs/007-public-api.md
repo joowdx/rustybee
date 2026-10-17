@@ -30,7 +30,7 @@ Timestamps are RFC 3339 UTC strings with milliseconds.
 ### Endpoints
 | Method | Path | Body / query | Response |
 |---|---|---|---|
-| GET | `/api/v1/health` | — (no auth) | `200 {"ok":true,"version":"x.y.z"}` |
+| GET | `/api/v1/health` | — (no auth) | `200 {"ok":true,"version":"x.y.z"}`, or `503 {"ok":false,"version":"x.y.z"}` |
 | POST | `/api/v1/messages` | `{to:[str] 1..=1000, body:str 1..=1600 chars, device_id?, sim?}` | `202 {batch_id, messages:[Message]}` |
 | POST | `/api/v1/batches` | `{items:[{to, body}] 1..=1000, device_id?, sim?}` | `202 {batch_id, messages:[Message]}` |
 | GET | `/api/v1/batches/{id}` | — | `{id, device_id, total, counts:{queued,dispatched,sent,delivered,failed,expired}, status}` |
@@ -38,6 +38,7 @@ Timestamps are RFC 3339 UTC strings with milliseconds.
 | GET | `/api/v1/messages/{id}` | — | `Message` |
 | GET | `/api/v1/devices` | — | `[{id, name, enabled, is_default, connected, last_seen_at, model, app_version, battery, charging, network, sims}]` |
 
+- **Health:** `/health` runs `SELECT 1` on a pooled reader and a round trip through the writer thread, with a 2 s limit for both. If either fails or is late, it returns 503. The body never carries more than `ok` and the version.
 - Duplicate recipients within one request are kept. The caller decides.
 - **Paging:** keyset over `id DESC`. The cursor is the opaque base64url of the last row's id.
 - All validation happens before anything is written. An invalid recipient rejects the whole request and names its index: `message: "to[3]: …"`.
@@ -62,11 +63,12 @@ Timestamps are RFC 3339 UTC strings with milliseconds.
 8. AC-007-08 A recipient with fewer than 7 digits, such as `2336`, returns 400 `invalid_recipient`, unless `RUSTYBEE_ALLOW_SHORT_CODES=1`.
 9. AC-007-09 Repeating a send with the same `Idempotency-Key` and request returns 202 with the same `batch_id` and message ids and writes nothing; the same key with a different request returns 422 `idempotency_key_reused`; a malformed key returns 400.
 10. AC-007-10 An `Idempotency-Key` is honoured for 24 hours; after that the same key queues a new batch, and the daily prune deletes it.
+11. AC-007-11 `/health` returns 503 with `"ok":false` while the writer thread is stuck for longer than 2 s, and 200 again once it answers.
 
 ## Test plan
 | AC | Test |
 |---|---|
-| 01–10 | `server/tests/api.rs` |
+| 01–11 | `server/tests/api.rs` |
 | 08 | `domain::phone` unit tests |
 
 ## Assumptions
@@ -75,3 +77,4 @@ Timestamps are RFC 3339 UTC strings with milliseconds.
 
 ## Open questions
 - AC-007-09 and AC-007-10 (`Idempotency-Key`) came from the 2026-10-17 review. Keys expire after a fixed 24 h rather than with retention, so a deployment without retention does not keep them forever.
+- AC-007-11 (a health check that probes the store) came from the 2026-10-17 review.

@@ -13,7 +13,7 @@ Updated: 2026-10-17
 - **Final stage:** `FROM scratch`. Copy in the binary as `/rustybee`, create `/data` owned by `10001:10001` (prepared in the build stage), and set `USER 10001:10001`.
   - `ENV RUSTYBEE_DATA_DIR=/data RUSTYBEE_BIND=0.0.0.0:8080`
   - `EXPOSE 8080`, `VOLUME /data`
-  - `HEALTHCHECK CMD ["/rustybee","healthcheck"]`. The `healthcheck` subcommand does a GET on `http://127.0.0.1:<port>/api/v1/health` with a plain TCP client and exits 0 or 1.
+  - `HEALTHCHECK CMD ["/rustybee","healthcheck"]`. The `healthcheck` subcommand does a GET on `http://127.0.0.1:<port>/api/v1/health` with a plain TCP client and exits 0 on 200, 1 otherwise. The endpoint answers 503 when the store does not respond within 2 s (spec 007), which fits the 3 s read timeout of the subcommand and the 5 s `HEALTHCHECK --timeout`.
   - `ENTRYPOINT ["/rustybee"]`, `CMD ["serve"]`
 - **TLS roots:** reqwest uses `rustls` with bundled webpki roots, so no CA files are needed in the image.
 

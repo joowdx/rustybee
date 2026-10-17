@@ -458,3 +458,29 @@ async fn ac_007_10_idempotency_key_expires_after_24_hours() {
     assert_eq!(n, 0);
     s.stop().await;
 }
+
+#[tokio::test]
+async fn ac_007_11_health_is_503_when_the_store_is_stuck() {
+    let s = server().await;
+    let r = s.http.get(s.url("/api/v1/health")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    // Hold the writer thread longer than the health timeout.
+    let store = s.app().store.clone();
+    let busy = tokio::spawn(async move {
+        store
+            .with_writer(|_| {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                Ok(())
+            })
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let r = s.http.get(s.url("/api/v1/health")).send().await.unwrap();
+    assert_eq!(r.status(), 503);
+    let v: Value = r.json().await.unwrap();
+    assert_eq!(v["ok"], false);
+    busy.await.unwrap().unwrap();
+    let r = s.http.get(s.url("/api/v1/health")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    s.stop().await;
+}

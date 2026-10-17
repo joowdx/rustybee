@@ -28,8 +28,29 @@ pub fn routes() -> Router<App> {
         .route("/api/v1/{*rest}", any(not_found))
 }
 
-async fn health() -> Json<Value> {
-    Json(json!({"ok": true, "version": VERSION}))
+/// How long `/health` waits for the store before answering 503.
+const HEALTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Unauthenticated liveness (spec 007): a read on the pool and a round trip
+/// through the writer thread. Says nothing beyond ok and the version.
+async fn health(State(app): State<App>) -> (StatusCode, Json<Value>) {
+    fn one(c: &rusqlite::Connection) -> rusqlite::Result<i64> {
+        c.query_row("SELECT 1", [], |r| r.get(0))
+    }
+    let probe = async {
+        let (r, w) = tokio::join!(app.store.read(one), app.store.with_writer(|c| one(c)));
+        r.is_ok() && w.is_ok()
+    };
+    let ok = tokio::time::timeout(HEALTH_TIMEOUT, probe)
+        .await
+        .unwrap_or(false);
+    let status = if ok {
+        StatusCode::OK
+    } else {
+        tracing::warn!("health check failed: the store did not answer");
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (status, Json(json!({"ok": ok, "version": VERSION})))
 }
 
 async fn not_found() -> ApiError {
