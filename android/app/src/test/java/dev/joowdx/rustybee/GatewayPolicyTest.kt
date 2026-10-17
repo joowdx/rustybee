@@ -5,7 +5,6 @@ import dev.joowdx.rustybee.gateway.CloseDecision
 import dev.joowdx.rustybee.gateway.ConnectDecision
 import dev.joowdx.rustybee.gateway.GatewayPolicy
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The service's close and connect rules: AC-002-07, AC-002-17, AC-002-18 and AC-013-04. */
@@ -19,8 +18,13 @@ class GatewayPolicyTest {
     @Test
     fun ac_002_07_revoked_close_unpairs() {
         assertEquals(CloseDecision.Unpair(GatewayPolicy.NOTICE_REVOKED), closed(4003))
-        // Even while stopping, a revoke still wipes the credentials.
-        assertTrue(closed(4003, stopping = true) is CloseDecision.Unpair)
+    }
+
+    @Test
+    fun ac_013_08_close_from_a_stopping_instance_never_unpairs() {
+        // A re-pair stops the old instance; its late 4003 or 401 must not wipe the new pairing.
+        assertEquals(CloseDecision.Stay, closed(4003, stopping = true))
+        assertEquals(CloseDecision.Stay, closed(-1, http = 401, stopping = true))
     }
 
     @Test

@@ -39,9 +39,11 @@ object GatewayPolicy {
      * status of a refused upgrade. [ownGatewayOff] is true once this side closed with 4010.
      */
     fun onClosed(code: Int, httpStatus: Int?, stopping: Boolean, ownGatewayOff: Boolean): CloseDecision = when {
+        // Checked first: a close still in flight from a stopping instance (for example during a
+        // re-pair) must not wipe the new pairing. A real revoke shows up again on the next connect.
+        stopping -> CloseDecision.Stay
         code == CLOSE_REVOKED -> CloseDecision.Unpair(NOTICE_REVOKED)
         httpStatus == HTTP_UNAUTHORIZED -> CloseDecision.Unpair(NOTICE_UNAUTHORIZED)
-        stopping -> CloseDecision.Stay
         code == CLOSE_GATEWAY_OFF && ownGatewayOff -> CloseDecision.Stay
         else -> CloseDecision.Reconnect
     }
