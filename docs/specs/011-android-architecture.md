@@ -108,6 +108,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 9. AC-011-09 Every `ApplicationStartInfo` and `ApplicationExitInfo` reason constant maps to its spec 002 string, and an unknown int maps to `unknown_<int>`.
 10. AC-011-10 Killing the app process (`adb shell am kill`) with the gateway enabled and default battery settings: on gms the gateway reconnects with `hello.lifecycle.exit.reason` set and `start.reason="push"`; on foss the watchdog posts "Gateway stopped — tap to restart", and tapping it reconnects with `start.reason="start_activity"`. Manual check on an API 35 and an API 36+ emulator.
 11. AC-011-11 A stored token that can't be decrypted because its Keystore key is lost counts as not paired: the pairing is cleared, and Setup shows why. Manual check: restore the app data onto another phone.
+12. AC-011-12 `http://` and `ws://` are accepted only for a LAN host (loopback, RFC 1918, link-local, IPv6 ULA, `localhost`, `*.local`). Pairing with a cleartext public host is refused with a message, and the service refuses to connect to one.
 
 ## Test plan
 | AC | Test |
@@ -122,10 +123,12 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 | 09 | `LifecycleReasonTest` |
 | 10 | Manual check; the gms half also covers AC-009-05 |
 | 11 | Manual check; the Keystore can't run on the JVM |
+| 12 | `CleartextTest` |
 
 ## Assumptions
 - Robolectric is not used, to keep the test toolchain light. Code that needs the Android framework is kept thin.
 - The token is encrypted with the Keystore. Other settings are stored in plain SharedPreferences.
+- Cleartext (`http://`, `ws://`) is allowed only to LAN hosts: loopback (127.0.0.0/8, `::1`), RFC 1918 IPv4, link-local (169.254.0.0/16, `fe80::/10`), IPv6 ULA (`fc00::/7`), `localhost`, `*.localhost` and `*.local`. Only the literal host counts; names are never resolved for this check. The network security config can't express IP ranges, so it keeps cleartext permitted and the pure `Cleartext` helper enforces the rule at pairing and again at connect (AC-011-12). Release builds also still need the "Allow insecure http (LAN)" tick.
 - "Paired" means a server URL and a token that decrypts. If the Keystore key is gone or no longer matches (a restore, a Keystore reset), the token can never be read again: the app clears the pairing and Setup explains why (AC-011-11). A transient Keystore error still counts as paired, and the service retries with the backoff.
 - The socket counts as "open" for `Uplink` only after `welcome`, so the outbox is resent once per connection (after `welcome`, as above, rather than right after `hello`).
 - If `welcome.config.ping_s` differs from the interval the socket was opened with, the app reconnects once with the new interval.
@@ -134,4 +137,5 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 
 ## Open questions
 - AC-011-11 came from the 2026-10-17 review.
+- AC-011-12 (LAN-only cleartext, no certificate pinning) came from the 2026-10-17 review.
 - Running the prunes and `failLost` on the health tick, not only at service start (AC-011-08), came from the 2026-10-17 review.

@@ -17,6 +17,7 @@ import android.widget.TextView
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import dev.joowdx.rustybee.BuildConfig
+import dev.joowdx.rustybee.gateway.Cleartext
 import dev.joowdx.rustybee.gateway.GatewayService
 import dev.joowdx.rustybee.gateway.Graph
 import dev.joowdx.rustybee.gateway.Telemetry
@@ -144,6 +145,7 @@ class SetupActivity : Activity() {
             ?: return showError("That is not a valid rustybee://pair link.")
         val (base, code) = parsed
         val allowInsecure = insecure.isChecked
+        if (!Cleartext.allowed(base)) return showError(Cleartext.REFUSED)
         if (base.startsWith("http://") && !allowInsecure && !BuildConfig.DEBUG) {
             return showError("This server uses plain http. Tick \"Allow insecure http (LAN)\" to continue.")
         }
@@ -166,6 +168,10 @@ class SetupActivity : Activity() {
         pairing = scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { request(base, code) }
+                if (!Cleartext.allowed(result.wsUrl)) {
+                    showError("The server returned a plain ws:// URL for a public host. ${Cleartext.REFUSED}")
+                    return@launch
+                }
                 if (result.wsUrl.startsWith("ws://") && !allowInsecure && !BuildConfig.DEBUG) {
                     showError("The server returned an insecure ws:// URL. Tick \"Allow insecure http (LAN)\" to continue.")
                     return@launch

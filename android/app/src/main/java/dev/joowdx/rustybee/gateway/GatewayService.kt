@@ -265,6 +265,12 @@ class GatewayService : Service() {
         }
         reconnectJob?.cancel()
         val url = prefs.wsUrl ?: return
+        if (!Cleartext.allowed(url)) {
+            // AC-011-12: checked again here, so a stored or edited URL can't reach a public host in cleartext.
+            setState { it.copy(connection = ConnectionState.STOPPED, lastError = "cleartext ws:// to a public host refused") }
+            graph.log("refusing cleartext ws:// to a non-LAN host", "E")
+            return
+        }
         if (url.startsWith("ws://") && !prefs.allowInsecure && !BuildConfig.DEBUG) {
             setState { it.copy(lastError = "insecure ws:// URL not allowed") }
             graph.log("refusing insecure ws:// URL", "E")

@@ -17,7 +17,7 @@ Updated: 2026-10-17
   - "Scan QR code", the primary button, which opens `ScanActivity`;
   - the deep link `rustybee://pair?u=…&c=…` (intent filter: scheme `rustybee`, host `pair`, `BROWSABLE`);
   - or a text field to paste the link;
-  - an "Allow insecure http (LAN)" checkbox, shown only for `http://` URLs.
+  - an "Allow insecure http (LAN)" checkbox, shown only for `http://` URLs. Plain `http://` (and a returned `ws://` URL) is accepted only for a LAN host (AC-011-12); a public host is refused with a message before anything is sent.
 - **Incoming links:** the deep link, a new intent and a scan result only fill the text field (and show the insecure checkbox for `http://`). They never pair on their own.
 - **Confirmation:** Pair first shows a platform `AlertDialog` naming the server host. If the app is already paired, it says this replaces the current server and wipes the local data. Nothing is requested or wiped until the user confirms.
 - **Notice:** when the pairing was dropped without the user asking (4003, a `401` at the upgrade, or a lost Keystore key), Setup shows why above the Pair button until the next pairing. A visible `MainActivity` switches to Setup as soon as that happens.
