@@ -40,15 +40,15 @@ This is the contract between the server and the Android app. It replaces MQTT an
 4. Errors: `400 {"error":{"code":"bad_request",…}}`, or `401 {"error":{"code":"pairing_invalid",…}}` when the code is unknown, expired or already used.
 
 ### Connection
-- The app opens `GET /api/device/ws` with the header `Authorization: Bearer <device_token>`. A missing or bad token gets HTTP `401` before the upgrade.
+- The app opens `GET /api/device/ws` with the header `Authorization: Bearer <device_token>`. A missing or bad token gets HTTP `401` before the upgrade. The app treats a `401` at the upgrade like 4003: it wipes its credentials, stops the gateway, posts an alert notification and shows setup with the reason. It never retries a `401`.
 - A WebSocket message or frame larger than 256 KiB closes the socket. No valid frame comes near it.
 - If the device already has an open socket, the server closes the old one with close code **4000 `replaced`**.
-- Close code **4003 `revoked`** means the device was removed. The app wipes its credentials, stops the gateway and shows setup again.
+- Close code **4003 `revoked`** means the device was removed. The app wipes its credentials, stops the gateway, posts an alert notification and shows setup again with the reason.
 - Close code **4010 `gateway_off`** is sent by the app when the user switches the gateway off on the phone. The server sets `gateway_off_at` and stops FCM wakes for the device (spec 009); the next `hello` clears it. The app does not reconnect after closing with 4010.
 - Liveness:
   - The app sends WebSocket ping frames every `config.ping_s` seconds (OkHttp `pingInterval`).
   - The server closes the socket (code 1001) if it receives no frame for `2 × ping_s + 30` seconds.
-  - The app reconnects after any close except 4003, and except its own 4010. It uses jittered exponential backoff (1 s doubling to 120 s, ±20 %), resets to 1 s after a connection has stayed up for 60 s, and also reconnects immediately when the default network changes.
+  - The app reconnects after any close except 4003, a `401` at the upgrade, and its own 4010. These rules live in the pure `GatewayPolicy`. It uses jittered exponential backoff (1 s doubling to 120 s, ±20 %), resets to 1 s after a connection has stayed up for 60 s, and also reconnects immediately when the default network changes.
 
 ### Envelope
 Every text frame is one JSON object:
@@ -82,8 +82,8 @@ Every text frame is one JSON object:
   - `exit` comes from `ApplicationExitInfo` for the previous process, or is `null` when the OS has none. `reason` is one of `anr`, `crash`, `crash_native`, `dependency_died`, `excessive_resource_usage`, `exit_self`, `freezer`, `initialization_failure`, `low_memory`, `other`, `package_state_change`, `package_updated`, `permission_change`, `signaled`, `unknown`, `user_requested`, `user_stopped`, or `unknown_<int>`. `description` is the OS's text, cut to 200 characters, or `null`.
   - `at` values are epoch milliseconds from the phone's clock.
   - `lifecycle` is optional so older apps keep working. A missing or malformed `lifecycle` is ignored, not nacked; every other `hello` field is checked as before.
+- `permissions.read_phone_state` is optional: newer apps send whether `READ_PHONE_STATE` is granted, older apps omit it. Without it the app can't list SIMs, so `sims` is empty and a `send` with `sim` fails `permission_denied` (spec 012). When omitted the server stores and re-encodes nothing for it; when `false` the web UI lists it with the other missing permissions.
 - `permissions.notifications` is true only when `POST_NOTIFICATIONS` is granted **and** the gateway notification channel is not blocked. FCM wakes depend on both (spec 009).
-- `permissions.read_phone_state` is optional: newer apps send whether `READ_PHONE_STATE` is granted, older apps omit it. When omitted the server stores and re-encodes nothing for it; when `false` the web UI lists it with the other missing permissions.
 - `health.fcm_token` is sent only when the token changed; when present, the server replaces the stored token.
 - `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100.
 - `inbound.uid` is the lowercase hex of the first 16 bytes of `SHA-256(from + "\n" + received_at + "\n" + body + "\n" + (sim ?: ""))`.
@@ -156,6 +156,7 @@ Every text frame is one JSON object:
 15. AC-002-15 A `status` with `parts` below 1 is nacked `bad_frame` and changes nothing. A `status.at` before `dispatched_at` is stored as `dispatched_at`, and one in the future as the server's now.
 16. AC-002-16 A `hello` with `lifecycle` stores it and clears `wake_attempts`, `unreachable_at` and `gateway_off_at`. A `hello` without `lifecycle`, or with a malformed one, is acked and connects as before. `protocol/fixtures/hello.json` carries a full `lifecycle`.
 17. AC-002-17 An app close with 4010 sets `gateway_off_at` and the app does not reconnect. A `health` with `fcm_token` replaces the stored token; one without leaves it unchanged.
+18. AC-002-18 An HTTP 401 at the upgrade is not retried: the app wipes its credentials, stops, posts an alert and shows setup with the reason, as for 4003. Other upgrade failures are retried with the backoff.
 
 ## Test plan
 | AC | Test |
@@ -172,6 +173,7 @@ Every text frame is one JSON object:
 | 14 | `server/tests/device_ws.rs::ac_002_14_inbound_dropped_while_forwarding_off` |
 | 15 | `server/tests/device_ws.rs::ac_002_15_status_at_is_clamped_and_parts_checked` |
 | 16 | `server/tests/device_ws.rs::ac_002_16_hello_lifecycle_clears_wake_state`; app `ProtocolFixturesTest` |
+| 07, 17 (app side), 18 | app `GatewayPolicyTest` (`ac_002_07_*`, `ac_002_17_*`, `ac_002_18_*`) |
 | 17 | `server/tests/device_ws.rs::ac_002_17_gateway_off_close_and_token_update` |
 
 ## Assumptions
@@ -180,4 +182,5 @@ Every text frame is one JSON object:
 - The idle-close timeout is derived from `ping_s` but can be injected directly, for tests only.
 
 ## Open questions
-- `permissions.read_phone_state` came from the 2026-10-17 Android review; the server only stores and shows it.
+- `permissions.read_phone_state` came from the 2026-10-17 review; the server only stores and shows it.
+- AC-002-18 (401 at the upgrade handled like 4003) came from the 2026-10-17 review.

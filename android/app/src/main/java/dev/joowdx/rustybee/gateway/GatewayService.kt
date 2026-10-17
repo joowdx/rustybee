@@ -67,6 +67,9 @@ class GatewayService : Service() {
     private var pendingForwarding: String? = null
     /** The `receive_enabled` of the save in flight. */
     private var pendingReceiveEnabled = false
+    /** What the posted gateway notification shows, so unchanged state is not re-posted. */
+    @Volatile
+    private var notified: Notifications.GatewayContent? = null
 
     inner class LocalBinder : Binder() {
         val state: StateFlow<GatewayState> get() = stateFlow.asStateFlow()
@@ -122,6 +125,7 @@ class GatewayService : Service() {
         Telemetry.captureLifecycle(this)
         running = true
         eventsOut = events
+        instance = this
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
         registerReceiver(
             powerReceiver,
@@ -132,11 +136,7 @@ class GatewayService : Service() {
             RECEIVER_NOT_EXPORTED,
         )
         scope.launch {
-            val now = System.currentTimeMillis()
-            val cutoff = now - 7 * 24 * 3_600_000L
-            graph.db.pruneSeen(cutoff)
-            graph.db.pruneSent(cutoff)
-            graph.sender.failLost()
+            maintenance()
             for (ev in events) runCatching { process(ev) }.onFailure { graph.log("event failed: $it", "E") }
         }
         scope.launch {
@@ -148,11 +148,13 @@ class GatewayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
+            val state = stateFlow.value
             startForeground(
                 Notifications.ID_GATEWAY,
-                Notifications.gateway(this, stateFlow.value),
+                Notifications.gateway(this, state),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
             )
+            notified = Notifications.content(state)
         } catch (e: Exception) {
             // The start window closed before promotion, e.g. a downgraded wake; the user restarts from the notification.
             graph.log("could not promote gateway: ${e.javaClass.simpleName}", "E")
@@ -176,6 +178,7 @@ class GatewayService : Service() {
         running = false
         stopping = true
         if (eventsOut === events) eventsOut = null
+        if (instance === this) instance = null
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
         runCatching { unregisterReceiver(powerReceiver) }
         graph.uplink.detach()
@@ -215,7 +218,10 @@ class GatewayService : Service() {
                 backoff.reset()
                 connect()
             }
-            GatewayEvent.HealthTick -> sendHealth()
+            GatewayEvent.HealthTick -> {
+                maintenance()
+                sendHealth()
+            }
             is GatewayEvent.FcmToken -> if (ev.token != announcedToken) sendHealth(ev.token)
             is GatewayEvent.SaveForwarding -> saveForwarding(ev.receiveEnabled, ev.filters, ev.baseRev)
             is GatewayEvent.Opened -> if (ev.gen == connection.generation) onOpened()
@@ -223,20 +229,46 @@ class GatewayService : Service() {
                 handler.handle(ev.text) { connection.send(it) }
                 publish()
             }
-            is GatewayEvent.Closed -> if (ev.gen == connection.generation) onClosed(ev.code, ev.reason)
+            is GatewayEvent.Closed -> if (ev.gen == connection.generation) onClosed(ev.code, ev.reason, ev.httpStatus)
         }
     }
 
+    /** Spec 011/012: prune `seen` and final `sent` rows after 7 days, fail lost sends. At start and on every health tick. */
+    private fun maintenance() {
+        val cutoff = System.currentTimeMillis() - 7 * 24 * 3_600_000L
+        runCatching {
+            graph.db.pruneSeen(cutoff)
+            graph.db.pruneSent(cutoff)
+            graph.sender.failLost()
+        }.onFailure { graph.log("maintenance failed: $it", "E") }
+    }
+
     private fun connect() {
-        if (stopping || connection.reconnectSuppressed) return
-        reconnectJob?.cancel()
         val prefs = graph.prefs
-        val url = prefs.wsUrl
-        val token = prefs.token
-        if (url == null || token == null) {
-            graph.log("not paired; stopping", "E")
-            prefs.gatewayEnabled = false
-            shutdown()
+        val paired = !stopping && prefs.paired
+        val token = if (paired) prefs.token else null
+        when (GatewayPolicy.onConnect(stopping, connection.reconnectSuppressed, paired, token != null)) {
+            ConnectDecision.Skip -> return
+            ConnectDecision.Shutdown -> {
+                graph.log("not paired; stopping", "E")
+                prefs.gatewayEnabled = false
+                shutdown()
+                return
+            }
+            ConnectDecision.Retry -> {
+                graph.log("could not read the device token; retrying", "E")
+                setState { it.copy(connection = ConnectionState.CONNECTING, lastError = "could not read the device token") }
+                scheduleReconnect()
+                return
+            }
+            ConnectDecision.Open -> Unit
+        }
+        reconnectJob?.cancel()
+        val url = prefs.wsUrl ?: return
+        if (!Cleartext.allowed(url)) {
+            // AC-011-12: checked again here, so a stored or edited URL can't reach a public host in cleartext.
+            setState { it.copy(connection = ConnectionState.STOPPED, lastError = "cleartext ws:// to a public host refused") }
+            graph.log("refusing cleartext ws:// to a non-LAN host", "E")
             return
         }
         if (url.startsWith("ws://") && !prefs.allowInsecure && !BuildConfig.DEBUG) {
@@ -245,7 +277,7 @@ class GatewayService : Service() {
             return
         }
         welcomed = false
-        connection.open(url, token, prefs.config.pingS.takeIf { it > 0 } ?: Config.DEFAULT_PING_S)
+        connection.open(url, token!!, prefs.config.pingS.takeIf { it > 0 } ?: Config.DEFAULT_PING_S)
         setState { it.copy(connection = ConnectionState.CONNECTING) }
     }
 
@@ -325,7 +357,7 @@ class GatewayService : Service() {
         setState { it.copy(forwardingSave = result) }
     }
 
-    private fun onClosed(code: Int, reason: String) {
+    private fun onClosed(code: Int, reason: String, httpStatus: Int?) {
         if (pendingForwarding != null) {
             pendingForwarding = null
             setState { it.copy(forwardingSave = ForwardingSave.Failed("Connection lost before the server answered")) }
@@ -336,20 +368,28 @@ class GatewayService : Service() {
         backoff.onClosed(SystemClock.elapsedRealtime())
         connection.close()
         graph.log("socket closed ($code $reason)")
-        if (code == CLOSE_REVOKED) {
-            graph.log("device revoked by server; wiping credentials", "E")
-            graph.prefs.clearPairing()
-            graph.db.wipe()
-            Watchdog.cancel(this)
-            setState { it.copy(connection = ConnectionState.STOPPED, lastError = "revoked") }
-            shutdown()
-            return
+        when (val d = GatewayPolicy.onClosed(code, httpStatus, stopping, connection.reconnectSuppressed)) {
+            is CloseDecision.Unpair -> unpairHere(if (code == GatewayPolicy.CLOSE_REVOKED) "revoked" else "unauthorized", d.notice)
+            CloseDecision.Stay -> setState { it.copy(connection = ConnectionState.STOPPED, lastError = null) }
+            CloseDecision.Reconnect -> {
+                setState { it.copy(connection = ConnectionState.CONNECTING, lastError = "$code $reason") }
+                scheduleReconnect()
+            }
         }
-        if (stopping || (code == CLOSE_GATEWAY_OFF && connection.reconnectSuppressed)) {
-            setState { it.copy(connection = ConnectionState.STOPPED, lastError = null) }
-            return
-        }
-        setState { it.copy(connection = ConnectionState.CONNECTING, lastError = "$code $reason") }
+    }
+
+    /** AC-002-07 / AC-002-18: the server dropped this device. Wipe, stop, alert and leave Setup to the UI. */
+    private fun unpairHere(why: String, notice: String) {
+        graph.log("server says $why; wiping credentials", "E")
+        graph.prefs.clearPairing(notice)
+        graph.db.wipe()
+        Watchdog.cancel(this)
+        setState { it.copy(connection = ConnectionState.STOPPED, lastError = why) }
+        Notifications.postUnpaired(this, notice)
+        shutdown()
+    }
+
+    private fun scheduleReconnect() {
         val wait = backoff.nextDelayMs()
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
@@ -384,16 +424,17 @@ class GatewayService : Service() {
                 filtersRev = graph.prefs.config.filtersRev,
             )
         }
-        if (!stopping) {
+        val state = stateFlow.value
+        val content = Notifications.content(state)
+        if (!stopping && content != notified) {
             runCatching {
-                getSystemService(NotificationManager::class.java)
-                    .notify(Notifications.ID_GATEWAY, Notifications.gateway(this, stateFlow.value))
+                getSystemService(NotificationManager::class.java).notify(Notifications.ID_GATEWAY, Notifications.gateway(this, state))
+                notified = content
             }
         }
     }
 
     companion object {
-        const val CLOSE_REVOKED = 4003
 
         @Volatile
         var running = false
@@ -401,6 +442,9 @@ class GatewayService : Service() {
 
         @Volatile
         private var eventsOut: Channel<GatewayEvent>? = null
+
+        @Volatile
+        private var instance: GatewayService? = null
 
         /** Starts the service or nudges a running one. False when the start is refused, for example in the background. */
         fun start(context: Context): Boolean =
@@ -412,7 +456,9 @@ class GatewayService : Service() {
                 false
             }
 
+        /** Stops the service. It stops connecting at once, before `onDestroy` runs (AC-013-04, re-pairing). */
         fun stop(context: Context) {
+            instance?.stopping = true
             context.stopService(Intent(context, GatewayService::class.java))
         }
 

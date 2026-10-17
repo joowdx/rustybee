@@ -17,8 +17,11 @@ import android.widget.TextView
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import dev.joowdx.rustybee.BuildConfig
+import dev.joowdx.rustybee.gateway.Cleartext
+import dev.joowdx.rustybee.gateway.GatewayService
 import dev.joowdx.rustybee.gateway.Graph
 import dev.joowdx.rustybee.gateway.Telemetry
+import dev.joowdx.rustybee.gateway.Watchdog
 import dev.joowdx.rustybee.protocol.ApiErrorBody
 import dev.joowdx.rustybee.protocol.PairRequest
 import dev.joowdx.rustybee.protocol.PairResponse
@@ -83,6 +86,8 @@ class SetupActivity : Activity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) = updateInsecureVisibility()
         })
+        // Why the pairing was dropped without the user asking (revoked, token refused, Keystore key lost).
+        showError(Graph.of(this).prefs.setupNotice)
         handle(intent)
     }
 
@@ -140,6 +145,7 @@ class SetupActivity : Activity() {
             ?: return showError("That is not a valid rustybee://pair link.")
         val (base, code) = parsed
         val allowInsecure = insecure.isChecked
+        if (!Cleartext.allowed(base)) return showError(Cleartext.REFUSED)
         if (base.startsWith("http://") && !allowInsecure && !BuildConfig.DEBUG) {
             return showError("This server uses plain http. Tick \"Allow insecure http (LAN)\" to continue.")
         }
@@ -162,11 +168,20 @@ class SetupActivity : Activity() {
         pairing = scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { request(base, code) }
+                if (!Cleartext.allowed(result.wsUrl)) {
+                    showError("The server returned a plain ws:// URL for a public host. ${Cleartext.REFUSED}")
+                    return@launch
+                }
                 if (result.wsUrl.startsWith("ws://") && !allowInsecure && !BuildConfig.DEBUG) {
                     showError("The server returned an insecure ws:// URL. Tick \"Allow insecure http (LAN)\" to continue.")
                     return@launch
                 }
                 val graph = Graph.of(this@SetupActivity)
+                // Re-pairing: stop the gateway first so it cannot stay connected to the old server, then
+                // drop the old server's settings (forwarding "off", config, last connected); the FCM token stays.
+                Watchdog.cancel(this@SetupActivity)
+                GatewayService.stop(this@SetupActivity)
+                graph.prefs.clearPairing()
                 graph.db.wipe()
                 graph.prefs.apply {
                     serverUrl = base

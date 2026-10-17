@@ -1,7 +1,7 @@
 # 012 — Android SMS send and receive
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 
@@ -10,8 +10,8 @@ Updated: 2026-10-16
 2. Pick the `SmsManager` with `context.getSystemService(SmsManager::class.java)`:
    - `.createForSubscriptionId(sim)` when `sim` is not null and is an active subscription;
    - otherwise use `config.sim` from the server if set;
-   - otherwise the system default.
-   - If the requested `sim` is not active, report `failed`/`sim_unavailable`.
+   - otherwise the system default SMS subscription. When there is none (`SubscriptionManager.getDefaultSmsSubscriptionId()` is `INVALID_SUBSCRIPTION_ID`, i.e. "Ask every time" on dual-SIM), use the single active subscription, or else the active one in the lowest slot; with no active subscription visible, fall back to the plain `SmsManager`. The pure `SimChoice` makes this choice.
+   - If the requested `sim` is not active, report `failed`/`sim_unavailable`. Without `READ_PHONE_STATE` the active list can't be read, so a requested `sim` reports `failed`/`permission_denied` instead, and nothing is sent; `health.permissions.read_phone_state` shows the cause (spec 002).
 3. Split the body with `divideMessage(body)` into `parts` (n). Store `parts=n`.
 4. For each part `i`, create a sent PendingIntent and, when delivery reports are wanted (always), a delivered one:
    - explicit `Intent(context, SmsStatusReceiver::class.java)`;
@@ -19,7 +19,7 @@ Updated: 2026-10-16
    - extras `msg_id` and `part`;
    - request code taken from a monotonically increasing int stored in prefs, so every part gets a unique code;
    - flags `FLAG_ONE_SHOT` plus `FLAG_IMMUTABLE` for sent intents and `FLAG_MUTABLE` for delivered intents: the radio fills in the `pdu`/`format` extras, which an immutable PendingIntent drops. The intent is explicit, so only extras can be filled in.
-5. Call `sendMultipartTextMessage` (or `sendTextMessage` when n = 1). A `SecurityException` or `IllegalArgumentException` reports `failed` immediately.
+5. Call `sendMultipartTextMessage` (or `sendTextMessage` when n = 1). A `SecurityException` (`permission_denied`) or `IllegalArgumentException` (`invalid_destination`) reports `failed` immediately. Any other `RuntimeException` reports `failed`/`generic_failure`, so an acked `send` always gets a status.
 6. **Combining part results** (`SmsStatusReceiver` → `goAsync()` → `Sender.onPartResult`, persisted in `sent`):
    - **Sent result:** if the resultCode is `RESULT_OK`, `parts_sent++`; otherwise `parts_failed++` and the error is mapped (below).
    - When `parts_sent + parts_failed == parts`:
@@ -44,7 +44,7 @@ Updated: 2026-10-16
    | any other | `unknown_<code>` |
 
    The `message` field carries a short English text.
-8. If the process dies between sending and the callbacks arriving, the `sent` row stays `accepted`. On the next service start, any row that has been `accepted` for more than 10 min is reported `failed`/`generic_failure` with the message "outcome lost". It is never sent again.
+8. If the process dies between sending and the callbacks arriving, the `sent` row stays `accepted`. On the next service start, and on every health tick while it runs, any row that has been `accepted` for more than 10 min is reported `failed`/`generic_failure` with the message "outcome lost". It is never sent again.
 
 ### Receive (`SmsInboundReceiver`)
 - **Manifest:** `<receiver android:exported="true" android:permission="android.permission.BROADCAST_SMS">` with an intent filter for `android.provider.Telephony.SMS_RECEIVED`.
@@ -70,6 +70,9 @@ Updated: 2026-10-16
 5. AC-012-05 On the emulator, an SMS injected with `adb emu sms send` reaches the server as `inbound`. Manual check.
 6. AC-012-06 On the emulator, an API send reaches `sent`. The emulator also reports `delivered`. Manual check.
 7. AC-012-07 Another app cannot send `SMS_RECEIVED` to the receiver, because of the `BROADCAST_SMS` guard. Checked by reviewing the manifest.
+8. AC-012-08 A radio call that throws any other `RuntimeException` after the ack reports `failed`/`generic_failure`.
+9. AC-012-09 With no default SMS subscription, a send without `sim` or an active `config.sim` uses the single active subscription, or else the lowest slot; with a default set, the system default.
+10. AC-012-10 Without `READ_PHONE_STATE`, a `send` with `sim` reports `failed`/`permission_denied` and sends nothing; one without `sim` is sent as usual.
 
 ## Test plan
 | AC | Test |
@@ -80,12 +83,19 @@ Updated: 2026-10-16
 | 04 | `FilterTest` |
 | 05, 06 | Manual check in M7 |
 | 07 | Manifest assertion test that parses the merged manifest |
+| 08 | `SendDedupeTest::ac_012_08_*` |
+| 09 | `SimChoiceTest` |
+| 10 | `SendDedupeTest::ac_012_10_*` |
 
 ## Assumptions
 - Delivery reports are always requested. They cost nothing in battery, and carriers that don't support them simply never report.
 - A delivered callback without a PDU counts as success when its resultCode is `RESULT_OK`, otherwise as pending.
 - A duplicate `send` for a message already `delivered` re-reports `sent` and then `delivered`, so the server never sees `dispatched → delivered`. `sent` and `failed` re-report just that state.
-- If `config.sim` is set but not active, the system default SMS subscription is used. Without `READ_PHONE_STATE` no subscription counts as active, so an explicit `sim` fails with `sim_unavailable`.
+- If `config.sim` is set but not active (or can't be checked without `READ_PHONE_STATE`), the fallback in §2 is used.
+- An explicit `sim` without `READ_PHONE_STATE` fails with `permission_denied` rather than being passed through unchecked: sending on an unverified subscription could go out on the wrong SIM, and the spec reports problems rather than guessing.
 - `hello.sims[].number` is always null: reading it needs `READ_PHONE_NUMBERS`, which is not requested.
 
 ## Open questions
+- AC-012-08 came from the 2026-10-17 review.
+- AC-012-09 came from the 2026-10-17 review.
+- AC-012-10 and `read_phone_state` came from the 2026-10-17 review. The server ignores the new field until its `Permissions` struct gains it; only then can a fixture carry it (the server fixture test round-trips every field).

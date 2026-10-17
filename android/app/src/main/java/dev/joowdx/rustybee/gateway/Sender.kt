@@ -5,10 +5,12 @@ import dev.joowdx.rustybee.protocol.StatusError
 
 /** The radio, behind a seam so dedupe and aggregation stay JVM-testable. */
 interface SmsRadio {
+    /** False without READ_PHONE_STATE: [activeSubscriptionIds] is then empty and says nothing. */
+    fun canReadSims(): Boolean
     fun activeSubscriptionIds(): Set<Int>
     fun divide(body: String, sim: Int?): List<String>
 
-    /** Hands all parts to SmsManager. May throw SecurityException or IllegalArgumentException. */
+    /** Hands all parts to SmsManager. May throw SecurityException, IllegalArgumentException or another RuntimeException. */
     fun send(msgId: String, to: String, parts: List<String>, sim: Int?)
 }
 
@@ -33,6 +35,12 @@ class Sender(
             return
         }
 
+        if (send.sim != null && !radio.canReadSims()) {
+            // Without READ_PHONE_STATE the SIM cannot be checked; say so rather than "not active" (spec 012 §2).
+            fail(SentRow(send.msgId, send.to, SentState.ACCEPTED, 1, updatedAt = now), SmsErrors.phoneStateDenied, insert = true)
+            ack()
+            return
+        }
         val active = radio.activeSubscriptionIds()
         val sim: Int? = when {
             send.sim != null -> if (send.sim in active) send.sim else null
@@ -59,6 +67,10 @@ class Sender(
             fail(row, SmsErrors.permissionDenied, insert = false)
         } catch (e: IllegalArgumentException) {
             fail(row, SmsErrors.invalidDestination, insert = false)
+        } catch (e: RuntimeException) {
+            // The row is acked, so a status must always go out (spec 012 §5).
+            log("send ${send.msgId}: radio threw ${e.javaClass.simpleName}")
+            fail(row, SmsErrors.radioFailed(e), insert = false)
         }
     }
 

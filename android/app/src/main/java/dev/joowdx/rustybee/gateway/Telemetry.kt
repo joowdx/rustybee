@@ -45,6 +45,7 @@ class Telemetry(private val context: Context) {
                 channelOpen &&
                 nm.areNotificationsEnabled(),
             batteryUnrestricted = batteryUnrestricted(),
+            readPhoneState = granted(Manifest.permission.READ_PHONE_STATE),
         )
     }
 

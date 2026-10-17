@@ -77,7 +77,7 @@ class Connection(private val events: SendChannel<GatewayEvent>) {
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             val why = response?.let { "HTTP ${it.code}" } ?: (t.message ?: t.javaClass.simpleName)
-            events.trySend(GatewayEvent.Closed(gen, -1, why))
+            events.trySend(GatewayEvent.Closed(gen, -1, why, response?.code))
         }
     }
 }
@@ -85,7 +85,8 @@ class Connection(private val events: SendChannel<GatewayEvent>) {
 sealed interface GatewayEvent {
     data class Opened(val gen: Int) : GatewayEvent
     data class Message(val gen: Int, val text: String) : GatewayEvent
-    data class Closed(val gen: Int, val code: Int, val reason: String) : GatewayEvent
+    /** [httpStatus] is set when the upgrade itself was refused, e.g. 401 for a token the server rejects. */
+    data class Closed(val gen: Int, val code: Int, val reason: String, val httpStatus: Int? = null) : GatewayEvent
     data object Connect : GatewayEvent
     data object NetworkChanged : GatewayEvent
     data object Nudge : GatewayEvent
