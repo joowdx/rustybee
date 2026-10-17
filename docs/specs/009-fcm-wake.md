@@ -76,8 +76,8 @@ Facts here were checked against the Android and Firebase docs as far as they go.
     - Either way, a delivered wake always ends in a visible notification.
   - **Not paired, or the gateway is off:** do nothing. The server should not have sent the wake (`gateway_off_at`), and this case is logged.
 - **Token handling:**
-  - `onNewToken` stores the token. If the connection is welcomed, it also sends a `health` carrying `fcm_token` at once. A token that rotates after `hello` but before `welcome` is sent in a `health` right after `welcome`. Otherwise the token goes in the next `hello`.
-  - Pairing waits up to 5 s for `FirebaseMessaging.getToken()` before sending the pair request, so a fresh pairing usually starts with a token.
+  - The app opts in to FCM's `register()` flow (`firebase_messaging_installation_id_enabled` meta-data; Play services older than 26.12 fall back to the legacy token RPC inside the SDK). `onRegistered` stores the token. If the connection is welcomed, it also sends a `health` carrying `fcm_token` at once. A token that rotates after `hello` but before `welcome` is sent in a `health` right after `welcome`. Otherwise the token goes in the next `hello`.
+  - Pairing calls `FirebaseMessaging.register()` and waits up to 5 s for the `onRegistered` token before sending the pair request, so a fresh pairing usually starts with a token.
 - **Notifications are required on gms.**
   - FCM downgrades wakes for an app whose notifications are off. A wake also needs the gateway notification channel to be able to show its notification.
   - So `permissions.notifications` (spec 002) is false when either `POST_NOTIFICATIONS` is denied or the gateway notification channel is blocked.
@@ -122,3 +122,4 @@ Facts here were checked against the Android and Firebase docs as far as they go.
 - If AC-009-12 shows that Doze cuts the socket without the exemption, the default-battery goal needs a rethink. One option is to accept the wake cycle during Doze. Another is to ask for the exemption after all, as a recommendation rather than a requirement.
 - Should `unreachable_at` also fire a webhook (for example `device.unreachable`) so the admin is told without opening the web UI? Webhook payloads are Message objects today (spec 008), so this needs a new payload shape.
 - Should the gms flavor stop asking for the battery-optimization exemption, since this design assumes it is not granted? Granting it only makes revival stronger: the watchdog and sticky restarts work again.
+- 2026-10-17: moved from the deprecated `getToken()`/`onNewToken` to `register()`/`onRegistered` (firebase-messaging 26). Not yet checked on a gms device.
