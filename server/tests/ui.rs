@@ -569,6 +569,18 @@ async fn messages_load_more_pages() {
 }
 
 #[tokio::test]
+async fn ac_010_10_live_refresh_is_trailing() {
+    let s = server().await;
+    let ui = Ui::new(&s).await;
+    let (st, page) = ui.get("/").await;
+    assert_eq!(st, 200);
+    // htmx's throttle drops events inside its window; app.js coalesces them instead.
+    assert!(!page.contains("throttle:"));
+    assert!(page.contains(r#"hx-trigger="sse:device, sse:message" data-refresh="live""#));
+    assert!(page.contains(r#"id="live" hx-get="/partials/dashboard" hx-trigger="refresh-live""#));
+}
+
+#[tokio::test]
 async fn ac_010_07_security_headers_on_ui_responses() {
     let s = server().await;
     for path in ["/login", "/"] {
