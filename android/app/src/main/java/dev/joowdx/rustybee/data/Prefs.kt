@@ -25,12 +25,41 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("allow_insecure", false)
         set(v) = sp.edit().putBoolean("allow_insecure", v).apply()
 
-    var token: String?
-        get() = sp.getString("token_enc", null)?.let(Crypto::decrypt)
-        set(v) = sp.edit().putString("token_enc", v?.let(Crypto::encrypt)).apply()
+    /** The last decrypted token, keyed by its ciphertext, so [paired] checks don't hit the Keystore each time. */
+    @Volatile
+    private var tokenCache: Pair<String, String>? = null
 
+    var token: String?
+        get() = readToken()
+        set(v) {
+            tokenCache = null
+            sp.edit().putString("token_enc", v?.let(Crypto::encrypt)).apply()
+        }
+
+    private fun readToken(): String? {
+        val enc = sp.getString("token_enc", null) ?: return null
+        tokenCache?.let { (e, plain) -> if (e == enc) return plain }
+        return when (val r = Crypto.decryptResult(enc)) {
+            is Crypto.Decrypted.Ok -> r.plain.also { tokenCache = enc to it }
+            Crypto.Decrypted.KeyLost -> {
+                // The Keystore key is gone, so this pairing can never authenticate again (spec 011).
+                clearPairing(NOTICE_KEY_LOST)
+                null
+            }
+            Crypto.Decrypted.Failed -> null
+        }
+    }
+
+    /**
+     * Paired means a server URL and a token that decrypts. A token whose Keystore key is lost clears the
+     * pairing, and Setup explains why. A transient Keystore failure still counts as paired.
+     */
     val paired: Boolean
-        get() = sp.contains("token_enc") && wsUrl != null
+        get() {
+            if (wsUrl == null || !sp.contains("token_enc")) return false
+            readToken()
+            return sp.contains("token_enc")
+        }
 
     var gatewayEnabled: Boolean
         get() = sp.getBoolean("gateway_enabled", false)
@@ -84,8 +113,15 @@ class Prefs(context: Context) {
      * [notice] tells Setup why, when the pairing was dropped without the user asking.
      */
     fun clearPairing(notice: String? = null) {
+        tokenCache = null
         val fcm = fcmToken
         sp.edit().clear().putString("fcm_token", fcm).putString("setup_notice", notice).commit()
         Crypto.deleteKey()
+    }
+
+    companion object {
+        const val NOTICE_KEY_LOST = "This phone's saved server token can no longer be decrypted: its Android Keystore key " +
+            "is gone, for example after a backup restore or a security reset. Create a new pairing code in the web UI " +
+            "and pair again."
     }
 }

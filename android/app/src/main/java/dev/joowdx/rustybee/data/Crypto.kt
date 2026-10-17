@@ -2,8 +2,11 @@ package dev.joowdx.rustybee.data
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.util.Base64
 import java.security.KeyStore
+import java.security.UnrecoverableKeyException
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -35,14 +38,40 @@ object Crypto {
         return Base64.encodeToString(out, Base64.NO_WRAP)
     }
 
-    fun decrypt(encoded: String): String? = try {
-        val raw = Base64.decode(encoded, Base64.NO_WRAP)
-        val cipher = Cipher.getInstance(TRANSFORM)
-        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, raw, 0, 12))
-        String(cipher.doFinal(raw, 12, raw.size - 12), Charsets.UTF_8)
-    } catch (e: Exception) {
-        null
+    sealed interface Decrypted {
+        data class Ok(val plain: String) : Decrypted
+
+        /** The key is gone or no longer matches (restore, Keystore reset): the token can never be read again. */
+        data object KeyLost : Decrypted
+
+        /** Any other failure, possibly transient. */
+        data object Failed : Decrypted
     }
+
+    fun decryptResult(encoded: String): Decrypted = try {
+        val raw = Base64.decode(encoded, Base64.NO_WRAP)
+        // Never create a key here: a missing key means the ciphertext is unreadable.
+        val key = KeyStore.getInstance(KEYSTORE).apply { load(null) }.getKey(ALIAS, null) as? SecretKey
+        if (key == null || raw.size <= 12) {
+            Decrypted.KeyLost
+        } else {
+            val cipher = Cipher.getInstance(TRANSFORM)
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, raw, 0, 12))
+            Decrypted.Ok(String(cipher.doFinal(raw, 12, raw.size - 12), Charsets.UTF_8))
+        }
+    } catch (e: KeyPermanentlyInvalidatedException) {
+        Decrypted.KeyLost
+    } catch (e: UnrecoverableKeyException) {
+        Decrypted.KeyLost
+    } catch (e: AEADBadTagException) {
+        Decrypted.KeyLost
+    } catch (e: IllegalArgumentException) {
+        Decrypted.KeyLost // not base64: unreadable for good
+    } catch (e: Exception) {
+        Decrypted.Failed
+    }
+
+    fun decrypt(encoded: String): String? = (decryptResult(encoded) as? Decrypted.Ok)?.plain
 
     fun deleteKey() {
         runCatching { KeyStore.getInstance(KEYSTORE).apply { load(null) }.deleteEntry(ALIAS) }

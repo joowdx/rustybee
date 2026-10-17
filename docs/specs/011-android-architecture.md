@@ -106,6 +106,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 8. AC-011-08 Service start and every health tick delete `sent` rows in a final state older than 7 days and keep `accepted` rows.
 9. AC-011-09 Every `ApplicationStartInfo` and `ApplicationExitInfo` reason constant maps to its spec 002 string, and an unknown int maps to `unknown_<int>`.
 10. AC-011-10 Killing the app process (`adb shell am kill`) with the gateway enabled and default battery settings: on gms the gateway reconnects with `hello.lifecycle.exit.reason` set and `start.reason="push"`; on foss the watchdog posts "Gateway stopped — tap to restart", and tapping it reconnects with `start.reason="start_activity"`. Manual check on an API 35 and an API 36+ emulator.
+11. AC-011-11 A stored token that can't be decrypted because its Keystore key is lost counts as not paired: the pairing is cleared, and Setup shows why. Manual check: restore the app data onto another phone.
 
 ## Test plan
 | AC | Test |
@@ -119,14 +120,17 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 | 08 | `RedactTest` (final-state list); the `Db.pruneSent` SQL is checked by review, since Robolectric is not used |
 | 09 | `LifecycleReasonTest` |
 | 10 | Manual check; the gms half also covers AC-009-05 |
+| 11 | Manual check; the Keystore can't run on the JVM |
 
 ## Assumptions
 - Robolectric is not used, to keep the test toolchain light. Code that needs the Android framework is kept thin.
 - The token is encrypted with the Keystore. Other settings are stored in plain SharedPreferences.
+- "Paired" means a server URL and a token that decrypts. If the Keystore key is gone or no longer matches (a restore, a Keystore reset), the token can never be read again: the app clears the pairing and Setup explains why (AC-011-11). A transient Keystore error still counts as paired, and the service retries with the backoff.
 - The socket counts as "open" for `Uplink` only after `welcome`, so the outbox is resent once per connection (after `welcome`, as above, rather than right after `hello`).
 - If `welcome.config.ping_s` differs from the interval the socket was opened with, the app reconnects once with the new interval.
 - Pure logic (`Backoff`, `GatewayPolicy`, `Uplink`, `Sender`, `PartAggregator`, `InboundFilter`, `InboundUid`, `FrameHandler`) lives in `gateway` behind small store/radio interfaces; `Graph` holds the process-wide `Prefs`, `Db`, `Uplink` and `Sender` shared by the service and receivers.
 - The `sends today` / `receives today` counters are kept in prefs and reset at local midnight.
 
 ## Open questions
+- AC-011-11 came from the 2026-10-17 review.
 - Running the prunes and `failLost` on the health tick, not only at service start (AC-011-08), came from the 2026-10-17 review.
