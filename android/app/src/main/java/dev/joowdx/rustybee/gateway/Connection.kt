@@ -89,6 +89,14 @@ sealed interface GatewayEvent {
     data class Closed(val gen: Int, val code: Int, val reason: String, val httpStatus: Int? = null) : GatewayEvent
     data object Connect : GatewayEvent
     data object NetworkChanged : GatewayEvent
+    /** The default network's transport, read from its capabilities callback. */
+    data class NetworkType(val label: String) : GatewayEvent
+    /** A Network switch changed (spec 015): re-register listeners, then check. */
+    data object RadioSettings : GatewayEvent
+    /** A Wi-Fi reading changed, or a held-back bar change is due. */
+    data object RadiosChanged : GatewayEvent
+    /** The data SIM's signal or service state changed; re-read it. */
+    data object CellularChanged : GatewayEvent
     data object Nudge : GatewayEvent
     data object HealthTick : GatewayEvent
     data class FcmToken(val token: String) : GatewayEvent

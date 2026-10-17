@@ -19,6 +19,7 @@ Spec-driven development with a soft gate: see `CLAUDE.md`. The template is `_tem
 | [012](012-android-sms.md) | Android SMS send and receive | implemented |
 | [013](013-android-ui.md) | Android UI | implemented |
 | [014](014-deploy.md) | Deploy | implemented |
+| [015](015-network-details.md) | Network name and signal strength, opt-in on the phone | implemented |
 
 ## Assumptions to review
 

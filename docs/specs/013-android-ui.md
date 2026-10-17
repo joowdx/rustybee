@@ -49,7 +49,7 @@ A single scrolling screen with these sections:
 4. **Log:** the last 100 entries, monospace, with Copy and Clear buttons.
 5. **Unpair:** asks for confirmation, wipes the credentials and the db, stops the service and opens Setup.
 
-6. **Forwarding** button, which opens `ForwardingActivity`. The Device row reads Forwarding, Logs, Unpair.
+6. **Forwarding** button, which opens `ForwardingActivity`, and **Network** button, which opens `NetworkActivity` (spec 015). The Device row reads Forwarding, Network, Logs, Unpair.
 
 Live updates come from binding to `GatewayService` and collecting its `StateFlow` while the activity is started.
 

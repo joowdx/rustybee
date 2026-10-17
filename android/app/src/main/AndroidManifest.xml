@@ -16,6 +16,10 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Optional, for the Wi-Fi name on the Network screen only (spec 015). -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <application
         android:allowBackup="false"
@@ -41,6 +45,11 @@
             android:exported="false"
             android:label="Filter"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".ui.NetworkActivity"
+            android:exported="false"
+            android:label="Network" />
 
         <activity
             android:name=".ui.LogsActivity"

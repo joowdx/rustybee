@@ -1,5 +1,6 @@
 package dev.joowdx.rustybee.gateway
 
+import android.Manifest
 import android.app.NotificationManager
 import android.app.Service
 import android.content.BroadcastReceiver
@@ -9,28 +10,37 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Binder
 import android.os.IBinder
 import android.os.SystemClock
+import android.telephony.ServiceState
+import android.telephony.SignalStrength
+import android.telephony.SubscriptionManager
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyDisplayInfo
+import android.telephony.TelephonyManager
 import dev.joowdx.rustybee.BuildConfig
 import dev.joowdx.rustybee.protocol.Config
+import dev.joowdx.rustybee.protocol.Filters
 import dev.joowdx.rustybee.protocol.FrameType
 import dev.joowdx.rustybee.protocol.Frames
 import dev.joowdx.rustybee.protocol.Health
 import dev.joowdx.rustybee.protocol.Hello
+import dev.joowdx.rustybee.protocol.Nack
 import dev.joowdx.rustybee.protocol.Permissions
+import dev.joowdx.rustybee.protocol.Radios
+import dev.joowdx.rustybee.protocol.SetForwarding
+import dev.joowdx.rustybee.protocol.Ulid
 import dev.joowdx.rustybee.protocol.Welcome
 import dev.joowdx.rustybee.push.Push
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
-import dev.joowdx.rustybee.protocol.Filters
-import dev.joowdx.rustybee.protocol.Nack
-import dev.joowdx.rustybee.protocol.SetForwarding
-import dev.joowdx.rustybee.protocol.Ulid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -59,6 +69,35 @@ class GatewayService : Service() {
     private var welcomed = false
     private var lastNetwork: Network? = null
     private var lastPermissions: Permissions? = null
+    /** `network` as last sent on this connection, and as last seen by the network callback. */
+    private var reportedNetwork: String? = null
+    private var currentNetwork: String? = null
+    /** Spec 015: latest readings from the listeners, and what was last sent with when. */
+    @Volatile
+    private var wifi: Pair<Network, RadioReading>? = null
+    @Volatile
+    private var cellSignal: SignalStrength? = null
+    @Volatile
+    private var cellDisplay: TelephonyDisplayInfo? = null
+    /** Read on cellular events only, so Wi-Fi updates don't cost Telephony calls. */
+    private var cellReading: RadioReading? = null
+    /** The data subscription the cellular listener is registered on. */
+    private var cellSub: Int? = null
+    private var reportedRadios: Radios? = null
+    private var lastReportAt: Long? = null
+    private var radioJob: Job? = null
+    /** When [radioJob] fires, and until when newly started listeners hold reports back. */
+    private var radioDueAt = 0L
+    private var settleUntil = 0L
+    /** Whether [wifiCallback] asked for location info. */
+    private var wifiWithName = false
+    /** Volatile: callbacks compare themselves to these to drop stale events. */
+    @Volatile
+    private var wifiCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile
+    private var cellCallback: TelephonyCallback? = null
+    @Volatile
+    private var displayCallback: TelephonyCallback? = null
     @Volatile
     private var stopping = false
     private var socketClosed = false
@@ -89,6 +128,12 @@ class GatewayService : Service() {
                 lastNetwork = network
                 if (!first) events.trySend(GatewayEvent.NetworkChanged)
             }
+        }
+
+        // A transport change keeps the same default network when it happens under a VPN, so no
+        // onAvailable fires and the socket survives; only the capabilities say what changed.
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            events.trySend(GatewayEvent.NetworkType(Telemetry.networkLabel(caps::hasTransport)))
         }
 
         override fun onLost(network: Network) {
@@ -127,6 +172,7 @@ class GatewayService : Service() {
         eventsOut = events
         instance = this
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
+        watchRadios()
         registerReceiver(
             powerReceiver,
             IntentFilter().apply {
@@ -181,6 +227,8 @@ class GatewayService : Service() {
         if (instance === this) instance = null
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
         runCatching { unregisterReceiver(powerReceiver) }
+        unwatchWifi()
+        unwatchCellular()
         graph.uplink.detach()
         closeSocket()
         scope.cancel()
@@ -210,17 +258,36 @@ class GatewayService : Service() {
             GatewayEvent.Connect -> if (stateFlow.value.connection != ConnectionState.CONNECTED) connect()
             GatewayEvent.Nudge -> {
                 if (stateFlow.value.connection == ConnectionState.STOPPED) connect()
+                // A permission granted since (e.g. READ_PHONE_STATE) may enable a listener.
+                watchRadios()
                 maybeSendHealthOnPermissionChange()
                 publish()
             }
             GatewayEvent.NetworkChanged -> {
                 graph.log("network changed: reconnecting")
+                // The new network's transport follows in its own NetworkType event.
+                currentNetwork = null
                 backoff.reset()
                 connect()
             }
             GatewayEvent.HealthTick -> {
                 maintenance()
                 sendHealth()
+            }
+            is GatewayEvent.NetworkType -> {
+                currentNetwork = ev.label
+                maybeSendHealthOnNetworkChange()
+            }
+            GatewayEvent.RadioSettings -> {
+                watchRadios()
+                readCellular()
+                checkRadios()
+            }
+            // A Wi-Fi reading changed, or a held-back report is due; cellular is kept current by its own events.
+            GatewayEvent.RadiosChanged -> checkRadios()
+            GatewayEvent.CellularChanged -> {
+                readCellular()
+                checkRadios()
             }
             is GatewayEvent.FcmToken -> if (ev.token != announcedToken) sendHealth(ev.token)
             is GatewayEvent.SaveForwarding -> saveForwarding(ev.receiveEnabled, ev.filters, ev.baseRev)
@@ -283,10 +350,15 @@ class GatewayService : Service() {
 
     private fun onOpened() {
         backoff.onOpened(SystemClock.elapsedRealtime())
-        val hello = telemetry.hello(graph.uplink.size())
+        readCellular()
+        val hello = telemetry.hello(graph.uplink.size(), currentRadios())
         lastPermissions = hello.permissions
         announcedToken = hello.fcmToken
-        connection.send(Frames.encode(FrameType.HELLO, Hello.serializer(), hello))
+        if (connection.send(Frames.encode(FrameType.HELLO, Hello.serializer(), hello))) {
+            reportedRadios = hello.radios
+            lastReportAt = SystemClock.elapsedRealtime()
+            reportedNetwork = hello.network
+        }
         graph.log("socket open; hello sent")
     }
 
@@ -303,6 +375,10 @@ class GatewayService : Service() {
         welcomed = true
         // A token that rotated between `hello` and `welcome` was dropped by sendHealth; send it now.
         Push.token(this)?.let { if (it != announcedToken) sendHealth(it) }
+        // The hello read the active network while it may have been switching, and readings that
+        // arrived before `welcome` were held back.
+        maybeSendHealthOnNetworkChange()
+        checkRadios()
         setState { it.copy(connection = ConnectionState.CONNECTED, lastError = null, filtersRev = w.config.filtersRev) }
         graph.uplink.attach { connection.send(it) }
         healthJob?.cancel()
@@ -398,15 +474,193 @@ class GatewayService : Service() {
         }
     }
 
-    private fun sendHealth(fcmToken: String? = null) {
+    /** [fresh]: the cellular reading was just taken, so it is not read again. */
+    private fun sendHealth(fcmToken: String? = null, fresh: Boolean = false) {
         // Before `welcome` the hello (built from prefs) carries the token, and a health must not precede it.
         if (!welcomed) return
         val token = fcmToken?.takeIf { it != announcedToken }
-        val health = telemetry.health(graph.uplink.size(), token)
+        if (!fresh) readCellular()
+        val health = telemetry.health(graph.uplink.size(), token, currentNetwork ?: telemetry.network(), currentRadios())
         lastPermissions = health.permissions
-        if (connection.send(Frames.encode(FrameType.HEALTH, Health.serializer(), health)) && token != null) {
-            announcedToken = token
+        if (connection.send(Frames.encode(FrameType.HEALTH, Health.serializer(), health))) {
+            reportedRadios = health.radios
+            lastReportAt = SystemClock.elapsedRealtime()
+            reportedNetwork = health.network
+            if (token != null) announcedToken = token
         }
+    }
+
+    // --- network details (spec 015)
+
+    private fun currentRadios(): Radios {
+        val sw = graph.prefs.radioSwitches
+        return RadioReport.build(
+            sw,
+            cellular = if (sw.cellular) cellReading else null,
+            wifi = if (sw.wifi) wifi?.second else null,
+        )
+    }
+
+    /** Re-reads the data SIM, moving the listener over when the data SIM changed. */
+    private fun readCellular() {
+        if (!graph.prefs.radioSwitches.cellular) {
+            cellReading = null
+            return
+        }
+        if (cellCallback != null && cellSub != SubscriptionManager.getDefaultDataSubscriptionId()) {
+            unwatchCellular()
+            watchRadios()
+        }
+        val signal = graph.prefs.radioSwitches.cellularSignal
+        cellReading = runCatching { telemetry.cellularReading(cellSignal, cellDisplay, signal) }.getOrNull()
+    }
+
+    private fun checkRadios() {
+        val now = SystemClock.elapsedRealtime()
+        val since = lastReportAt?.let { now - it }
+        when (val d = RadioReport.decide(welcomed, reportedRadios, currentRadios(), since, settleUntil - now)) {
+            RadioDecision.Skip -> Unit
+            RadioDecision.Now -> sendHealth(fresh = true)
+            // A sooner check (a settle) replaces a later one (the minute's wait), never the reverse.
+            is RadioDecision.Later -> if (radioJob?.isActive != true || now + d.delayMs < radioDueAt) {
+                radioJob?.cancel()
+                radioDueAt = now + d.delayMs
+                radioJob = scope.launch {
+                    delay(d.delayMs)
+                    events.send(GatewayEvent.RadiosChanged)
+                }
+            }
+        }
+    }
+
+    /** Listeners run only while a switch that needs them is on. */
+    private fun watchRadios() {
+        val sw = graph.prefs.radioSwitches
+        // Location info (the Wi-Fi name) is asked for only while the name is reported, so the signal
+        // alone never counts as a location access.
+        if (wifiCallback != null && (!sw.wifi || wifiWithName != sw.wifiName)) unwatchWifi()
+        if (sw.wifi && wifiCallback == null) {
+            // Location info is only included with this flag, and only shown with the location permissions.
+            val flags = if (sw.wifiName) ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO else 0
+            val cb = object : ConnectivityManager.NetworkCallback(flags) {
+                // Follow one Wi-Fi network at a time, so a second one (dual-STA) can't overwrite or clear it.
+                // A callback already queued from a replaced listener is ignored.
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                    if (wifiCallback !== this) return
+                    val cur = wifi
+                    if (cur != null && cur.first != network) return
+                    wifi = network to telemetry.wifiReading(caps)
+                    events.trySend(GatewayEvent.RadiosChanged)
+                }
+
+                override fun onLost(network: Network) {
+                    if (wifiCallback !== this || wifi?.first != network) return
+                    wifi = null
+                    events.trySend(GatewayEvent.RadiosChanged)
+                }
+            }
+            val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
+            wifiCallback = cb
+            wifiWithName = sw.wifiName
+            settle()
+            runCatching { getSystemService(ConnectivityManager::class.java).registerNetworkCallback(request, cb) }
+                .onFailure {
+                    wifiCallback = null
+                    graph.log("wifi listener failed: $it", "E")
+                }
+        }
+        // Signal ticks come every few seconds; listen for them only while the bars are reported.
+        if (cellCallback != null && (!sw.cellular || (cellCallback is TelephonyCallback.SignalStrengthsListener) != sw.cellularSignal)) {
+            unwatchCellular()
+        }
+        if (sw.cellular && cellCallback == null) {
+            // Service state changes carry carrier changes; signal changes carry the bars. A callback
+            // already queued from a replaced listener (e.g. the old data SIM) is ignored.
+            val cb = if (sw.cellularSignal) {
+                object : TelephonyCallback(), TelephonyCallback.SignalStrengthsListener, TelephonyCallback.ServiceStateListener {
+                    override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
+                        if (cellCallback !== this) return
+                        cellSignal = signalStrength
+                        events.trySend(GatewayEvent.CellularChanged)
+                    }
+
+                    override fun onServiceStateChanged(serviceState: ServiceState) {
+                        if (cellCallback === this) events.trySend(GatewayEvent.CellularChanged)
+                    }
+                }
+            } else {
+                object : TelephonyCallback(), TelephonyCallback.ServiceStateListener {
+                    override fun onServiceStateChanged(serviceState: ServiceState) {
+                        if (cellCallback === this) events.trySend(GatewayEvent.CellularChanged)
+                    }
+                }
+            }
+            val sub = SubscriptionManager.getDefaultDataSubscriptionId()
+            // Set before registering: the first callback may arrive before onSuccess runs.
+            cellCallback = cb
+            cellSub = sub
+            settle()
+            runCatching { telemetry.dataTelephony().registerTelephonyCallback(mainExecutor, cb) }
+                .onFailure {
+                    cellCallback = null
+                    cellSub = null
+                    graph.log("cellular listener failed: $it", "E")
+                }
+        }
+        // The generation (5G on an LTE anchor shows only here) and the mobile data switch need READ_PHONE_STATE.
+        if (sw.cellularSignal && cellCallback != null && displayCallback == null &&
+            telemetry.granted(Manifest.permission.READ_PHONE_STATE)
+        ) {
+            val cb = object : TelephonyCallback(), TelephonyCallback.DisplayInfoListener, TelephonyCallback.UserMobileDataStateListener {
+                override fun onDisplayInfoChanged(telephonyDisplayInfo: TelephonyDisplayInfo) {
+                    if (displayCallback !== this) return
+                    cellDisplay = telephonyDisplayInfo
+                    events.trySend(GatewayEvent.CellularChanged)
+                }
+
+                override fun onUserMobileDataStateChanged(enabled: Boolean) {
+                    if (displayCallback === this) events.trySend(GatewayEvent.CellularChanged)
+                }
+            }
+            displayCallback = cb
+            settle()
+            runCatching { telemetry.dataTelephony().registerTelephonyCallback(mainExecutor, cb) }
+                .onFailure {
+                    displayCallback = null
+                    graph.log("display info listener failed: $it", "E")
+                }
+        } else if (!sw.cellularSignal) {
+            unwatchDisplay()
+        }
+    }
+
+    /** A listener just started: its first readings arrive shortly, so reports wait for them. */
+    private fun settle() {
+        settleUntil = SystemClock.elapsedRealtime() + RadioReport.SETTLE_MS
+    }
+
+    private fun unwatchWifi() {
+        wifiCallback?.let { cb -> runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb) } }
+        wifiCallback = null
+        wifi = null
+    }
+
+    private fun unwatchCellular() {
+        cellCallback?.let { cb -> runCatching { getSystemService(TelephonyManager::class.java).unregisterTelephonyCallback(cb) } }
+        cellCallback = null
+        cellSub = null
+        cellSignal = null
+        unwatchDisplay()
+    }
+
+    private fun unwatchDisplay() {
+        displayCallback?.let { cb -> runCatching { getSystemService(TelephonyManager::class.java).unregisterTelephonyCallback(cb) } }
+        displayCallback = null
+        cellDisplay = null
+    }
+
+    private fun maybeSendHealthOnNetworkChange() {
+        if (GatewayPolicy.reportNetwork(welcomed, reportedNetwork, currentNetwork)) sendHealth()
     }
 
     private fun maybeSendHealthOnPermissionChange() {
@@ -460,6 +714,11 @@ class GatewayService : Service() {
         fun stop(context: Context) {
             instance?.stopping = true
             context.stopService(Intent(context, GatewayService::class.java))
+        }
+
+        /** A Network switch changed on the phone (spec 015). */
+        fun onRadioSettings() {
+            eventsOut?.trySend(GatewayEvent.RadioSettings)
         }
 
         /** If the socket is open, send a health frame carrying [token]. */

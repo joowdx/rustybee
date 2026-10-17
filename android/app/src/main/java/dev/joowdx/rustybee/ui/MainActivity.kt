@@ -138,6 +138,7 @@ class MainActivity : Activity() {
         content.add(
             horizontal()
                 .add(button("Forwarding") { startActivity(Intent(this, ForwardingActivity::class.java)) })
+                .add(button("Network") { startActivity(Intent(this, NetworkActivity::class.java)) })
                 .add(button("Logs") { startActivity(Intent(this, LogsActivity::class.java)) })
                 .add(button("Unpair") { confirmUnpair() }),
         )

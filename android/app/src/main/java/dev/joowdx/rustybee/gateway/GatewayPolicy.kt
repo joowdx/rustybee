@@ -55,4 +55,11 @@ object GatewayPolicy {
             !hasToken -> ConnectDecision.Retry
             else -> ConnectDecision.Open
         }
+
+    /**
+     * Whether a `health` must correct the server's `network`. [reported] is what the last `hello` or
+     * `health` on this connection said; [current] is the latest transport from the network callback.
+     */
+    fun reportNetwork(welcomed: Boolean, reported: String?, current: String?): Boolean =
+        welcomed && current != null && current != reported
 }
