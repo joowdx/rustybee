@@ -68,7 +68,7 @@ class FakeRadio(
 object Fixtures {
     val dir: File by lazy {
         val url = checkNotNull(Fixtures::class.java.classLoader!!.getResource("hello.json")) { "protocol fixtures missing" }
-        File(url.toURI()).parentFile
+        checkNotNull(File(url.toURI()).parentFile) { "fixtures dir has no parent" }
     }
 
     fun read(name: String): String = File(dir, name).readText()
