@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod devices;
+pub mod idempotency;
 pub mod messages;
 pub mod webhooks;
 
@@ -21,6 +22,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0003_fcm_wake",
         include_str!("../../migrations/0003_fcm_wake.sql"),
+    ),
+    (
+        "0004_idempotency_indexes",
+        include_str!("../../migrations/0004_idempotency_indexes.sql"),
     ),
 ];
 
@@ -70,9 +75,21 @@ pub fn configure(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
-/// Apply pending migrations; each one runs in its own transaction.
+fn other_error(msg: String) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(msg)))
+}
+
+/// Apply pending migrations; each one runs in its own transaction. A database
+/// from a newer build (a higher `user_version`) is refused, never touched.
 pub fn migrate(conn: &mut Connection) -> rusqlite::Result<u32> {
     let current: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    let latest = latest_version();
+    if current > latest {
+        return Err(other_error(format!(
+            "the database is at schema version {current}, but this rustybee build only knows \
+             version {latest}; run a newer rustybee or restore a backup"
+        )));
+    }
     for (i, (_, sql)) in MIGRATIONS.iter().enumerate() {
         let version = i as u32 + 1;
         if version <= current {
@@ -91,21 +108,106 @@ pub fn latest_version() -> u32 {
     MIGRATIONS.len() as u32
 }
 
-/// Open a read-write connection with PRAGMAs and migrations applied.
+/// Owner-only permissions (unix): 0700 for directories, 0600 for files.
+#[cfg(unix)]
+mod private {
+    use std::fs::{self, DirBuilder, OpenOptions, Permissions};
+    use std::io;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+    use std::path::Path;
+
+    pub fn create_dir(dir: &Path) -> io::Result<()> {
+        DirBuilder::new().recursive(true).mode(0o700).create(dir)
+    }
+
+    /// Create `path` empty with 0600 if it is missing; tighten it if not.
+    pub fn file(path: &Path) -> io::Result<()> {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+        {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => restrict(path),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Set 0600 on an existing file; a missing one is fine.
+    pub fn restrict(path: &Path) -> io::Result<()> {
+        match fs::set_permissions(path, Permissions::from_mode(0o600)) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        }
+    }
+}
+
+#[cfg(not(unix))]
+mod private {
+    use std::io;
+    use std::path::Path;
+
+    pub fn create_dir(dir: &Path) -> io::Result<()> {
+        std::fs::create_dir_all(dir)
+    }
+
+    pub fn file(_: &Path) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn restrict(_: &Path) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn io_error(e: std::io::Error) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+}
+
+/// `<db>-wal` and `<db>-shm`.
+fn sidecars(path: &Path) -> [PathBuf; 2] {
+    ["-wal", "-shm"].map(|ext| {
+        let mut p = path.as_os_str().to_owned();
+        p.push(ext);
+        PathBuf::from(p)
+    })
+}
+
+/// Create a directory (and missing parents) 0700 on unix.
+pub fn private_dir(dir: &Path) -> std::io::Result<()> {
+    private::create_dir(dir)
+}
+
+/// Make sure a file SQLite is about to create is private (0600 on unix).
+/// Used for the database itself and for backups before `VACUUM INTO`.
+pub fn private_file(path: &Path) -> rusqlite::Result<()> {
+    private::file(path).map_err(io_error)
+}
+
+/// Open a read-write connection with PRAGMAs and migrations applied. The
+/// data directory is created 0700 and the database, WAL and SHM files are
+/// kept 0600 (unix).
 pub fn open_rw(path: &Path) -> rusqlite::Result<Connection> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        private::create_dir(dir).map_err(io_error)?;
+    }
+    private_file(path)?;
+    for p in sidecars(path) {
+        private::restrict(&p).map_err(io_error)?;
+    }
     let mut conn = Connection::open(path)?;
     configure(&conn)?;
     migrate(&mut conn)?;
+    // SQLite gives new WAL/SHM files the database's mode; this covers older files.
+    for p in sidecars(path) {
+        private::restrict(&p).map_err(io_error)?;
+    }
     Ok(conn)
 }
 
 impl Store {
     pub fn open(path: &Path) -> Result<Store> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| {
-                StoreError::Db(rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
-            })?;
-        }
         let mut conn = open_rw(path)?;
         let mut readers = Vec::with_capacity(READERS);
         for _ in 0..READERS {
@@ -199,12 +301,33 @@ impl Store {
             .await
     }
 
-    /// `VACUUM INTO` a consistent copy at `dest`.
+    /// `VACUUM INTO` a consistent copy at `dest`, created 0600 (unix). Runs
+    /// on a read-only pooled connection, so writes are not held up.
     pub async fn backup(&self, dest: &Path) -> Result<()> {
+        private_file(dest)?;
         let dest = dest.to_string_lossy().to_string();
-        self.with_writer(move |c| c.execute("VACUUM INTO ?1", [dest]).map(|_| ()))
-            .await
+        self.read(move |c| vacuum_into(c, &dest)).await
     }
+}
+
+fn vacuum_into(c: &Connection, dest: &str) -> rusqlite::Result<()> {
+    c.execute("VACUUM INTO ?1", [dest]).map(|_| ())
+}
+
+/// `rustybee backup`: open the database read-only (no migrations, no
+/// writes) and `VACUUM INTO` a 0600 copy at `dest`.
+pub fn backup_file(src: &Path, dest: &Path) -> rusqlite::Result<()> {
+    let c = Connection::open_with_flags(src, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    c.busy_timeout(std::time::Duration::from_secs(5))?;
+    private_file(dest)?;
+    vacuum_into(&c, &dest.to_string_lossy())
+}
+
+/// `PRAGMA integrity_check` on a backup, opened read-only.
+pub fn check_backup(path: &Path) -> rusqlite::Result<std::result::Result<(), String>> {
+    let c = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let r: String = c.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+    Ok(if r == "ok" { Ok(()) } else { Err(r) })
 }
 
 /// Helper for optional single-row queries.
@@ -271,7 +394,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(tables, 10);
+        assert_eq!(tables, 11);
     }
 
     #[tokio::test]
@@ -324,6 +447,80 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(n, 200);
+    }
+
+    #[test]
+    fn ac_003_07_refuses_a_newer_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rustybee.db");
+        let c = Connection::open(&path).unwrap();
+        let newer = latest_version() + 5;
+        c.execute_batch(&format!("PRAGMA user_version={newer}"))
+            .unwrap();
+        drop(c);
+        let e = Store::open(&path).err().expect("refused").to_string();
+        assert!(e.contains(&format!("version {newer}")), "{e}");
+        assert!(e.contains(&format!("version {}", latest_version())), "{e}");
+        // Nothing was changed.
+        let c = Connection::open(&path).unwrap();
+        assert_eq!(pragma::<u32>(&c, "user_version"), newer);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ac_003_08_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let path = data.join("rustybee.db");
+        let store = Store::open(&path).unwrap();
+        store.write(|tx| set_setting(tx, "a", "1")).await.unwrap();
+        assert_eq!(mode(&data), 0o700);
+        assert_eq!(mode(&path), 0o600);
+        for p in sidecars(&path) {
+            assert_eq!(mode(&p), 0o600, "{}", p.display());
+        }
+        let dest = data.join("backup.db");
+        store.backup(&dest).await.unwrap();
+        assert_eq!(mode(&dest), 0o600);
+        drop(store);
+        // Files left world-readable by an older build are tightened on open.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let _store = Store::open(&path).unwrap();
+        assert_eq!(mode(&path), 0o600);
+    }
+
+    #[test]
+    fn ac_003_09_backup_command_opens_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        // A database from before any migration: open_rw would migrate it.
+        let c = Connection::open(&path).unwrap();
+        c.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES(42);")
+            .unwrap();
+        drop(c);
+        let dest = dir.path().join("copy.db");
+        backup_file(&path, &dest).unwrap();
+        let c = Connection::open(&path).unwrap();
+        assert_eq!(pragma::<u32>(&c, "user_version"), 0, "source was migrated");
+        let copy = Connection::open(&dest).unwrap();
+        let x: i64 = copy.query_row("SELECT x FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(x, 42);
+        assert_eq!(check_backup(&dest).unwrap(), Ok(()));
+        // A WAL database with no server running (no -wal/-shm left behind).
+        let wal = dir.path().join("wal.db");
+        let c = open_rw(&wal).unwrap();
+        set_setting(&c, "a", "1").unwrap();
+        drop(c);
+        assert!(!sidecars(&wal)[0].exists());
+        let dest = dir.path().join("wal-copy.db");
+        backup_file(&wal, &dest).unwrap();
+        let copy = Connection::open(&dest).unwrap();
+        assert_eq!(get_setting(&copy, "a").unwrap().as_deref(), Some("1"));
+        // A missing database is an error, not a new empty file.
+        assert!(backup_file(&dir.path().join("none.db"), &dir.path().join("x.db")).is_err());
+        assert!(!dir.path().join("none.db").exists());
     }
 
     #[tokio::test]

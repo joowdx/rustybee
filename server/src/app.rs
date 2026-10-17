@@ -56,6 +56,27 @@ enum Rejected {
     Choice(devices::Choice),
     /// The device's backlog of `queued` messages, which the batch would push over the cap.
     QueueFull(i64),
+    /// The `Idempotency-Key` was used before with a different request.
+    KeyReused,
+}
+
+/// An `Idempotency-Key` and the hash of the request it was sent with (spec 007).
+pub struct Idempotency {
+    pub key: String,
+    pub request_sha256: Vec<u8>,
+}
+
+/// What `queue_with` did.
+pub enum Queued {
+    New(String, Vec<MessageRow>),
+    /// A repeat of an earlier request: its stored response body.
+    Replay(String),
+}
+
+/// The 202 body of a send (spec 007).
+pub fn accepted_json(batch: &str, rows: &[MessageRow]) -> serde_json::Value {
+    let msgs: Vec<serde_json::Value> = rows.iter().map(|r| r.to_json()).collect();
+    serde_json::json!({"batch_id": batch, "messages": msgs})
 }
 
 /// One item of a send request, before validation.
@@ -79,6 +100,22 @@ impl Ctx {
         device: Option<String>,
         sim: Option<i64>,
     ) -> Result<(String, Vec<MessageRow>), ApiError> {
+        match self.queue_with(drafts, device, sim, None).await? {
+            Queued::New(batch, rows) => Ok((batch, rows)),
+            Queued::Replay(_) => unreachable!("replay needs an idempotency key"),
+        }
+    }
+
+    /// [`Ctx::queue`] with an optional `Idempotency-Key`. The key is checked
+    /// and stored in the same transaction as the batch, so two concurrent
+    /// requests with one key queue the messages once.
+    pub async fn queue_with(
+        &self,
+        drafts: Vec<Draft>,
+        device: Option<String>,
+        sim: Option<i64>,
+        idem: Option<Idempotency>,
+    ) -> Result<Queued, ApiError> {
         if drafts.is_empty() || drafts.len() > MAX_RECIPIENTS {
             return Err(ApiError::bad_request(format!(
                 "between 1 and {MAX_RECIPIENTS} recipients are required"
@@ -111,6 +148,15 @@ impl Ctx {
         let res = self
             .store
             .write(move |c| {
+                if let Some(k) = &idem {
+                    match store::idempotency::lookup(c, &k.key, &k.request_sha256, now)? {
+                        store::idempotency::Lookup::Miss => {}
+                        store::idempotency::Lookup::Replay(body) => return Ok(Ok(Err(body))),
+                        store::idempotency::Lookup::Mismatch => {
+                            return Ok(Err(Rejected::KeyReused));
+                        }
+                    }
+                }
                 Ok(match devices::choose(c, device.as_deref())? {
                     devices::Choice::Ok(id) => {
                         let queued: i64 = c.query_row(
@@ -121,14 +167,31 @@ impl Ctx {
                         if queued + items.len() as i64 > max_queued {
                             Err(Rejected::QueueFull(queued))
                         } else {
-                            Ok((id, store::messages::create_batch(c, id, &items, sim, now)?))
+                            let (batch, rows) =
+                                store::messages::create_batch(c, id, &items, sim, now)?;
+                            if let Some(k) = &idem {
+                                let body = accepted_json(&batch, &rows).to_string();
+                                store::idempotency::insert(
+                                    c,
+                                    &k.key,
+                                    &k.request_sha256,
+                                    &body,
+                                    now,
+                                )?;
+                            }
+                            Ok(Ok((id, (batch, rows))))
                         }
                     }
                     other => Err(Rejected::Choice(other)),
                 })
             })
             .await?;
-        let (device_id, (batch, rows)) = res.map_err(|r| match r {
+        let res = res.map_err(|r| match r {
+            Rejected::KeyReused => ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "idempotency_key_reused",
+                "this Idempotency-Key was already used with a different request",
+            ),
             Rejected::QueueFull(queued) => ApiError::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "queue_full",
@@ -150,6 +213,10 @@ impl Ctx {
                 "several devices are enabled and none is the default; pass device_id",
             ),
         })?;
+        let (device_id, (batch, rows)) = match res {
+            Ok(v) => v,
+            Err(body) => return Ok(Queued::Replay(body)),
+        };
         self.hub.notify(device_id);
         if !self.hub.is_connected(device_id) {
             self.fcm_notify.notify_one();
@@ -157,7 +224,7 @@ impl Ctx {
         for r in &rows {
             self.publish(UiEvent::Message(r.public_id.clone()));
         }
-        Ok((batch, rows))
+        Ok(Queued::New(batch, rows))
     }
 
     /// Push the current config to a connected device.
@@ -297,9 +364,13 @@ pub async fn start(cfg: Config) -> Result<Running, String> {
         .await
         .map_err(|e| e.to_string())?;
     let fcm = Fcm::from_config(&cfg)?.map(Arc::new);
+    // No redirects: a 301/302 would turn a webhook POST into a bodyless GET
+    // (spec 008). Webhook requests override the overall timeout with their own.
     let http = reqwest::Client::builder()
         .user_agent(format!("rustybee/{VERSION}"))
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
+        .timeout(cfg.http_timeout)
         .build()
         .map_err(|e| e.to_string())?;
     let listener = tokio::net::TcpListener::bind(&cfg.bind)

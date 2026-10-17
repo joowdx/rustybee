@@ -25,14 +25,35 @@ pub fn send_frame(m: &messages::MessageRow) -> Outgoing {
     Outgoing::Text(env.to_text())
 }
 
+const RETRY_MIN: Duration = Duration::from_millis(250);
+const RETRY_MAX: Duration = Duration::from_secs(30);
+
+/// Run until the socket goes away. A store error restarts the loop (with the
+/// replay) after a growing pause, so one failed query never leaves a
+/// connected device without a dispatcher.
 pub async fn run(
     app: App,
     device_id: i64,
     notify: Arc<Notify>,
     tx: mpsc::UnboundedSender<Outgoing>,
 ) {
-    if let Err(e) = run_inner(&app, device_id, &notify, &tx).await {
-        tracing::warn!(device_id, error = %e, "dispatcher stopped");
+    let mut pause = RETRY_MIN;
+    loop {
+        let started = Instant::now();
+        match run_inner(&app, device_id, &notify, &tx).await {
+            Ok(()) => return,
+            Err(e) => {
+                if tx.is_closed() {
+                    return;
+                }
+                if started.elapsed() > RETRY_MAX {
+                    pause = RETRY_MIN;
+                }
+                tracing::warn!(device_id, error = %e, retry_in = ?pause, "dispatcher error");
+                tokio::time::sleep(pause).await;
+                pause = (pause * 2).min(RETRY_MAX);
+            }
+        }
     }
 }
 
@@ -58,10 +79,12 @@ async fn run_inner(
         .read(move |c| messages::latest_dispatched(c, device_id))
         .await?
     {
-        pacer.start(m.id, Instant::now());
-        if m.device_acked_at.is_some() {
-            pacer.acked(Instant::now());
-        }
+        // The window resumes from the stored times, not from now: a row
+        // dispatched long ago must not cost a full timeout (AC-006-04).
+        let now_ms = app.clock.now_ms();
+        let ago = |at: i64| Duration::from_millis((now_ms - at).max(0) as u64);
+        let sent_ago = m.dispatched_at.map(ago).unwrap_or_default();
+        pacer.resume(m.id, Instant::now(), sent_ago, m.device_acked_at.map(ago));
     }
     loop {
         if let Some(f) = pacer.in_flight() {

@@ -79,7 +79,8 @@ pub fn webhook_outcome(attempt: i64, status: Option<u16>, backoff: &[Duration]) 
     let retryable = match status {
         Some(s) if (200..300).contains(&s) => return DeliveryOutcome::Delivered,
         None => true,
-        Some(s) => s == 408 || s == 429 || !(400..500).contains(&s),
+        // 3xx is not followed (spec 008) and counts like a 4xx.
+        Some(s) => s == 408 || s == 429 || s >= 500,
     };
     let limit = if retryable {
         WEBHOOK_MAX_ATTEMPTS
@@ -198,6 +199,18 @@ mod tests {
             DeliveryOutcome::Retry(b[1])
         );
         assert_eq!(webhook_outcome(3, Some(404), &b), DeliveryOutcome::Abort);
+    }
+
+    #[test]
+    fn ac_008_07_redirect_counts_as_4xx() {
+        let b = default_backoff();
+        for s in [301, 302, 307, 308] {
+            assert_eq!(
+                webhook_outcome(1, Some(s), &b),
+                DeliveryOutcome::Retry(b[0])
+            );
+            assert_eq!(webhook_outcome(3, Some(s), &b), DeliveryOutcome::Abort);
+        }
     }
 
     #[test]

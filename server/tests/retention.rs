@@ -154,3 +154,70 @@ async fn ac_003_06_no_retention_keeps_everything() {
     assert_eq!(batches, 1);
     s.stop().await;
 }
+
+fn backups(dir: &std::path::Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    v.sort();
+    v
+}
+
+#[tokio::test]
+async fn ac_003_10_daily_backup_is_checked_and_rotated() {
+    let backup_dir = tempfile::tempdir().unwrap().keep().join("backups");
+    let bd = backup_dir.clone();
+    let s = server_with(move |c| {
+        c.backup_dir = Some(bd);
+        c.backup_keep = 2;
+    })
+    .await;
+    let key = s.api_key().await;
+    s.pair("A").await;
+    seed(&s, &key, vec![vec![]]).await;
+
+    let first = rustybee::sweeper::backup_once(s.app())
+        .await
+        .unwrap()
+        .expect("backup written");
+    assert!(first.starts_with(&backup_dir));
+    let c = rusqlite::Connection::open(&first).unwrap();
+    let n: i64 = c
+        .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 1);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&first), 0o600);
+        assert_eq!(mode(&backup_dir), 0o700);
+    }
+    // Once per day: a second run the same day writes nothing.
+    assert!(
+        rustybee::sweeper::backup_once(s.app())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // Other files in the directory are never rotated away.
+    std::fs::write(backup_dir.join("notes.txt"), "keep me").unwrap();
+    for _ in 0..2 {
+        s.app().clock.advance_ms(DAY_MS);
+        assert!(
+            rustybee::sweeper::backup_once(s.app())
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+    let names = backups(&backup_dir);
+    assert_eq!(names.len(), 3, "{names:?}");
+    assert!(names.contains(&"notes.txt".to_string()));
+    let first_name = first.file_name().unwrap().to_str().unwrap().to_string();
+    assert!(!names.contains(&first_name), "oldest kept: {names:?}");
+    assert!(!names.iter().any(|n| n.ends_with(".tmp")));
+    s.stop().await;
+    let _ = std::fs::remove_dir_all(backup_dir.parent().unwrap());
+}

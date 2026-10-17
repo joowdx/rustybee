@@ -50,7 +50,7 @@ async fn failures(s: &Server) -> u32 {
 }
 
 #[tokio::test]
-async fn code_login_and_password_locked_while_device_online() {
+async fn ac_005_07_code_login_and_password_locked_while_device_online() {
     let s = server().await;
     s.set_password().await;
     set_phone(&s).await;
@@ -107,7 +107,7 @@ async fn code_login_and_password_locked_while_device_online() {
 }
 
 #[tokio::test]
-async fn password_opens_after_n_failed_sends() {
+async fn ac_005_08_password_opens_after_n_failed_sends() {
     let s = server_with(|c| c.otp_max_failures = 2).await;
     s.set_password().await;
     set_phone(&s).await;
@@ -133,7 +133,65 @@ async fn password_opens_after_n_failed_sends() {
 }
 
 #[tokio::test]
-async fn unsent_code_counts_as_failure_after_timeout() {
+async fn ac_005_11_code_message_is_hidden_and_fires_no_webhooks() {
+    let s = server().await;
+    s.set_password().await;
+    set_phone(&s).await;
+    let key = s.api_key().await;
+    let now = s.app().clock.now_ms();
+    s.app()
+        .store
+        .write(move |c| {
+            let all: Vec<String> = rustybee::store::webhooks::EVENTS
+                .iter()
+                .map(|e| e.to_string())
+                .collect();
+            rustybee::store::webhooks::create(c, "all", "http://127.0.0.1:9/", &all, true, now)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (_, token) = s.pair("A").await;
+    let mut d = Device::connect(&s, &token).await;
+
+    let (msg_id, _) = request_code(&s, &mut d).await;
+    let (st, _) = s.api_get(&key, &format!("/api/v1/messages/{msg_id}")).await;
+    assert_eq!(st, 404);
+    let (_, list) = s.api_get(&key, "/api/v1/messages").await;
+    assert!(list["items"].as_array().unwrap().is_empty(), "{list}");
+    d.status(&msg_id, "sent").await;
+    d.status(&msg_id, "delivered").await;
+
+    // Wait until both statuses are applied, then check the outbox.
+    let mut delivered = false;
+    for _ in 0..200 {
+        let id = msg_id.clone();
+        let m = s
+            .app()
+            .store
+            .read(move |c| messages::by_public(c, &id))
+            .await
+            .unwrap()
+            .unwrap();
+        if m.state == rustybee::domain::lifecycle::State::Delivered {
+            delivered = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(delivered);
+    let n: i64 = s
+        .app()
+        .store
+        .read(|c| c.query_row("SELECT count(*) FROM webhook_deliveries", [], |r| r.get(0)))
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_005_08_unsent_code_counts_as_failure_after_timeout() {
     let s = server_with(|c| c.otp_max_failures = 1).await;
     s.set_password().await;
     set_phone(&s).await;
@@ -152,7 +210,7 @@ async fn unsent_code_counts_as_failure_after_timeout() {
 }
 
 #[tokio::test]
-async fn password_allowed_when_no_device_online_or_no_phone() {
+async fn ac_005_09_password_allowed_when_no_device_online_or_no_phone() {
     let s = server().await;
     s.set_password().await;
     // No phone yet: bootstrap.
@@ -169,7 +227,7 @@ async fn password_allowed_when_no_device_online_or_no_phone() {
 }
 
 #[tokio::test]
-async fn code_dies_after_five_wrong_tries_and_sends_are_spaced() {
+async fn ac_005_10_code_dies_after_five_wrong_tries_and_sends_are_spaced() {
     let s = server().await;
     set_phone(&s).await;
     let (_, token) = s.pair("A").await;
@@ -193,7 +251,7 @@ async fn code_dies_after_five_wrong_tries_and_sends_are_spaced() {
 }
 
 #[tokio::test]
-async fn settings_confirms_phone_by_code() {
+async fn ac_005_12_settings_confirms_phone_by_code() {
     let s = server().await;
     let cookie = s.login().await;
     let (_, token) = s.pair("A").await;

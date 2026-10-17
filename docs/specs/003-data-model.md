@@ -11,7 +11,8 @@ Updated: 2026-10-17
 - **Writer:** one `rusqlite::Connection` owned by a dedicated thread. Callers send closures through `store.write(|tx| …)`, which runs them in a transaction and returns the result through a oneshot channel.
 - **Readers:** a small pool of 2–4 read-only connections, used through `spawn_blocking`.
 - `PRAGMA wal_checkpoint(TRUNCATE)` runs hourly.
-- **Migrations:** embedded `migrations/NNNN_*.sql`, tracked with `PRAGMA user_version` and applied at start in one transaction each.
+- **Migrations:** embedded `migrations/NNNN_*.sql`, tracked with `PRAGMA user_version` and applied at start in one transaction each. A database whose `user_version` is higher than the number of migrations this build knows (written by a newer build) is refused at start, with an error naming both versions, and left untouched.
+- **File permissions (unix):** the data directory is created `0700`; the database, its `-wal` and `-shm` files and backups are `0600`. The database file is created `0600` before SQLite opens it (SQLite gives the WAL and SHM the same mode), existing files are tightened to `0600` at open, and a backup file is created `0600` before `VACUUM INTO` writes it. An existing data directory keeps its mode.
 - **Time:** stored as INTEGER Unix ms. Public ids are TEXT ULIDs; every table also has an INTEGER rowid primary key.
 
 ### Schema (migration 0001)
@@ -71,12 +72,17 @@ CREATE TABLE seen_frames (device_id INTEGER NOT NULL REFERENCES devices(id) ON D
   - `devices.lifecycle_json TEXT`: the last `hello.lifecycle`, as sent. Kept apart from `telemetry_json`, which `health` overwrites.
 
   Removing a device also clears `unreachable_at` and resets `wake_attempts`.
+- Migration `0004` adds:
+  - `idempotency_keys (id INTEGER PRIMARY KEY, key TEXT NOT NULL UNIQUE, request_sha256 BLOB NOT NULL, response TEXT NOT NULL, created_at INTEGER NOT NULL)` with an index on `created_at`, for the `Idempotency-Key` header (spec 007). Rows older than 24 hours are pruned daily.
+  - Indexes for hot queries, checked with `EXPLAIN QUERY PLAN`: `messages_frame (device_id, frame_id) WHERE frame_id IS NOT NULL` for device acks; `messages_state (state, id)` for the queued count and the sweeper's `queued`/`dispatched` scans; partial indexes on `sent_at`, `delivered_at`, `failed_at` and `expired_at` (each `WHERE … IS NOT NULL`) for the dashboard's day counts.
 - Settings keys used by spec 005: `admin_phone` (E.164) and `otp_send_failures` (a count).
 - Batch counters are not stored. They are computed with `GROUP BY state` over `messages_batch`.
 - `seen_frames` makes inbound frames idempotent by envelope id. Rows older than 7 days are pruned daily.
 
 ### Backup
-`rustybee backup <path>` runs `VACUUM INTO '<path>'`, which is safe while the server is running.
+`rustybee backup <path>` opens the database read-only (no migrations, no writes, no WAL or SHM created) and runs `VACUUM INTO '<path>'`, which is safe while the server is running.
+
+With `RUSTYBEE_BACKUP_DIR` set, the daily sweeper job also writes `rustybee-YYYY-MM-DD.db` (UTC date) into that directory, at most once per day. It runs `VACUUM INTO` on a reader connection into a `.db.tmp` file, runs `PRAGMA integrity_check` on the copy, and renames it into place only if the check returns `ok`; a failed copy is deleted and logged. It then keeps the newest `RUSTYBEE_BACKUP_KEEP` dated files (default 7, minimum 1) and deletes older ones. Other files in the directory are never touched. The directory is created `0700` and backups are `0600` on unix.
 
 ## Acceptance criteria
 1. AC-003-01 Starting on an empty data directory creates the database at the latest `user_version`. Starting again does nothing.
@@ -85,16 +91,22 @@ CREATE TABLE seen_frames (device_id INTEGER NOT NULL REFERENCES devices(id) ON D
 4. AC-003-04 `backup` produces a database that opens and holds the same rows.
 5. AC-003-05 With `RUSTYBEE_RETENTION_DAYS=N`, the daily prune deletes `delivered`, `failed`, `expired` and `received` messages and delivered or aborted webhook deliveries created more than N days ago, plus batches left with no messages. `queued`, `dispatched` and `sent` messages and pending deliveries stay.
 6. AC-003-06 Without `RUSTYBEE_RETENTION_DAYS`, the prune deletes no messages or deliveries.
+7. AC-003-07 A database with a `user_version` above the latest migration is refused with an error naming both versions, and its `user_version` is unchanged.
+8. AC-003-08 On unix, a new data directory is `0700` and the database, WAL, SHM and backup files are `0600`; a database file left `0644` is `0600` after the next open.
+9. AC-003-09 `rustybee backup` opens the source read-only: it does not migrate an older schema, leaves no WAL or SHM next to the source, and fails on a missing source instead of creating it.
+10. AC-003-10 With `RUSTYBEE_BACKUP_DIR`, the daily job writes one integrity-checked `rustybee-YYYY-MM-DD.db` per day, never leaves a `.tmp` file, and keeps only the newest `RUSTYBEE_BACKUP_KEEP` dated files, leaving other files alone.
 
 ## Test plan
 | AC | Test |
 |---|---|
-| 01–04 | `server/src/store` unit tests, using a temp dir |
-| 05–06 | `server/tests/retention.rs` with an injected clock |
+| 01–04, 07–09 | `server/src/store` unit tests, using a temp dir |
+| 05–06, 10 | `server/tests/retention.rs` with an injected clock; backup names in `server/src/sweeper.rs` unit tests |
 
 ## Assumptions
 - Removing a device is a soft delete: `removed_at` is set, `token_sha256` is replaced with random bytes, `fcm_token` and `is_default` are cleared, and the row is hidden from every device list, selection and dispatch. Its messages and batches stay in history. Every outbound message of the device still in `queued` or `dispatched` becomes `failed`/`cancelled`.
-- Message bodies are stored in plain text. The database file is protected by filesystem permissions, with no at-rest encryption.
+- Message bodies are stored in plain text. The database file is protected by filesystem permissions (owner-only, see above), with no at-rest encryption.
 - Retention is opt-in. Without `RUSTYBEE_RETENTION_DAYS`, messages are kept until the user deletes them. With it, the daily prune deletes finished rows older than that many days, by `created_at`: messages in a terminal state (spec 004) or `received`, delivered or aborted webhook deliveries, and batches with no messages left. `sent` messages are kept because a delivery report can still move them, so a phone that never reports delivery keeps its `sent` history. Deliveries are deleted before messages, and any delivery still pointing at a pruned message has `message_id` set to NULL.
 
 ## Open questions
+- AC-003-07 (refuse a newer schema) and AC-003-08 (owner-only file permissions) came from the 2026-10-17 review.
+- AC-003-09 (read-only backup command) and AC-003-10 (scheduled daily backups with an integrity check and rotation) came from the 2026-10-17 review.

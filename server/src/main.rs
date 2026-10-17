@@ -111,7 +111,6 @@ fn set_password(stdin_mode: bool) -> Result<(), String> {
             store::auth::MIN_PASSWORD
         ));
     }
-    std::fs::create_dir_all(&cfg.data_dir).map_err(|e| e.to_string())?;
     let conn = store::open_rw(&cfg.db_path()).map_err(|e| e.to_string())?;
     store::auth::set_password_hash(&conn, &store::auth::hash_password(&pw))
         .map_err(|e| e.to_string())?;
@@ -124,9 +123,8 @@ fn set_password(stdin_mode: bool) -> Result<(), String> {
 
 fn backup(dest: &str) -> Result<(), String> {
     let cfg = Config::from_env()?;
-    let conn = store::open_rw(&cfg.db_path()).map_err(|e| e.to_string())?;
-    conn.execute("VACUUM INTO ?1", [dest])
-        .map_err(|e| e.to_string())?;
+    // Read-only: a backup never migrates or otherwise writes the database.
+    store::backup_file(&cfg.db_path(), std::path::Path::new(dest)).map_err(|e| e.to_string())?;
     eprintln!("backup written to {dest}");
     Ok(())
 }

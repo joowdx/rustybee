@@ -82,7 +82,7 @@ Every text frame is one JSON object:
   - `exit` comes from `ApplicationExitInfo` for the previous process, or is `null` when the OS has none. `reason` is one of `anr`, `crash`, `crash_native`, `dependency_died`, `excessive_resource_usage`, `exit_self`, `freezer`, `initialization_failure`, `low_memory`, `other`, `package_state_change`, `package_updated`, `permission_change`, `signaled`, `unknown`, `user_requested`, `user_stopped`, or `unknown_<int>`. `description` is the OS's text, cut to 200 characters, or `null`.
   - `at` values are epoch milliseconds from the phone's clock.
   - `lifecycle` is optional so older apps keep working. A missing or malformed `lifecycle` is ignored, not nacked; every other `hello` field is checked as before.
-- `permissions.read_phone_state` (optional; older apps omit it) is whether `READ_PHONE_STATE` is granted. Without it the app can't list SIMs, so `sims` is empty and a `send` with `sim` fails `permission_denied` (spec 012).
+- `permissions.read_phone_state` is optional: newer apps send whether `READ_PHONE_STATE` is granted, older apps omit it. Without it the app can't list SIMs, so `sims` is empty and a `send` with `sim` fails `permission_denied` (spec 012). When omitted the server stores and re-encodes nothing for it; when `false` the web UI lists it with the other missing permissions.
 - `permissions.notifications` is true only when `POST_NOTIFICATIONS` is granted **and** the gateway notification channel is not blocked. FCM wakes depend on both (spec 009).
 - `health.fcm_token` is sent only when the token changed; when present, the server replaces the stored token.
 - `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100.
@@ -182,5 +182,5 @@ Every text frame is one JSON object:
 - The idle-close timeout is derived from `ping_s` but can be injected directly, for tests only.
 
 ## Open questions
-- `permissions.read_phone_state` came from the 2026-10-17 review.
+- `permissions.read_phone_state` came from the 2026-10-17 review; the server only stores and shows it.
 - AC-002-18 (401 at the upgrade handled like 4003) came from the 2026-10-17 review.

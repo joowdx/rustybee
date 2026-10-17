@@ -314,3 +314,87 @@ async fn webhook_test_button_reports_status() {
     assert_eq!(c.count(), 1);
     s.stop().await;
 }
+
+#[tokio::test]
+async fn ac_008_07_redirect_is_a_failed_delivery() {
+    // The target of the redirect counts any request that reaches it.
+    let (target, target_url) = catcher(&[]).await;
+    let posts = Arc::new(Mutex::new(Vec::<String>::new()));
+    let p = posts.clone();
+    let loc = target_url.clone();
+    let redirecting = Router::new().fallback(move |method: axum::http::Method| {
+        let p = p.clone();
+        let loc = loc.clone();
+        async move {
+            p.lock().unwrap().push(method.to_string());
+            (StatusCode::FOUND, [(axum::http::header::LOCATION, loc)])
+        }
+    });
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/hook", l.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(l, redirecting).await.unwrap() });
+
+    let s = server().await;
+    let key = s.api_key().await;
+    s.pair("A").await;
+    let h = hook(&s, &url, &["message.sent"], true).await;
+    message_through(&s, &key, vec![Event::Dispatch, Event::StatusSent]).await;
+    assert!(eventually(|| async { deliveries(&s, h.id).await[0].aborted_at.is_some() }).await);
+    let d = &deliveries(&s, h.id).await[0];
+    // Treated like a 4xx: three attempts, then aborted.
+    assert_eq!(d.attempts, 3);
+    assert!(d.delivered_at.is_none());
+    assert_eq!(d.last_status, Some(302));
+    let err = d.last_error.as_deref().unwrap();
+    assert!(err.contains("302") && err.contains(&target_url), "{err}");
+    assert_eq!(*posts.lock().unwrap(), vec!["POST"; 3]);
+    assert_eq!(target.count(), 0, "the redirect was followed");
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_008_08_inactive_hook_deliveries_wait_until_reenabled() {
+    let s =
+        server_with(|c| c.webhook_backoff = vec![std::time::Duration::from_millis(300); 6]).await;
+    let key = s.api_key().await;
+    s.pair("A").await;
+    let (c, url) = catcher(&[500]).await;
+    let h = hook(&s, &url, &["message.sent"], true).await;
+    message_through(&s, &key, vec![Event::Dispatch, Event::StatusSent]).await;
+    assert!(eventually(|| async { c.count() == 1 }).await);
+    let set_active = |active: bool| {
+        let (pid, url) = (h.public_id.clone(), url.clone());
+        s.app()
+            .store
+            .write(move |c| webhooks::update(c, &pid, "h", &url, &["message.sent".into()], active))
+    };
+    set_active(false).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    assert_eq!(c.count(), 1, "a disabled hook was posted to");
+    assert_eq!(deliveries(&s, h.id).await[0].status_label(), "retrying");
+    // Re-enabling resumes the pending delivery.
+    set_active(true).await.unwrap();
+    s.app().webhook_notify.notify_one();
+    assert!(eventually(|| async { deliveries(&s, h.id).await[0].delivered_at.is_some() }).await);
+    assert_eq!(c.count(), 2);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_008_09_shared_http_client_has_an_overall_timeout() {
+    // A server that accepts connections and never answers.
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", l.local_addr().unwrap());
+    tokio::spawn(async move {
+        let mut held = vec![];
+        while let Ok((sock, _)) = l.accept().await {
+            held.push(sock);
+        }
+    });
+    let s = server_with(|c| c.http_timeout = std::time::Duration::from_millis(300)).await;
+    let t = std::time::Instant::now();
+    let e = s.app().http.get(&url).send().await.unwrap_err();
+    assert!(e.is_timeout(), "{e}");
+    assert!(t.elapsed() < std::time::Duration::from_secs(3));
+    s.stop().await;
+}

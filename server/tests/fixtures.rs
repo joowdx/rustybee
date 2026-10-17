@@ -63,3 +63,27 @@ fn ac_002_01_inbound_uid_matches_hash() {
     };
     assert_eq!(m.uid, inbound_uid(&m.from, m.received_at, &m.body, m.sim));
 }
+
+#[test]
+fn ac_002_01_read_phone_state_is_optional() {
+    let text = fixtures()
+        .into_iter()
+        .find(|(n, _)| n == "health")
+        .unwrap()
+        .1;
+    let (_, frame) = protocol::decode(&text).unwrap();
+    let Frame::Health(h) = &frame else {
+        panic!("not health")
+    };
+    assert_eq!(h.permissions.as_ref().unwrap().read_phone_state, Some(true));
+    // An older app omits the field: it decodes as None and is not re-encoded.
+    let old = text.replace(",\"read_phone_state\":true", "");
+    assert_ne!(old, text);
+    let (id2, frame2) = protocol::decode(&old).unwrap();
+    let Frame::Health(h2) = &frame2 else {
+        panic!("not health")
+    };
+    assert_eq!(h2.permissions.as_ref().unwrap().read_phone_state, None);
+    let out = frame2.into_envelope(id2).to_text();
+    assert!(!out.contains("read_phone_state"), "{out}");
+}
