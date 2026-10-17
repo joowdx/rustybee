@@ -63,6 +63,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
   - **`Connection`:**
     - OkHttp `WebSocket` with `pingInterval(config.ping_s)` (270 s until the first `welcome`) and a connect timeout of 15 s.
     - Backoff and resets follow spec 002. A generation counter discards callbacks from old sockets.
+    - A refused upgrade carries its HTTP status in the close event, so `GatewayPolicy` can tell a `401` from a network failure (spec 002).
     - Reconnects when the `ConnectivityManager.registerDefaultNetworkCallback` reports onAvailable or onLost.
   - **On open:** send `hello` (built by `Telemetry`), then, after `welcome`, resend the outbox in `seq` order.
   - **`Uplink`:** inserts a frame into `outbox`, then sends it if the socket is open. An ack deletes the row by `frame_id`.
@@ -124,7 +125,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 - The token is encrypted with the Keystore. Other settings are stored in plain SharedPreferences.
 - The socket counts as "open" for `Uplink` only after `welcome`, so the outbox is resent once per connection (after `welcome`, as above, rather than right after `hello`).
 - If `welcome.config.ping_s` differs from the interval the socket was opened with, the app reconnects once with the new interval.
-- Pure logic (`Backoff`, `Uplink`, `Sender`, `PartAggregator`, `InboundFilter`, `InboundUid`, `FrameHandler`) lives in `gateway` behind small store/radio interfaces; `Graph` holds the process-wide `Prefs`, `Db`, `Uplink` and `Sender` shared by the service and receivers.
+- Pure logic (`Backoff`, `GatewayPolicy`, `Uplink`, `Sender`, `PartAggregator`, `InboundFilter`, `InboundUid`, `FrameHandler`) lives in `gateway` behind small store/radio interfaces; `Graph` holds the process-wide `Prefs`, `Db`, `Uplink` and `Sender` shared by the service and receivers.
 - The `sends today` / `receives today` counters are kept in prefs and reset at local midnight.
 
 ## Open questions

@@ -75,10 +75,17 @@ class Prefs(context: Context) {
         return next
     }
 
-    /** Wipes credentials and settings; keeps the FCM token, which belongs to the install. */
-    fun clearPairing() {
+    /** Why the app was unpaired without the user asking; Setup shows it until the next pairing. */
+    val setupNotice: String?
+        get() = sp.getString("setup_notice", null)
+
+    /**
+     * Wipes credentials and settings; keeps the FCM token, which belongs to the install.
+     * [notice] tells Setup why, when the pairing was dropped without the user asking.
+     */
+    fun clearPairing(notice: String? = null) {
         val fcm = fcmToken
-        sp.edit().clear().putString("fcm_token", fcm).commit()
+        sp.edit().clear().putString("fcm_token", fcm).putString("setup_notice", notice).commit()
         Crypto.deleteKey()
     }
 }

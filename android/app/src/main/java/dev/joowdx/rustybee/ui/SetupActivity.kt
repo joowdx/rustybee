@@ -85,6 +85,8 @@ class SetupActivity : Activity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) = updateInsecureVisibility()
         })
+        // Why the pairing was dropped without the user asking (revoked, token refused, Keystore key lost).
+        showError(Graph.of(this).prefs.setupNotice)
         handle(intent)
     }
 

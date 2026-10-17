@@ -16,6 +16,7 @@ object Notifications {
     private val OLD_CHANNELS = listOf("gateway", "alerts")
     const val ID_GATEWAY = 1
     const val ID_STOPPED = 2
+    const val ID_UNPAIRED = 3
 
     fun ensureChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -50,6 +51,20 @@ object Notifications {
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(openMain(context))
             .build()
+    }
+
+    /** The server dropped this device (spec 002); tapping opens Setup, which repeats [message]. */
+    fun postUnpaired(context: Context, message: String) {
+        ensureChannels(context)
+        val n = Notification.Builder(context, CHANNEL_ALERTS)
+            .setSmallIcon(R.drawable.ic_stat_bee)
+            .setContentTitle(context.getString(R.string.gateway_unpaired))
+            .setContentText(message)
+            .setStyle(Notification.BigTextStyle().bigText(message))
+            .setAutoCancel(true)
+            .setContentIntent(openMain(context))
+            .build()
+        runCatching { context.getSystemService(NotificationManager::class.java).notify(ID_UNPAIRED, n) }
     }
 
     fun postStopped(context: Context) {

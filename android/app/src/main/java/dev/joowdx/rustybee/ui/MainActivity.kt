@@ -154,6 +154,8 @@ class MainActivity : Activity() {
     }
 
     private fun render(state: GatewayState) {
+        // The server dropped the device (4003 or 401) while this screen was open: show Setup and its notice.
+        if (state.connection == ConnectionState.STOPPED && !graph.prefs.paired) return openSetup()
         lastState = state
         val (label, color) = when {
             !graph.prefs.gatewayEnabled -> "Stopped" to 0xFF9CA3AF
@@ -333,6 +335,7 @@ class MainActivity : Activity() {
     }
 
     private fun openSetup() {
+        if (isFinishing) return
         startActivity(Intent(this, SetupActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK))
         finish()
     }

@@ -20,6 +20,7 @@ Updated: 2026-10-17
   - an "Allow insecure http (LAN)" checkbox, shown only for `http://` URLs.
 - **Incoming links:** the deep link, a new intent and a scan result only fill the text field (and show the insecure checkbox for `http://`). They never pair on their own.
 - **Confirmation:** Pair first shows a platform `AlertDialog` naming the server host. If the app is already paired, it says this replaces the current server and wipes the local data. Nothing is requested or wiped until the user confirms.
+- **Notice:** when the pairing was dropped without the user asking (4003, a `401` at the upgrade, or a lost Keystore key), Setup shows why above the Pair button until the next pairing. A visible `MainActivity` switches to Setup as soon as that happens.
 - **Pairing:** calls the pairing API from spec 002 and shows errors inline. On success it stops `GatewayService` and the watchdog, clears the old server's settings the way unpair does (forwarding "off", config, last connected; the FCM token stays), wipes the local data, stores the new credentials and opens `MainActivity`, which starts the gateway against the new server.
 
 ### `ScanActivity`
@@ -85,6 +86,7 @@ Manual checks in M7, with screenshots attached to the M7 notes, except:
 
 | AC | Test |
 |---|---|
+| 04 | `GatewayPolicyTest::ac_013_04_*` (JVM, the service's stop rules) plus a manual check |
 | 07 | `SetupFlowTest` (JVM, on the pure `PairConfirm` helper) plus a manual check of the dialog |
 
 ## Assumptions

@@ -225,29 +225,39 @@ class GatewayService : Service() {
                 handler.handle(ev.text) { connection.send(it) }
                 publish()
             }
-            is GatewayEvent.Closed -> if (ev.gen == connection.generation) onClosed(ev.code, ev.reason)
+            is GatewayEvent.Closed -> if (ev.gen == connection.generation) onClosed(ev.code, ev.reason, ev.httpStatus)
         }
     }
 
     private fun connect() {
-        if (stopping || connection.reconnectSuppressed) return
-        reconnectJob?.cancel()
         val prefs = graph.prefs
-        val url = prefs.wsUrl
-        val token = prefs.token
-        if (url == null || token == null) {
-            graph.log("not paired; stopping", "E")
-            prefs.gatewayEnabled = false
-            shutdown()
-            return
+        val paired = !stopping && prefs.paired
+        val token = if (paired) prefs.token else null
+        when (GatewayPolicy.onConnect(stopping, connection.reconnectSuppressed, paired, token != null)) {
+            ConnectDecision.Skip -> return
+            ConnectDecision.Shutdown -> {
+                graph.log("not paired; stopping", "E")
+                prefs.gatewayEnabled = false
+                shutdown()
+                return
+            }
+            ConnectDecision.Retry -> {
+                graph.log("could not read the device token; retrying", "E")
+                setState { it.copy(connection = ConnectionState.CONNECTING, lastError = "could not read the device token") }
+                scheduleReconnect()
+                return
+            }
+            ConnectDecision.Open -> Unit
         }
+        reconnectJob?.cancel()
+        val url = prefs.wsUrl ?: return
         if (url.startsWith("ws://") && !prefs.allowInsecure && !BuildConfig.DEBUG) {
             setState { it.copy(lastError = "insecure ws:// URL not allowed") }
             graph.log("refusing insecure ws:// URL", "E")
             return
         }
         welcomed = false
-        connection.open(url, token, prefs.config.pingS.takeIf { it > 0 } ?: Config.DEFAULT_PING_S)
+        connection.open(url, token!!, prefs.config.pingS.takeIf { it > 0 } ?: Config.DEFAULT_PING_S)
         setState { it.copy(connection = ConnectionState.CONNECTING) }
     }
 
@@ -327,7 +337,7 @@ class GatewayService : Service() {
         setState { it.copy(forwardingSave = result) }
     }
 
-    private fun onClosed(code: Int, reason: String) {
+    private fun onClosed(code: Int, reason: String, httpStatus: Int?) {
         if (pendingForwarding != null) {
             pendingForwarding = null
             setState { it.copy(forwardingSave = ForwardingSave.Failed("Connection lost before the server answered")) }
@@ -338,20 +348,28 @@ class GatewayService : Service() {
         backoff.onClosed(SystemClock.elapsedRealtime())
         connection.close()
         graph.log("socket closed ($code $reason)")
-        if (code == CLOSE_REVOKED) {
-            graph.log("device revoked by server; wiping credentials", "E")
-            graph.prefs.clearPairing()
-            graph.db.wipe()
-            Watchdog.cancel(this)
-            setState { it.copy(connection = ConnectionState.STOPPED, lastError = "revoked") }
-            shutdown()
-            return
+        when (val d = GatewayPolicy.onClosed(code, httpStatus, stopping, connection.reconnectSuppressed)) {
+            is CloseDecision.Unpair -> unpairHere(if (code == GatewayPolicy.CLOSE_REVOKED) "revoked" else "unauthorized", d.notice)
+            CloseDecision.Stay -> setState { it.copy(connection = ConnectionState.STOPPED, lastError = null) }
+            CloseDecision.Reconnect -> {
+                setState { it.copy(connection = ConnectionState.CONNECTING, lastError = "$code $reason") }
+                scheduleReconnect()
+            }
         }
-        if (stopping || (code == CLOSE_GATEWAY_OFF && connection.reconnectSuppressed)) {
-            setState { it.copy(connection = ConnectionState.STOPPED, lastError = null) }
-            return
-        }
-        setState { it.copy(connection = ConnectionState.CONNECTING, lastError = "$code $reason") }
+    }
+
+    /** AC-002-07 / AC-002-18: the server dropped this device. Wipe, stop, alert and leave Setup to the UI. */
+    private fun unpairHere(why: String, notice: String) {
+        graph.log("server says $why; wiping credentials", "E")
+        graph.prefs.clearPairing(notice)
+        graph.db.wipe()
+        Watchdog.cancel(this)
+        setState { it.copy(connection = ConnectionState.STOPPED, lastError = why) }
+        Notifications.postUnpaired(this, notice)
+        shutdown()
+    }
+
+    private fun scheduleReconnect() {
         val wait = backoff.nextDelayMs()
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
@@ -395,7 +413,6 @@ class GatewayService : Service() {
     }
 
     companion object {
-        const val CLOSE_REVOKED = 4003
 
         @Volatile
         var running = false
