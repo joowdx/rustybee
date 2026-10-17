@@ -5,6 +5,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.graphics.Typeface
 import android.os.Bundle
+import android.view.ViewGroup
+import android.view.WindowInsets
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import dev.joowdx.rustybee.gateway.Graph
 import java.text.DateFormat
@@ -30,8 +34,18 @@ class LogsActivity : Activity() {
             setTextIsSelectable(true)
             setPadding(0, dp(8), 0, 0)
         }
-        content.add(log)
-        scrollingRoot(content)
+        // Only the log scrolls; the title and buttons stay pinned above it.
+        content.addView(
+            ScrollView(this).apply { addView(log) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
+        )
+        val pad = dp(16)
+        content.setOnApplyWindowInsetsListener { v, insets ->
+            val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            v.setPadding(bars.left + pad, bars.top + pad, bars.right + pad, bars.bottom + pad)
+            insets
+        }
+        setContentView(content)
     }
 
     override fun onResume() {
