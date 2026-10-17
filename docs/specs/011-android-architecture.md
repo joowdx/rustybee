@@ -113,7 +113,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 ## Test plan
 | AC | Test |
 |---|---|
-| 01 | Gradle build plus `apkanalyzer` |
+| 01 | `android/ci/check-apk.sh` (size plus `dexdump` class list) on the foss release APK in `android.yml`, on PRs and releases |
 | 02 | `ProtocolFixturesTest` (JVM; reads `../protocol/fixtures` via a test resource srcDir) |
 | 03 | `OutboxTest` (Robolectric-free: the SQL lives in a small interface faked in JVM) |
 | 04 | `BackoffTest` |
