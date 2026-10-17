@@ -51,6 +51,26 @@ impl Pacer {
         });
     }
 
+    /// Seed the window after a reconnect from how long ago the message was
+    /// dispatched and acked (from stored timestamps). A message whose
+    /// in-flight timeout has already run out is not seeded at all.
+    pub fn resume(
+        &mut self,
+        msg: i64,
+        now: Instant,
+        sent_ago: Duration,
+        acked_ago: Option<Duration>,
+    ) {
+        if acked_ago.unwrap_or(sent_ago) >= self.timeout {
+            return;
+        }
+        let back = |d: Duration| now.checked_sub(d).unwrap_or(now);
+        self.start(msg, back(sent_ago));
+        if let Some(a) = acked_ago {
+            self.acked(back(a));
+        }
+    }
+
     /// Record the device's ack; the in-flight timeout restarts from here.
     pub fn acked(&mut self, now: Instant) {
         if let Some(f) = &mut self.in_flight
@@ -116,6 +136,27 @@ mod tests {
             Next::Wait(t0 + MS * 150)
         );
         assert_eq!(p.poll(t0 + MS * 150, Duration::ZERO), Next::Send);
+        assert_eq!(p.in_flight(), None);
+    }
+
+    #[test]
+    fn ac_006_04_resume_uses_stored_age() {
+        let t0 = Instant::now() + MS * 10_000;
+        let mut p = Pacer::new(MS * 1000);
+        // Dispatched 400 ms ago, never acked: 600 ms left.
+        p.resume(1, t0, MS * 400, None);
+        assert_eq!(p.deadline(), Some(t0 + MS * 600));
+        // Acked 100 ms ago: the timeout runs from the ack.
+        let mut p = Pacer::new(MS * 1000);
+        p.resume(1, t0, MS * 5000, Some(MS * 100));
+        assert_eq!(p.deadline(), Some(t0 + MS * 900));
+        // Already expired: nothing in flight, send right away.
+        let mut p = Pacer::new(MS * 1000);
+        p.resume(1, t0, MS * 1000, None);
+        assert_eq!(p.in_flight(), None);
+        assert_eq!(p.poll(t0, MS * 200), Next::Send);
+        let mut p = Pacer::new(MS * 1000);
+        p.resume(1, t0, MS * 90_000, Some(MS * 60_000));
         assert_eq!(p.in_flight(), None);
     }
 

@@ -259,3 +259,74 @@ async fn ac_004_04_sweeper_expires_and_times_out() {
     assert_eq!(m["error"]["code"], "status_timeout");
     s.stop().await;
 }
+
+async fn acked_at(s: &Server, id: &str) -> Option<i64> {
+    let id = id.to_string();
+    s.app()
+        .store
+        .read(move |c| messages::by_public(c, &id))
+        .await
+        .unwrap()
+        .and_then(|m| m.device_acked_at)
+}
+
+#[tokio::test]
+async fn ac_006_04_stale_inflight_row_does_not_delay_reconnect() {
+    // A long in-flight timeout: the old pacer seeding would wait all of it.
+    let s = server_with(|c| c.inflight_timeout = Duration::from_secs(30)).await;
+    let key = s.api_key().await;
+    let (_, token) = s.pair("A").await;
+    set_delay(&s, 0).await;
+    let first = queue(&s, &key, 1).await.remove(0);
+    let mut d = Device::connect(&s, &token).await;
+    let f = d.recv_type("send").await;
+    d.ack(&f["id"]).await;
+    assert!(eventually(|| async { acked_at(&s, &first).await.is_some() }).await);
+    d.close().await;
+    // The acked row never got a status, and its timeout ran out while offline.
+    s.app().clock.advance_ms(60_000);
+    let dev_id: i64 = s
+        .app()
+        .store
+        .read(|c| c.query_row("SELECT id FROM devices", [], |r| r.get(0)))
+        .await
+        .unwrap();
+    assert!(eventually(|| async { !s.app().hub.is_connected(dev_id) }).await);
+    let second = queue(&s, &key, 1).await.remove(0);
+    let mut d = Device::connect(&s, &token).await;
+    let t = Instant::now();
+    let f = d.recv_type("send").await;
+    assert_eq!(f["data"]["msg_id"], second.as_str());
+    assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_006_07_dispatcher_survives_a_store_error() {
+    let s = server().await;
+    let key = s.api_key().await;
+    let (_, token) = s.pair("A").await;
+    set_delay(&s, 0).await;
+    let mut d = Device::connect(&s, &token).await;
+    let rename = |from: &'static str, to: &'static str| {
+        s.app()
+            .store
+            .with_writer(move |c| c.execute_batch(&format!("ALTER TABLE {from} RENAME TO {to}")))
+    };
+    // Break the messages table and wake the dispatcher so its query fails.
+    rename("messages", "messages_gone").await.unwrap();
+    let dev_id: i64 = s
+        .app()
+        .store
+        .read(|c| c.query_row("SELECT id FROM devices", [], |r| r.get(0)))
+        .await
+        .unwrap();
+    s.app().hub.notify(dev_id);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    rename("messages_gone", "messages").await.unwrap();
+    // The same socket still gets new messages.
+    let id = queue(&s, &key, 1).await.remove(0);
+    let f = d.recv_type("send").await;
+    assert_eq!(f["data"]["msg_id"], id.as_str());
+    s.stop().await;
+}

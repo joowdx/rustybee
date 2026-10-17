@@ -1,7 +1,7 @@
 # 006 — Dispatch, pacing and replay
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 
@@ -18,6 +18,7 @@ There is one tokio task per connected device. It is started after `welcome` and 
    - At most one outbound message per device is *in flight*: dispatched but neither terminal-for-pacing (`sent`, `delivered` or `failed`) nor timed out.
    - The in-flight timeout is 120 s after `device_acked_at`, or 120 s after sending if no ack arrives.
    - When it times out, the dispatcher moves on. The message stays `dispatched`, and the sweeper rules from spec 004 apply.
+   - On a new connection the window is seeded from the newest `dispatched` row using its stored `device_acked_at` (or `dispatched_at`), so only the remaining part of the timeout is waited. A row whose timeout already ran out is not seeded.
 3. **Pacing.**
    - The next `send` waits at least `send_delay_ms` after the previous one left the in-flight state, measured from the server's monotonic clock.
    - The default delay is 5000 ms, clamped to 0–3,600,000.
@@ -25,6 +26,7 @@ There is one tokio task per connected device. It is started after `welcome` and 
    - In one write transaction: set `state=dispatched`, `dispatched_at`, and a new `frame_id` ULID.
    - Then send the `send` frame.
 5. **Sleep** until `Notify` fires (new message queued, status received, ack received, config changed) or the next pacing or timeout deadline comes up.
+6. **Errors.** A store error does not end the task. The loop starts again from step 1 after a pause of 250 ms, doubling up to 30 s (reset after a run of more than 30 s). It ends only when the socket is gone.
 
 ### Choosing the device for a new message
 - Use the explicit `device_id` if the request gives one; it must exist and be enabled.
@@ -53,13 +55,16 @@ All dispatch state lives in SQLite. After a server restart, the replay in step 1
 4. AC-006-04 A message queued while the device is offline is sent within 1 s of the device's `hello`.
 5. AC-006-05 Device choice follows: explicit, then default, then the only enabled device, then 400.
 6. AC-006-06 After a server restart, unacked dispatched messages are replayed.
+7. AC-006-07 After a store error inside the dispatcher, the same socket still receives newly queued messages.
 
 ## Test plan
 | AC | Test |
 |---|---|
-| 01–06 | `server/tests/dispatch.rs` with a fake device client and a short timeout config |
+| 01–07 | `server/tests/dispatch.rs` with a fake device client and a short timeout config |
+| 01, 02, 04 | `domain::pacing` unit tests |
 
 ## Assumptions
 - A window of 1 per device is enough throughput for personal use. Carriers throttle anyway, and AOSP prompts after 30 SMS in 30 minutes.
 
 ## Open questions
+- AC-006-07, the retry loop and the seeding of the window from stored times (AC-006-04) came from the 2026-10-17 review.
