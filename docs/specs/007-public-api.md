@@ -36,7 +36,7 @@ Timestamps are RFC 3339 UTC strings with milliseconds.
 | GET | `/api/v1/batches/{id}` | — | `{id, device_id, total, counts:{queued,dispatched,sent,delivered,failed,expired}, status}` |
 | GET | `/api/v1/messages` | `direction, state, device_id, peer, batch_id, q (substring of body or peer), since, until (RFC 3339), limit (1..=200, default 50), cursor` | `{items:[Message], next_cursor:str\|null}` |
 | GET | `/api/v1/messages/{id}` | — | `Message` |
-| GET | `/api/v1/devices` | — | `[{id, name, enabled, is_default, connected, last_seen_at, model, app_version, battery, charging, network, sims}]` |
+| GET | `/api/v1/devices` | — | `[{id, name, enabled, is_default, connected, last_seen_at, model, app_version, battery, charging, network, sims, radios}]` (`radios` per spec 015, or null) |
 
 - **Health:** `/health` runs `SELECT 1` on a pooled reader and a round trip through the writer thread, with a 2 s limit for both. If either fails or is late, it returns 503. The body never carries more than `ok` and the version.
 - Duplicate recipients within one request are kept. The caller decides.

@@ -10,8 +10,8 @@
     <div class="sb">
       <span{% if let Some(c) = d.status_class %} class="{{ c }}"{% endif %}><span class="dot"></span> {{ d.status_text }}</span>
       <span class="gap"></span>
-      {% if d.network != "–" %}<span class="net"><svg aria-hidden="true"><use href="#i-{% if d.network == "wifi" %}wifi{% else %}cell{% endif %}"/></svg>{{ d.network }}</span>{% endif %}
-      {% if let Some(p) = d.battery_pct %}<span class="bat{% if *p < 20 %} low{% endif %}{% if d.charging %} chg{% endif %}" title="{{ d.battery }}{% if d.charging %}, charging{% endif %}"><i><b style="width:{{ p }}%"></b></i>{{ d.battery }}</span>{% endif %}
+      {% include "_net.html" %}
+      {% if let Some(p) = d.battery_pct %}<span class="bat{% if *p < 20 %} low{% endif %}{% if d.charging %} chg{% endif %}" title="{{ d.battery }}{% if d.charging %}, charging{% endif %}"><i><b style="width:{{ p }}%"></b>{% if d.charging %}<svg class="bolt" role="img" aria-label="charging"><use href="#i-bolt"/></svg>{% endif %}</i>{{ d.battery }}</span>{% endif %}
     </div>
     <div class="ph-body">
       <h3>{{ d.name }}</h3>

@@ -2,7 +2,7 @@
 
 use super::opt;
 use crate::domain::filters::Filters;
-use crate::protocol::{DeviceConfig, Health, Hello, PairRequest};
+use crate::protocol::{DeviceConfig, Health, Hello, PairRequest, Radio, Radios};
 use rusqlite::{Connection, Row, params};
 use serde_json::{Value, json};
 
@@ -34,6 +34,28 @@ pub struct DeviceRow {
     pub unreachable_at: Option<i64>,
     pub gateway_off_at: Option<i64>,
     pub lifecycle_json: Option<String>,
+}
+
+/// One network indicator in a device card's status bar (spec 015).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetChip {
+    /// `wifi`, `cell`, or `net` for a connection that is not a radio.
+    pub icon: &'static str,
+    /// The network or carrier name when reported; the type for a connection other than Wi-Fi or cellular.
+    pub label: Option<String>,
+    /// Signal bars, 0–4; `None` when the signal is not reported.
+    pub level: Option<i64>,
+    /// Cellular generation, "2G" to "5G".
+    pub tech: Option<String>,
+    pub title: String,
+}
+
+impl NetChip {
+    /// Which of the four parts of the signal icon are lit, weakest first.
+    pub fn bars(&self) -> [bool; 4] {
+        let l = self.level.unwrap_or(0);
+        [l >= 1, l >= 2, l >= 3, l >= 4]
+    }
 }
 
 const COLS: &str = "id, public_id, name, enabled, is_default, send_delay_ms, receive_enabled, sim, \
@@ -114,6 +136,57 @@ impl DeviceRow {
         self.telemetry.get("outbox").and_then(Value::as_i64)
     }
 
+    /// Radios as stored, for the API (spec 015).
+    pub fn radios_json(&self) -> Value {
+        self.telemetry.get("radios").cloned().unwrap_or(Value::Null)
+    }
+
+    /// The status-bar network indicators, Wi-Fi then cellular, each as its reported network or
+    /// carrier name before its signal (spec 015).
+    pub fn net_chips(&self) -> Vec<NetChip> {
+        let r = self
+            .telemetry
+            .get("radios")
+            .and_then(|v| serde_json::from_value::<Radios>(v.clone()).ok())
+            .unwrap_or_default();
+        let chip = |icon: &'static str, kind: &str, radio: &Radio, label: Option<String>| {
+            let mut title = radio.name.clone().unwrap_or_else(|| kind.to_string());
+            if let Some(d) = radio.dbm {
+                title.push_str(&format!(", {d} dBm"));
+            }
+            NetChip {
+                icon,
+                label,
+                level: radio.level.map(|l| l.clamp(0, 4)),
+                tech: radio.tech.clone(),
+                title,
+            }
+        };
+        let none = Radio::default();
+        let net = self.network();
+        let mut out = vec![];
+        if let Some(other) = net
+            .as_deref()
+            .filter(|n| !["none", "wifi", "cellular"].contains(n))
+        {
+            // Not a radio (ethernet, other): a plain network icon, labelled with its type.
+            out.push(chip("net", other, &none, Some(other.to_string())));
+        }
+        // Wi-Fi first, then cellular, each as `name (signal)`; the one in use is always shown.
+        // Only a reported name labels a radio.
+        for (icon, kind, radio) in [
+            ("wifi", "wifi", r.wifi.as_ref()),
+            ("cell", "cellular", r.cellular.as_ref()),
+        ] {
+            match radio {
+                Some(x) => out.push(chip(icon, kind, x, x.name.clone())),
+                None if net.as_deref() == Some(kind) => out.push(chip(icon, kind, &none, None)),
+                None => {}
+            }
+        }
+        out
+    }
+
     /// Names of permissions the device reports as missing.
     pub fn missing_permissions(&self) -> Vec<String> {
         let Some(p) = self.telemetry.get("permissions").and_then(Value::as_object) else {
@@ -140,6 +213,7 @@ impl DeviceRow {
             "charging": self.charging(),
             "network": self.network(),
             "sims": self.sims,
+            "radios": self.radios_json(),
         })
     }
 }
@@ -214,12 +288,16 @@ pub fn create(
 }
 
 pub fn apply_hello(c: &Connection, id: i64, h: &Hello, now: i64) -> rusqlite::Result<()> {
-    let telemetry = json!({
+    let mut telemetry = json!({
         "battery": h.battery,
         "network": h.network,
         "permissions": h.permissions,
         "outbox": h.outbox,
     });
+    // A hello without `radios` clears them (spec 015).
+    if let Some(r) = &h.radios {
+        telemetry["radios"] = json!(r.cleaned());
+    }
     // A missing or malformed lifecycle is already `None` and must not wipe a previous one.
     let lifecycle = h.lifecycle.as_ref().map(ToString::to_string);
     c.execute(
@@ -268,6 +346,10 @@ pub fn apply_health(c: &Connection, id: i64, h: &Health, now: i64) -> rusqlite::
     }
     if let Some(o) = h.outbox {
         obj.insert("outbox".into(), json!(o));
+    }
+    // Replaced, `{}` included; absent (an older app) keeps it (spec 015).
+    if let Some(r) = &h.radios {
+        obj.insert("radios".into(), json!(r.cleaned()));
     }
     let telemetry = t.to_string();
     if let Some(token) = &h.fcm_token {
