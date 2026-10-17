@@ -122,6 +122,7 @@ class GatewayService : Service() {
         Telemetry.captureLifecycle(this)
         running = true
         eventsOut = events
+        instance = this
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
         registerReceiver(
             powerReceiver,
@@ -176,6 +177,7 @@ class GatewayService : Service() {
         running = false
         stopping = true
         if (eventsOut === events) eventsOut = null
+        if (instance === this) instance = null
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
         runCatching { unregisterReceiver(powerReceiver) }
         graph.uplink.detach()
@@ -402,6 +404,9 @@ class GatewayService : Service() {
         @Volatile
         private var eventsOut: Channel<GatewayEvent>? = null
 
+        @Volatile
+        private var instance: GatewayService? = null
+
         /** Starts the service or nudges a running one. False when the start is refused, for example in the background. */
         fun start(context: Context): Boolean =
             try {
@@ -412,7 +417,9 @@ class GatewayService : Service() {
                 false
             }
 
+        /** Stops the service. It stops connecting at once, before `onDestroy` runs (AC-013-04, re-pairing). */
         fun stop(context: Context) {
+            instance?.stopping = true
             context.stopService(Intent(context, GatewayService::class.java))
         }
 

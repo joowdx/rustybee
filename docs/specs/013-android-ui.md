@@ -20,7 +20,7 @@ Updated: 2026-10-17
   - an "Allow insecure http (LAN)" checkbox, shown only for `http://` URLs.
 - **Incoming links:** the deep link, a new intent and a scan result only fill the text field (and show the insecure checkbox for `http://`). They never pair on their own.
 - **Confirmation:** Pair first shows a platform `AlertDialog` naming the server host. If the app is already paired, it says this replaces the current server and wipes the local data. Nothing is requested or wiped until the user confirms.
-- **Pairing:** calls the pairing API from spec 002 and shows errors inline. On success it stores the credentials and opens `MainActivity`.
+- **Pairing:** calls the pairing API from spec 002 and shows errors inline. On success it stops `GatewayService` and the watchdog, clears the old server's settings the way unpair does (forwarding "off", config, last connected; the FCM token stays), wipes the local data, stores the new credentials and opens `MainActivity`, which starts the gateway against the new server.
 
 ### `ScanActivity`
 - A full-screen camera preview (platform Camera2 on a `TextureView`, back camera) with a hint and Cancel.
@@ -78,6 +78,7 @@ Requested in one runtime request, with a short rationale, when the gateway is fi
 5. AC-013-05 Scanning the Devices-page QR from inside the app pairs it, in portrait and landscape. Refusing the camera leaves Setup usable with a message. Manual check.
 6. AC-013-06 The Forwarding screen locks the filter while the switch is off, and turning the switch off while offline stops forwarding at once. Manual check.
 7. AC-013-07 A deep link, new intent or scan result fills the link field but does not pair. Pair shows a confirmation naming the host; when already paired it says it replaces the current server and wipes local data. Nothing is sent or wiped before confirming.
+8. AC-013-08 Re-pairing while paired and connected stops the gateway before the wipe, so no socket stays open to the old server, drops the old server's settings except the FCM token, and connects to the new server. Manual check.
 
 ## Test plan
 Manual checks in M7, with screenshots attached to the M7 notes, except:
@@ -93,3 +94,4 @@ Manual checks in M7, with screenshots attached to the M7 notes, except:
 - A successful pairing enables the gateway and opens `MainActivity`, which shows the permission rationale and request at once, so the deep link plus one confirmation leads to a connected gateway (AC-013-01).
 
 ## Open questions
+- AC-013-08 came from the 2026-10-17 review.

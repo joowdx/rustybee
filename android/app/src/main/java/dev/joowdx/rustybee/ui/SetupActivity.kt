@@ -17,8 +17,10 @@ import android.widget.TextView
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import dev.joowdx.rustybee.BuildConfig
+import dev.joowdx.rustybee.gateway.GatewayService
 import dev.joowdx.rustybee.gateway.Graph
 import dev.joowdx.rustybee.gateway.Telemetry
+import dev.joowdx.rustybee.gateway.Watchdog
 import dev.joowdx.rustybee.protocol.ApiErrorBody
 import dev.joowdx.rustybee.protocol.PairRequest
 import dev.joowdx.rustybee.protocol.PairResponse
@@ -167,6 +169,11 @@ class SetupActivity : Activity() {
                     return@launch
                 }
                 val graph = Graph.of(this@SetupActivity)
+                // Re-pairing: stop the gateway first so it cannot stay connected to the old server, then
+                // drop the old server's settings (forwarding "off", config, last connected); the FCM token stays.
+                Watchdog.cancel(this@SetupActivity)
+                GatewayService.stop(this@SetupActivity)
+                graph.prefs.clearPairing()
                 graph.db.wipe()
                 graph.prefs.apply {
                     serverUrl = base
