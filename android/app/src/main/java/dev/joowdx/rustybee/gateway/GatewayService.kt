@@ -67,6 +67,9 @@ class GatewayService : Service() {
     private var pendingForwarding: String? = null
     /** The `receive_enabled` of the save in flight. */
     private var pendingReceiveEnabled = false
+    /** What the posted gateway notification shows, so unchanged state is not re-posted. */
+    @Volatile
+    private var notified: Notifications.GatewayContent? = null
 
     inner class LocalBinder : Binder() {
         val state: StateFlow<GatewayState> get() = stateFlow.asStateFlow()
@@ -145,11 +148,13 @@ class GatewayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
+            val state = stateFlow.value
             startForeground(
                 Notifications.ID_GATEWAY,
-                Notifications.gateway(this, stateFlow.value),
+                Notifications.gateway(this, state),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
             )
+            notified = Notifications.content(state)
         } catch (e: Exception) {
             // The start window closed before promotion, e.g. a downgraded wake; the user restarts from the notification.
             graph.log("could not promote gateway: ${e.javaClass.simpleName}", "E")
@@ -413,10 +418,12 @@ class GatewayService : Service() {
                 filtersRev = graph.prefs.config.filtersRev,
             )
         }
-        if (!stopping) {
+        val state = stateFlow.value
+        val content = Notifications.content(state)
+        if (!stopping && content != notified) {
             runCatching {
-                getSystemService(NotificationManager::class.java)
-                    .notify(Notifications.ID_GATEWAY, Notifications.gateway(this, stateFlow.value))
+                getSystemService(NotificationManager::class.java).notify(Notifications.ID_GATEWAY, Notifications.gateway(this, state))
+                notified = content
             }
         }
     }

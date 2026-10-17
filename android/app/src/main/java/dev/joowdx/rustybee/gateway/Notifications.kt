@@ -37,6 +37,11 @@ object Notifications {
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
+    /** What the gateway notification shows; it is re-posted only when this changes. */
+    data class GatewayContent(val connected: Boolean, val sendsToday: Int)
+
+    fun content(state: GatewayState) = GatewayContent(state.connection == ConnectionState.CONNECTED, state.sendsToday)
+
     fun gateway(context: Context, state: GatewayState): Notification {
         val title = context.getString(
             if (state.connection == ConnectionState.CONNECTED) R.string.state_connected else R.string.state_reconnecting,

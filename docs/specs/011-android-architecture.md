@@ -58,7 +58,8 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
   - Started by the UI toggle, `BootReceiver`, `Watchdog`, `WakeService` and the receivers when work arrives.
   - `onStartCommand` calls `startForeground` before anything else and returns `START_STICKY`. Without the battery exemption a sticky restart may be refused (spec 009); it is kept because it costs nothing when it works.
   - It stops itself (`stopForeground` + `stopSelf`) when the gateway is disabled or unpaired. When the user switches the gateway off, it first closes the socket with 4010 `gateway_off` (spec 002), if open.
-  - Android 14+ lets the user dismiss the notification. The service keeps running and re-posts the notification on the next state change.
+  - The notification is re-posted only when what it shows changes (connected or not, sends today), not on every event.
+  - Android 14+ lets the user dismiss the notification. The service keeps running and re-posts the notification on the next change of what it shows.
 - **Scope:** one `CoroutineScope(SupervisorJob() + Dispatchers.Default)`. The parts below share one `Mutex`-free design: frames are processed in a single coroutine fed by a `Channel`.
   - **`Connection`:**
     - OkHttp `WebSocket` with `pingInterval(config.ping_s)` (270 s until the first `welcome`) and a connect timeout of 15 s.
