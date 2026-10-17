@@ -16,7 +16,12 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Notify, broadcast, oneshot};
 use tokio::task::JoinHandle;
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+// CI passes the release version in RUSTYBEE_VERSION; local builds fall back to
+// server/Cargo.toml (spec 001).
+pub const VERSION: &str = match option_env!("RUSTYBEE_VERSION") {
+    Some(v) if !v.is_empty() => v,
+    _ => env!("CARGO_PKG_VERSION"),
+};
 pub const MAX_RECIPIENTS: usize = 1000;
 pub const MAX_BODY_CHARS: usize = 1600;
 
