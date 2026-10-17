@@ -111,7 +111,6 @@ fn set_password(stdin_mode: bool) -> Result<(), String> {
             store::auth::MIN_PASSWORD
         ));
     }
-    std::fs::create_dir_all(&cfg.data_dir).map_err(|e| e.to_string())?;
     let conn = store::open_rw(&cfg.db_path()).map_err(|e| e.to_string())?;
     store::auth::set_password_hash(&conn, &store::auth::hash_password(&pw))
         .map_err(|e| e.to_string())?;
