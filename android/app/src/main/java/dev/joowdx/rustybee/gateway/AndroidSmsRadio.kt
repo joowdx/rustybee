@@ -23,9 +23,21 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
         return sm.activeSubscriptionInfoList.orEmpty().map { it.subscriptionId }.toSet()
     }
 
+    /** Active subscriptions with their slots; empty without READ_PHONE_STATE. */
+    @SuppressLint("MissingPermission")
+    private fun activeSubs(): List<SimChoice.Sub> {
+        if (context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            return emptyList()
+        }
+        val sm = context.getSystemService(SubscriptionManager::class.java) ?: return emptyList()
+        return sm.activeSubscriptionInfoList.orEmpty().map { SimChoice.Sub(it.subscriptionId, it.simSlotIndex) }
+    }
+
     private fun manager(sim: Int?): SmsManager {
         val base = context.getSystemService(SmsManager::class.java)
-        return if (sim != null) base.createForSubscriptionId(sim) else base
+        // With "Ask every time" the plain SmsManager has no subscription to send on (spec 012 §2).
+        val id = sim ?: SimChoice.fallback(SubscriptionManager.getDefaultSmsSubscriptionId(), activeSubs())
+        return if (id != null) base.createForSubscriptionId(id) else base
     }
 
     override fun divide(body: String, sim: Int?): List<String> = manager(sim).divideMessage(body).orEmpty()

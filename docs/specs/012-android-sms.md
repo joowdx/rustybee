@@ -10,7 +10,7 @@ Updated: 2026-10-17
 2. Pick the `SmsManager` with `context.getSystemService(SmsManager::class.java)`:
    - `.createForSubscriptionId(sim)` when `sim` is not null and is an active subscription;
    - otherwise use `config.sim` from the server if set;
-   - otherwise the system default.
+   - otherwise the system default SMS subscription. When there is none (`SubscriptionManager.getDefaultSmsSubscriptionId()` is `INVALID_SUBSCRIPTION_ID`, i.e. "Ask every time" on dual-SIM), use the single active subscription, or else the active one in the lowest slot; with no active subscription visible, fall back to the plain `SmsManager`. The pure `SimChoice` makes this choice.
    - If the requested `sim` is not active, report `failed`/`sim_unavailable`.
 3. Split the body with `divideMessage(body)` into `parts` (n). Store `parts=n`.
 4. For each part `i`, create a sent PendingIntent and, when delivery reports are wanted (always), a delivered one:
@@ -71,6 +71,7 @@ Updated: 2026-10-17
 6. AC-012-06 On the emulator, an API send reaches `sent`. The emulator also reports `delivered`. Manual check.
 7. AC-012-07 Another app cannot send `SMS_RECEIVED` to the receiver, because of the `BROADCAST_SMS` guard. Checked by reviewing the manifest.
 8. AC-012-08 A radio call that throws any other `RuntimeException` after the ack reports `failed`/`generic_failure`.
+9. AC-012-09 With no default SMS subscription, a send without `sim` or an active `config.sim` uses the single active subscription, or else the lowest slot; with a default set, the system default.
 
 ## Test plan
 | AC | Test |
@@ -82,6 +83,7 @@ Updated: 2026-10-17
 | 05, 06 | Manual check in M7 |
 | 07 | Manifest assertion test that parses the merged manifest |
 | 08 | `SendDedupeTest::ac_012_08_*` |
+| 09 | `SimChoiceTest` |
 
 ## Assumptions
 - Delivery reports are always requested. They cost nothing in battery, and carriers that don't support them simply never report.
@@ -92,3 +94,4 @@ Updated: 2026-10-17
 
 ## Open questions
 - AC-012-08 came from the 2026-10-17 review.
+- AC-012-09 came from the 2026-10-17 review.
