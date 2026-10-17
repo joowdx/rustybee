@@ -147,11 +147,19 @@ class GatewayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(
-            Notifications.ID_GATEWAY,
-            Notifications.gateway(this, stateFlow.value),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
-        )
+        try {
+            startForeground(
+                Notifications.ID_GATEWAY,
+                Notifications.gateway(this, stateFlow.value),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
+            )
+        } catch (e: Exception) {
+            // The start window closed before promotion, e.g. a downgraded wake; the user restarts from the notification.
+            graph.log("could not promote gateway: ${e.javaClass.simpleName}", "E")
+            Notifications.postStopped(this)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val prefs = Graph.of(this).prefs
         if (!prefs.gatewayEnabled || !prefs.paired) {
             shutdown()
@@ -261,6 +269,8 @@ class GatewayService : Service() {
             return
         }
         welcomed = true
+        // A token that rotated between `hello` and `welcome` was dropped by sendHealth; send it now.
+        Push.token(this)?.let { if (it != announcedToken) sendHealth(it) }
         setState { it.copy(connection = ConnectionState.CONNECTED, lastError = null, filtersRev = w.config.filtersRev) }
         graph.uplink.attach { connection.send(it) }
         healthJob?.cancel()

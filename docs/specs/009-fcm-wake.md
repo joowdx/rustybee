@@ -72,11 +72,11 @@ Facts here were checked against the Android and Firebase docs as far as they go.
 ### App (`gms` flavor only)
 - **`WakeService : FirebaseMessagingService`**, on a `t=wake` message:
   - **Paired and gateway enabled:** call `startForegroundService(GatewayService)`, which calls `startForeground` at once in `onStartCommand`.
-    - If the start throws (for example `ForegroundServiceStartNotAllowedException`, when the message arrived downgraded), post the watchdog's high-importance "Gateway stopped — tap to restart" notification instead (spec 011).
+    - If the start or the `startForeground` call throws (for example `ForegroundServiceStartNotAllowedException`, when the message arrived downgraded), post the watchdog's high-importance "Gateway stopped — tap to restart" notification instead (spec 011).
     - Either way, a delivered wake always ends in a visible notification.
   - **Not paired, or the gateway is off:** do nothing. The server should not have sent the wake (`gateway_off_at`), and this case is logged.
 - **Token handling:**
-  - `onNewToken` stores the token. If the socket is open, it also sends a `health` carrying `fcm_token` at once. Otherwise the token goes in the next `hello`.
+  - `onNewToken` stores the token. If the connection is welcomed, it also sends a `health` carrying `fcm_token` at once. A token that rotates after `hello` but before `welcome` is sent in a `health` right after `welcome`. Otherwise the token goes in the next `hello`.
   - Pairing waits up to 5 s for `FirebaseMessaging.getToken()` before sending the pair request, so a fresh pairing usually starts with a token.
 - **Notifications are required on gms.**
   - FCM downgrades wakes for an app whose notifications are off. A wake also needs the gateway notification channel to be able to show its notification.
