@@ -62,6 +62,8 @@ data class Permissions(
     @SerialName("receive_sms") val receiveSms: Boolean,
     val notifications: Boolean,
     @SerialName("battery_unrestricted") val batteryUnrestricted: Boolean,
+    /** Optional (spec 002): older apps omit it. Without it the SIM list is empty and an explicit `sim` fails. */
+    @SerialName("read_phone_state") val readPhoneState: Boolean? = null,
 )
 
 @Serializable

@@ -7,6 +7,7 @@
     <string name="state_reconnecting">Reconnecting…</string>
     <string name="sends_today">Sent today: %1$d</string>
     <string name="gateway_stopped">Gateway stopped</string>
+    <string name="gateway_unpaired">Gateway unpaired</string>
     <string name="tap_to_restart">Tap to restart</string>
     <string name="hint_notifications_wake">Needed for wake-ups after Android stops the app</string>
 </resources>

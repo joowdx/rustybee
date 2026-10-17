@@ -25,8 +25,10 @@ object SmsErrors {
     }
 
     val permissionDenied = StatusError("permission_denied", "SMS permission denied")
+    val phoneStateDenied = StatusError("permission_denied", "Phone state permission denied; cannot check the requested SIM")
     val invalidDestination = StatusError("invalid_destination", "Invalid destination or body")
     val simUnavailable = StatusError("sim_unavailable", "Requested SIM is not active")
     val deliveryFailed = StatusError("delivery_failed", "Carrier reported delivery failure")
+    fun radioFailed(e: RuntimeException) = StatusError("generic_failure", "Radio call failed: ${e.javaClass.simpleName}")
     val outcomeLost = StatusError("generic_failure", "outcome lost")
 }

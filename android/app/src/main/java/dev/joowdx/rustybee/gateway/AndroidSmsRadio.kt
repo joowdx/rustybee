@@ -14,18 +14,29 @@ import dev.joowdx.rustybee.data.Prefs
 /** Thin SmsManager wrapper (spec 012 §2–5). */
 class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : SmsRadio {
 
+    override fun canReadSims(): Boolean =
+        context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+
     @SuppressLint("MissingPermission")
     override fun activeSubscriptionIds(): Set<Int> {
-        if (context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
-            return emptySet()
-        }
+        if (!canReadSims()) return emptySet()
         val sm = context.getSystemService(SubscriptionManager::class.java) ?: return emptySet()
         return sm.activeSubscriptionInfoList.orEmpty().map { it.subscriptionId }.toSet()
     }
 
+    /** Active subscriptions with their slots; empty without READ_PHONE_STATE. */
+    @SuppressLint("MissingPermission")
+    private fun activeSubs(): List<SimChoice.Sub> {
+        if (!canReadSims()) return emptyList()
+        val sm = context.getSystemService(SubscriptionManager::class.java) ?: return emptyList()
+        return sm.activeSubscriptionInfoList.orEmpty().map { SimChoice.Sub(it.subscriptionId, it.simSlotIndex) }
+    }
+
     private fun manager(sim: Int?): SmsManager {
         val base = context.getSystemService(SmsManager::class.java)
-        return if (sim != null) base.createForSubscriptionId(sim) else base
+        // With "Ask every time" the plain SmsManager has no subscription to send on (spec 012 §2).
+        val id = sim ?: SimChoice.fallback(SubscriptionManager.getDefaultSmsSubscriptionId(), activeSubs())
+        return if (id != null) base.createForSubscriptionId(id) else base
     }
 
     override fun divide(body: String, sim: Int?): List<String> = manager(sim).divideMessage(body).orEmpty()

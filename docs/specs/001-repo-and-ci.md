@@ -27,7 +27,8 @@ The rewrite lives on the orphan branch `master`, which shares no history with th
     - on a PR: runs `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, then builds the image natively on amd64 and arm64 runners without pushing;
     - on a push to `master` that touches what goes into the image (`server/**`, `deploy/Dockerfile`, `deploy/Dockerfile.dockerignore`): also publishes the multi-arch image `ghcr.io/joowdx/rustybee` tagged `latest`, `sha-<short>` and the major version of `server/Cargo.toml`.
   - `android.yml`, triggered by `android/**`, `protocol/**`, `VERSION`, on JDK 21:
-    - on a PR: runs `./gradlew testFossDebugUnitTest assembleFossRelease` unsigned (the signing key and its passwords are never handed to PR builds) and uploads the APK as a run artifact;
+    - on a PR: runs `./gradlew testFossDebugUnitTest assembleFossRelease` unsigned (the signing key and its passwords are never handed to PR builds) and uploads the APK as a run artifact. A parallel `pr-checks` job compiles the gms flavor against the dummy `android/ci/google-services.dummy.json` and runs `lintFossRelease`;
+    - on every run: `android/ci/check-apk.sh` checks AC-011-01 on the foss release APK (under 3 MB; `dexdump` finds no Firebase, Play services, AppCompat or Compose classes);
     - on a push to `master` (the release): computes the next version, builds and signs the foss APK (the `ANDROID_KEYSTORE_*` secrets are required) and the gms APK when the `RUSTYBEE_GOOGLE_SERVICES_JSON` secret exists, and creates the GitHub release and tag `v<version>` with the APKs and `SHA256SUMS`.
     - before Gradle runs, `gradle/actions/wrapper-validation` checks the wrapper jar, and `gradle-wrapper.properties` pins the distribution with `distributionSha256Sum`.
   - Every action is pinned to a full commit SHA with a `# vX` comment; `.github/dependabot.yml` bumps them weekly.

@@ -50,11 +50,13 @@ class FakeRadio(
     var active: Set<Int> = setOf(1, 2),
     var partsPerMessage: Int = 1,
     var throwOnSend: RuntimeException? = null,
+    var readSims: Boolean = true,
 ) : SmsRadio {
     data class Call(val msgId: String, val to: String, val parts: List<String>, val sim: Int?)
 
     val calls = mutableListOf<Call>()
-    override fun activeSubscriptionIds() = active
+    override fun canReadSims() = readSims
+    override fun activeSubscriptionIds() = if (readSims) active else emptySet()
     override fun divide(body: String, sim: Int?) = List(partsPerMessage) { "$body#$it" }
     override fun send(msgId: String, to: String, parts: List<String>, sim: Int?) {
         throwOnSend?.let { throw it }

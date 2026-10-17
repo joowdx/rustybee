@@ -89,6 +89,18 @@ class SendDedupeTest {
     }
 
     @Test
+    fun ac_012_10_explicit_sim_without_phone_state_fails_with_permission_denied() {
+        radio.readSims = false
+        sender.onSend(msg.copy(sim = 1)) { acks++ }
+        assertEquals(0, radio.calls.size)
+        assertEquals(1, acks)
+        assertEquals("permission_denied", statuses().single().error?.code)
+        // A send without `sim` still goes out on the default.
+        sender.onSend(msg.copy(msgId = "M2")) {}
+        assertEquals(null, radio.calls.single().sim)
+    }
+
+    @Test
     fun sim_falls_back_to_config_then_default() {
         configSim = 2
         sender.onSend(msg) {}
@@ -105,6 +117,17 @@ class SendDedupeTest {
         radio.throwOnSend = SecurityException("no")
         sender.onSend(msg) {}
         assertEquals("permission_denied", statuses().single().error?.code)
+        assertEquals(SentState.FAILED, sent.get("M1")!!.state)
+    }
+
+    @Test
+    fun ac_012_08_other_radio_exception_fails_with_generic_failure() {
+        radio.throwOnSend = IllegalStateException("radio gone")
+        sender.onSend(msg) { acks++ }
+        assertEquals(1, acks)
+        val s = statuses().single()
+        assertEquals("failed", s.state)
+        assertEquals("generic_failure", s.error?.code)
         assertEquals(SentState.FAILED, sent.get("M1")!!.state)
     }
 
