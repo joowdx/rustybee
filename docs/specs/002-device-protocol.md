@@ -64,10 +64,10 @@ Every text frame is one JSON object:
 ### Device → server
 | type | data | when |
 |---|---|---|
-| `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted, read_phone_state?}, outbox, lifecycle}` | first frame after every connect |
+| `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted, read_phone_state?}, outbox, lifecycle, radios?}` (`radios` per spec 015) | first frame after every connect |
 | `status` | `{msg_id, state:"sent"\|"delivered"\|"failed", at, parts, error:{code,message}\|null}` | each change of a message's outcome |
 | `inbound` | `{uid, from, body, sim, received_at}` | each received SMS, while forwarding is on, that passes the filters |
-| `health` | `{battery, network, permissions, outbox, fcm_token?}` | every 15 min while connected, on a change of charging state, permissions or network type, and at once when FCM issues a new token |
+| `health` | `{battery, network, permissions, outbox, fcm_token?, radios?}` (`radios` per spec 015) | every 15 min while connected, on a change of charging state, permissions or network type, and at once when FCM issues a new token |
 | `set_forwarding` | `{base_rev, receive_enabled, filters}` | the user saves the Forwarding screen on the phone, or the phone restores its own "off" (below) |
 
 - `status.parts` must be at least 1 when present. A `status` with `parts` below 1 is nacked `bad_frame` and changes nothing.

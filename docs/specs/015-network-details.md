@@ -14,7 +14,7 @@ Let the phone report, per radio, the network name and signal strength, so the we
   - **Wi-Fi**: "Network name" and "Signal strength".
 - All four switches are off by default. They are phone-only preferences; the server cannot change them.
 - The network type (`network`, spec 002) is not a setting and is always reported.
-- Turning on the Wi-Fi network name asks for precise location, then for "Allow all the time", because Android only reveals the Wi-Fi name to a background service that holds both, with Location turned on. If either is missing the switch stays on, the name is left out, and the section says what is missing with a button to grant it.
+- Turning on the Wi-Fi network name first shows a dialog explaining that location access is used only to read the Wi-Fi name, also in the background, and never the location; "Not now" skips the prompts. "Continue" asks for precise location, then for "Allow all the time", because Android only reveals the Wi-Fi name to a background service that holds both, with Location turned on. If either is missing the switch stays on, the name is left out, and the section says what is missing with a button to grant it.
 
 ### Protocol
 `hello` and `health` gain an optional `radios` object:

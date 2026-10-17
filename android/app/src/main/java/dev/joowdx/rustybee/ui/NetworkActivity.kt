@@ -2,6 +2,7 @@ package dev.joowdx.rustybee.ui
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -28,13 +29,15 @@ class NetworkActivity : Activity() {
     private lateinit var wifiSignal: Switch
     private lateinit var wifiHint: TextView
     private lateinit var grant: View
+    /** The location disclosure was accepted on this screen, so the runtime prompts may follow. */
+    private var disclosed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val content = vertical()
         content.add(text("Network", 24f, bold = true))
         content.add(
-            text("Choose what this phone reports about its connection. Wi-Fi or cellular is always reported.").apply {
+            text("Choose what this phone reports about its connection. The connection type is always reported.").apply {
                 setPadding(0, dp(8), 0, 0)
             },
         )
@@ -94,8 +97,29 @@ class NetworkActivity : Activity() {
         grant.visibility = wifiHint.visibility
     }
 
-    /** One step at a time: precise location, then "Allow all the time", then the Location switch. */
+    /**
+     * One step at a time: precise location, then "Allow all the time", then the Location switch. A
+     * disclosure explains the background use before any permission prompt, and can be declined.
+     */
     private fun askLocation() {
+        val prompts = !granted(Manifest.permission.ACCESS_FINE_LOCATION) ||
+            !granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        if (prompts && !disclosed) {
+            AlertDialog.Builder(this)
+                .setTitle("Location for the Wi-Fi name")
+                .setMessage(
+                    "Android reveals the Wi-Fi network name only to apps with location access. This app uses it " +
+                        "only to send the Wi-Fi name to your server, also while the app is closed or not in use, " +
+                        "so it needs location \"Allow all the time\". It never reads or sends your location.",
+                )
+                .setPositiveButton("Continue") { _, _ ->
+                    disclosed = true
+                    askLocation()
+                }
+                .setNegativeButton("Not now", null)
+                .show()
+            return
+        }
         when {
             !granted(Manifest.permission.ACCESS_FINE_LOCATION) -> requestPermissions(
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
