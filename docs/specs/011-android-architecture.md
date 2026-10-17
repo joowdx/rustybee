@@ -48,7 +48,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 ```
 - `outbox` holds every device→server frame except `hello`, `health` and acks, until the server acks it.
 - `seen` dedupes server frames by id and is pruned after 7 days.
-- `sent` rows in a final state (`sent`, `delivered`, `failed`) are pruned once `updated_at` is more than 7 days old, at service start next to the `seen` prune. `accepted` rows are kept for `failLost`.
+- `sent` rows in a final state (`sent`, `delivered`, `failed`) are pruned once `updated_at` is more than 7 days old, at service start and on every health tick (every 15 min while connected, and on a charging change), next to the `seen` prune and `failLost`. `accepted` rows are kept for `failLost`.
 - `log` is capped at 1000 rows. Phone numbers are redacted to their last 4 digits, whether written with spaces, dashes, dots or parentheses (`555.123.4567`, `(555) 123-4567`, `+1 (555) 123-4567`).
 
 ### GatewayService
@@ -103,7 +103,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 5. AC-011-05 After a reboot with the gateway enabled, the FGS runs and connects. Manual check on the emulator.
 6. AC-011-06 While connected and idle, `dumpsys power` shows no wake lock held by the app.
 7. AC-011-07 Log redaction keeps only the last 4 digits of numbers written with spaces, dashes, dots or parentheses, and leaves short numbers and ids alone.
-8. AC-011-08 Service start deletes `sent` rows in a final state older than 7 days and keeps `accepted` rows.
+8. AC-011-08 Service start and every health tick delete `sent` rows in a final state older than 7 days and keep `accepted` rows.
 9. AC-011-09 Every `ApplicationStartInfo` and `ApplicationExitInfo` reason constant maps to its spec 002 string, and an unknown int maps to `unknown_<int>`.
 10. AC-011-10 Killing the app process (`adb shell am kill`) with the gateway enabled and default battery settings: on gms the gateway reconnects with `hello.lifecycle.exit.reason` set and `start.reason="push"`; on foss the watchdog posts "Gateway stopped — tap to restart", and tapping it reconnects with `start.reason="start_activity"`. Manual check on an API 35 and an API 36+ emulator.
 
@@ -129,3 +129,4 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 - The `sends today` / `receives today` counters are kept in prefs and reset at local midnight.
 
 ## Open questions
+- Running the prunes and `failLost` on the health tick, not only at service start (AC-011-08), came from the 2026-10-17 review.

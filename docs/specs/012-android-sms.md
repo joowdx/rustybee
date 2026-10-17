@@ -44,7 +44,7 @@ Updated: 2026-10-17
    | any other | `unknown_<code>` |
 
    The `message` field carries a short English text.
-8. If the process dies between sending and the callbacks arriving, the `sent` row stays `accepted`. On the next service start, any row that has been `accepted` for more than 10 min is reported `failed`/`generic_failure` with the message "outcome lost". It is never sent again.
+8. If the process dies between sending and the callbacks arriving, the `sent` row stays `accepted`. On the next service start, and on every health tick while it runs, any row that has been `accepted` for more than 10 min is reported `failed`/`generic_failure` with the message "outcome lost". It is never sent again.
 
 ### Receive (`SmsInboundReceiver`)
 - **Manifest:** `<receiver android:exported="true" android:permission="android.permission.BROADCAST_SMS">` with an intent filter for `android.provider.Telephony.SMS_RECEIVED`.

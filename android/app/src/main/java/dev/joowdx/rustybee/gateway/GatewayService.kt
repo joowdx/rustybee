@@ -133,11 +133,7 @@ class GatewayService : Service() {
             RECEIVER_NOT_EXPORTED,
         )
         scope.launch {
-            val now = System.currentTimeMillis()
-            val cutoff = now - 7 * 24 * 3_600_000L
-            graph.db.pruneSeen(cutoff)
-            graph.db.pruneSent(cutoff)
-            graph.sender.failLost()
+            maintenance()
             for (ev in events) runCatching { process(ev) }.onFailure { graph.log("event failed: $it", "E") }
         }
         scope.launch {
@@ -217,7 +213,10 @@ class GatewayService : Service() {
                 backoff.reset()
                 connect()
             }
-            GatewayEvent.HealthTick -> sendHealth()
+            GatewayEvent.HealthTick -> {
+                maintenance()
+                sendHealth()
+            }
             is GatewayEvent.FcmToken -> if (ev.token != announcedToken) sendHealth(ev.token)
             is GatewayEvent.SaveForwarding -> saveForwarding(ev.receiveEnabled, ev.filters, ev.baseRev)
             is GatewayEvent.Opened -> if (ev.gen == connection.generation) onOpened()
@@ -227,6 +226,16 @@ class GatewayService : Service() {
             }
             is GatewayEvent.Closed -> if (ev.gen == connection.generation) onClosed(ev.code, ev.reason, ev.httpStatus)
         }
+    }
+
+    /** Spec 011/012: prune `seen` and final `sent` rows after 7 days, fail lost sends. At start and on every health tick. */
+    private fun maintenance() {
+        val cutoff = System.currentTimeMillis() - 7 * 24 * 3_600_000L
+        runCatching {
+            graph.db.pruneSeen(cutoff)
+            graph.db.pruneSent(cutoff)
+            graph.sender.failLost()
+        }.onFailure { graph.log("maintenance failed: $it", "E") }
     }
 
     private fun connect() {
