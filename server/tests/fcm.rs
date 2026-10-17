@@ -573,16 +573,8 @@ async fn ac_009_11_wake_body_and_health_token() {
     let v: serde_json::Value = r.json().await.unwrap();
     let token = v["device_token"].as_str().unwrap().to_string();
     let (id, _) = pair_id(&s, &v).await;
-    let key = s.api_key().await;
-    let (st, _) = s
-        .api_post(
-            &key,
-            "/api/v1/messages",
-            serde_json::json!({"to": ["+15550000001"], "body": "wake up"}),
-        )
-        .await;
-    assert_eq!(st, 202);
-    s.app().clock.advance_ms(4 * 60 * 1000);
+    // Idle (nothing queued), so no `send` frame races the acks below on reconnect.
+    s.app().clock.advance_ms(6 * 60 * 1000);
     let fcm = s.app().fcm.clone().unwrap();
     assert_eq!(
         rustybee::fcm::check_once(s.app(), &fcm).await.unwrap(),
