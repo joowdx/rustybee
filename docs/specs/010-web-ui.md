@@ -19,7 +19,7 @@ All pages except `/login` require a session (spec 005).
 | Route | Content |
 |---|---|
 | `/login` | "Text me a code" when a code can be sent, then the code form. The password form appears only when spec 005 allows it; otherwise a hint says when it opens. Shows the "set password" hint when none is set. |
-| `/` | Device cards: name, status dot (online, offline, or unreachable, below), battery and charging, network, last seen, outbox depth, permission warnings, and a "Last restart" line (below). Today's counts: sent, delivered, failed, received, queued. Recent 10 messages. Updated live over SSE. |
+| `/` | Device cards: name, status dot (online, offline, or unreachable, below), battery and charging, network, last seen, outbox depth, permission warnings, and a "Last restart" line (below). Today's counts: sent, delivered, failed, received, queued. Recent 10 messages. Updated live over SSE: at most one refresh a second, and always one after the last event of a burst. |
 | `/send` | Recipient chip input. The body textarea shows encoding, characters, parts and remaining. Device and SIM selects. Submits via htmx and shows the result inline. |
 | `/bulk` | Step 1: upload a CSV (≤ 1 MB, ≤ 1000 rows), parsed on the server with the `csv` crate. Step 2: pick the phone column; the rest are variables. Step 3: write a `{{column}}` template with a preview of the first 5 rows and the segment count. Step 4: confirm, which calls the batch endpoint internally. The parsed CSV is kept in memory under a random token for 30 min, so there are no temp files. |
 | `/messages` | Unified history. Filters (direction, state, device, peer, q, date range) live in the query string. Keyset "Load more" via htmx. |
@@ -52,6 +52,7 @@ All pages except `/login` require a session (spec 005).
 6. AC-010-06 The layout has no horizontal scroll at 375 px width.
 7. AC-010-07 UI responses carry the four security headers above; the login page has no inline `<script>` and its htmx config sets `allowEval`, `allowScriptTags` and `selfRequestsOnly` as above.
 8. AC-010-08 A device with `unreachable_at` set renders the unreachable notice on `/` and `/devices`; clearing it removes the notice. One with `gateway_off_at` set renders the switched-off state, and a gms device with notifications off renders the wake-up warning. A device with `lifecycle_json` renders the "Last restart" line with the mapped reasons.
+10. AC-010-10 The dashboard refreshes on every burst of `device` and `message` events, ending with a refresh after the burst's last event. Events inside the one-second window are coalesced, never dropped, so a reconnect (close, `hello`, `health`) never leaves a card on an earlier state.
 
 ## Test plan
 | AC | Test |
@@ -61,6 +62,7 @@ All pages except `/login` require a session (spec 005).
 | 06 | Manual check in the browser pane during M7 |
 | 07 | `server/tests/ui.rs` |
 | 08 | `server/tests/ui.rs::ac_010_08_unreachable_and_last_restart` |
+| 10 | `server/tests/ui.rs::ac_010_10_live_refresh_is_trailing` checks the markup; the coalescing in `app.js` was checked in the browser pane |
 
 ## Assumptions
 - No command palette and no charts.

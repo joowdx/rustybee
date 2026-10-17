@@ -1,4 +1,4 @@
-// rustybee UI helpers: segment counter, recipient chips, copy buttons, countdowns, filter rule rows.
+// rustybee UI helpers: segment counter, recipient chips, copy buttons, countdowns, filter rule rows, live refresh.
 (function () {
   "use strict";
   var BASIC = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\u001bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
@@ -146,6 +146,24 @@
   });
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") document.querySelectorAll("details.more[open],details.pop[open]").forEach(function (d) { d.open = false; d.querySelector("summary").focus(); });
+  });
+
+  // Live dashboard: refresh at most once a second, and always once after the last event of a burst.
+  // htmx's own throttle drops events inside the window, which left a card on a stale state.
+  var liveTimer = null, livePending = false;
+  function refreshLive() {
+    var live = document.getElementById("live");
+    if (!live) return;
+    htmx.trigger(live, "refresh-live");
+    liveTimer = setTimeout(function () {
+      liveTimer = null;
+      if (livePending) { livePending = false; refreshLive(); }
+    }, 1000);
+  }
+  document.addEventListener("htmx:sseMessage", function (e) {
+    if (!e.target.dataset || e.target.dataset.refresh !== "live") return;
+    if (liveTimer) livePending = true;
+    else refreshLive();
   });
 
   // Turnstile data-callback on the login page: enable the gated buttons.

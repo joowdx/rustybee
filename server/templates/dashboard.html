@@ -5,7 +5,8 @@
   <a class="btn" href="/send">Send a message</a>
 </div>
 <div hx-ext="sse" sse-connect="/events">
-  <div id="live" hx-get="/partials/dashboard" hx-trigger="sse:device throttle:1s, sse:message throttle:1s" hx-swap="innerHTML">
+  <span hidden hx-trigger="sse:device, sse:message" data-refresh="live"></span>
+  <div id="live" hx-get="/partials/dashboard" hx-trigger="refresh-live" hx-swap="innerHTML">
   {% include "_dashboard.html" %}
   </div>
 </div>
