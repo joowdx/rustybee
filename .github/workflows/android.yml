@@ -85,7 +85,7 @@ jobs:
         run: ./gradlew --no-daemon testFossDebugUnitTest $TASKS
       - name: Check the foss APK (AC-011-01)
         # Under 3 MB, and no Firebase, AppCompat or Compose classes.
-        run: ci/check-apk.sh "$(ls app/build/outputs/apk/foss/release/app-foss-release*.apk | head -1)"
+        run: ci/check-apk.sh "$(find app/build/outputs/apk/foss/release -name 'app-foss-release*.apk' | sort | head -1)"
       - name: Collect and verify
         run: |
           mkdir -p ../apk
@@ -112,6 +112,7 @@ jobs:
     defaults: { run: { working-directory: android } }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with: { distribution: temurin, java-version: "21" }
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4

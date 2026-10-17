@@ -79,7 +79,7 @@ Requested in one runtime request, with a short rationale, when the gateway is fi
 5. AC-013-05 Scanning the Devices-page QR from inside the app pairs it, in portrait and landscape. Refusing the camera leaves Setup usable with a message. Manual check.
 6. AC-013-06 The Forwarding screen locks the filter while the switch is off, and turning the switch off while offline stops forwarding at once. Manual check.
 7. AC-013-07 A deep link, new intent or scan result fills the link field but does not pair. Pair shows a confirmation naming the host; when already paired it says it replaces the current server and wipes local data. Nothing is sent or wiped before confirming.
-8. AC-013-08 Re-pairing while paired and connected stops the gateway before the wipe, so no socket stays open to the old server, drops the old server's settings except the FCM token, and connects to the new server. Manual check.
+8. AC-013-08 Re-pairing while paired and connected stops the gateway before the wipe, so no socket stays open to the old server, drops the old server's settings except the FCM token, and connects to the new server. A close event still in flight from the stopping instance (a 4003 or an upgrade 401) never unpairs, so it can't wipe the new pairing; a real revoke surfaces again on the next connect. Manual check, plus `GatewayPolicyTest`.
 
 ## Test plan
 Manual checks in M7, with screenshots attached to the M7 notes, except:
