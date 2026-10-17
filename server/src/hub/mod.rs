@@ -45,6 +45,8 @@ pub struct Registration {
 
 pub const CLOSE_REPLACED: u16 = 4000;
 pub const CLOSE_REVOKED: u16 = 4003;
+/// The app closed the socket because the user switched the gateway off (spec 002).
+pub const CLOSE_GATEWAY_OFF: u16 = 4010;
 
 impl Hub {
     /// Register a new socket. An existing one for the same device is closed with 4000.

@@ -20,7 +20,9 @@ import dev.joowdx.rustybee.protocol.Health
 import dev.joowdx.rustybee.protocol.Hello
 import dev.joowdx.rustybee.protocol.Permissions
 import dev.joowdx.rustybee.protocol.Welcome
+import dev.joowdx.rustybee.push.Push
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
 import dev.joowdx.rustybee.protocol.Filters
 import dev.joowdx.rustybee.protocol.Nack
 import dev.joowdx.rustybee.protocol.SetForwarding
@@ -29,7 +31,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,7 +59,11 @@ class GatewayService : Service() {
     private var welcomed = false
     private var lastNetwork: Network? = null
     private var lastPermissions: Permissions? = null
+    @Volatile
     private var stopping = false
+    private var socketClosed = false
+    /** Token already put on this connection, so a later health omits an unchanged `fcm_token`. */
+    private var announcedToken: String? = null
     private var pendingForwarding: String? = null
     /** The `receive_enabled` of the save in flight. */
     private var pendingReceiveEnabled = false
@@ -114,12 +119,9 @@ class GatewayService : Service() {
             log = { graph.log(it) },
         )
         Notifications.ensureChannels(this)
+        Telemetry.captureLifecycle(this)
         running = true
-        startForeground(
-            Notifications.ID_GATEWAY,
-            Notifications.gateway(this, stateFlow.value),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
-        )
+        eventsOut = events
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
         registerReceiver(
             powerReceiver,
@@ -137,14 +139,25 @@ class GatewayService : Service() {
             graph.sender.failLost()
             for (ev in events) runCatching { process(ev) }.onFailure { graph.log("event failed: $it", "E") }
         }
+        scope.launch {
+            val before = Push.token(this@GatewayService)
+            val token = Push.refresh(this@GatewayService) ?: return@launch
+            if (token != before) events.trySend(GatewayEvent.FcmToken(token))
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForeground(
+            Notifications.ID_GATEWAY,
+            Notifications.gateway(this, stateFlow.value),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
+        )
         val prefs = Graph.of(this).prefs
         if (!prefs.gatewayEnabled || !prefs.paired) {
             shutdown()
             return START_NOT_STICKY
         }
+        connection.allowReconnect()
         events.trySend(GatewayEvent.Nudge)
         return START_STICKY
     }
@@ -153,10 +166,12 @@ class GatewayService : Service() {
 
     override fun onDestroy() {
         running = false
+        stopping = true
+        if (eventsOut === events) eventsOut = null
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
         runCatching { unregisterReceiver(powerReceiver) }
         graph.uplink.detach()
-        connection.close(1000, "stopped")
+        closeSocket()
         scope.cancel()
         events.close()
         super.onDestroy()
@@ -164,8 +179,17 @@ class GatewayService : Service() {
 
     private fun shutdown() {
         stopping = true
+        closeSocket()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /** Close once. A user switch-off (still paired, gateway disabled) uses 4010 `gateway_off`. */
+    private fun closeSocket() {
+        if (socketClosed) return
+        socketClosed = true
+        val off = graph.prefs.paired && !graph.prefs.gatewayEnabled
+        connection.close(if (off) CLOSE_GATEWAY_OFF else 1000, if (off) "gateway_off" else "stopped")
     }
 
     // --- event loop (single coroutine)
@@ -184,6 +208,7 @@ class GatewayService : Service() {
                 connect()
             }
             GatewayEvent.HealthTick -> sendHealth()
+            is GatewayEvent.FcmToken -> if (ev.token != announcedToken) sendHealth(ev.token)
             is GatewayEvent.SaveForwarding -> saveForwarding(ev.receiveEnabled, ev.filters, ev.baseRev)
             is GatewayEvent.Opened -> if (ev.gen == connection.generation) onOpened()
             is GatewayEvent.Message -> if (ev.gen == connection.generation) {
@@ -195,7 +220,7 @@ class GatewayService : Service() {
     }
 
     private fun connect() {
-        if (stopping) return
+        if (stopping || connection.reconnectSuppressed) return
         reconnectJob?.cancel()
         val prefs = graph.prefs
         val url = prefs.wsUrl
@@ -220,6 +245,7 @@ class GatewayService : Service() {
         backoff.onOpened(SystemClock.elapsedRealtime())
         val hello = telemetry.hello(graph.uplink.size())
         lastPermissions = hello.permissions
+        announcedToken = hello.fcmToken
         connection.send(Frames.encode(FrameType.HELLO, Hello.serializer(), hello))
         graph.log("socket open; hello sent")
     }
@@ -309,6 +335,10 @@ class GatewayService : Service() {
             shutdown()
             return
         }
+        if (stopping || (code == CLOSE_GATEWAY_OFF && connection.reconnectSuppressed)) {
+            setState { it.copy(connection = ConnectionState.STOPPED, lastError = null) }
+            return
+        }
         setState { it.copy(connection = ConnectionState.CONNECTING, lastError = "$code $reason") }
         val wait = backoff.nextDelayMs()
         reconnectJob?.cancel()
@@ -318,11 +348,15 @@ class GatewayService : Service() {
         }
     }
 
-    private fun sendHealth() {
+    private fun sendHealth(fcmToken: String? = null) {
+        // Before `welcome` the hello (built from prefs) carries the token, and a health must not precede it.
         if (!welcomed) return
-        val health = telemetry.health(graph.uplink.size())
+        val token = fcmToken?.takeIf { it != announcedToken }
+        val health = telemetry.health(graph.uplink.size(), token)
         lastPermissions = health.permissions
-        connection.send(Frames.encode(FrameType.HEALTH, Health.serializer(), health))
+        if (connection.send(Frames.encode(FrameType.HEALTH, Health.serializer(), health)) && token != null) {
+            announcedToken = token
+        }
     }
 
     private fun maybeSendHealthOnPermissionChange() {
@@ -355,17 +389,26 @@ class GatewayService : Service() {
         var running = false
             private set
 
-        /** Starts the service or nudges a running one; failures (background limits) are logged. */
-        fun start(context: Context) {
+        @Volatile
+        private var eventsOut: Channel<GatewayEvent>? = null
+
+        /** Starts the service or nudges a running one. False when the start is refused, for example in the background. */
+        fun start(context: Context): Boolean =
             try {
                 context.startForegroundService(Intent(context, GatewayService::class.java))
+                true
             } catch (e: Exception) {
                 Graph.of(context).log("could not start gateway: ${e.javaClass.simpleName}", "E")
+                false
             }
-        }
 
         fun stop(context: Context) {
             context.stopService(Intent(context, GatewayService::class.java))
+        }
+
+        /** If the socket is open, send a health frame carrying [token]. */
+        fun onFcmToken(token: String) {
+            eventsOut?.trySend(GatewayEvent.FcmToken(token))
         }
     }
 }

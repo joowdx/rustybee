@@ -17,6 +17,7 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
+import dev.joowdx.rustybee.R
 import dev.joowdx.rustybee.gateway.ConnectionState
 import dev.joowdx.rustybee.gateway.GatewayService
 import dev.joowdx.rustybee.gateway.GatewayState
@@ -165,13 +166,16 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun checkRow(label: String, ok: Boolean, action: String?, onAction: () -> Unit): View {
+    private fun checkRow(label: String, ok: Boolean, action: String?, hint: String? = null, onAction: () -> Unit): View {
         val row = horizontal()
         row.add(text(if (ok) "✓" else "✗", 17f, bold = true).apply {
             setTextColor((if (ok) 0xFF16A34A else 0xFFDC2626).toInt())
             setPadding(0, 0, dp(12), 0)
         })
-        row.add(text(label), 1f)
+        val labels = vertical()
+        labels.add(text(label))
+        if (hint != null) labels.add(text(hint, 13f).apply { alpha = 0.7f })
+        row.add(labels, 1f)
         if (action != null) row.add(button(action, onAction))
         return row
     }
@@ -185,7 +189,8 @@ class MainActivity : Activity() {
             requestRuntimePermissions()
         })
         val notif = telemetry.permissions().notifications
-        checklist.add(checkRow("Notifications", notif, if (notif) null else "Allow") {
+        val notifHint = if (Push.SUPPORTED) getString(R.string.hint_notifications_wake) else null
+        checklist.add(checkRow("Notifications", notif, if (notif) null else "Allow", notifHint) {
             if (!granted(Manifest.permission.POST_NOTIFICATIONS)) {
                 requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_PERMS)
             } else {
@@ -203,7 +208,10 @@ class MainActivity : Activity() {
         if (Push.SUPPORTED) {
             val token = Push.token(this) != null
             checklist.add(checkRow("Push wake (FCM token)", token, if (token) null else "Retry") {
-                Push.refresh(this); refreshChecklist()
+                scope.launch {
+                    Push.refresh(this@MainActivity)
+                    refreshChecklist()
+                }
             })
         }
         checklist.add(

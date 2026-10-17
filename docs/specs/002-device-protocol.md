@@ -44,10 +44,11 @@ This is the contract between the server and the Android app. It replaces MQTT an
 - A WebSocket message or frame larger than 256 KiB closes the socket. No valid frame comes near it.
 - If the device already has an open socket, the server closes the old one with close code **4000 `replaced`**.
 - Close code **4003 `revoked`** means the device was removed. The app wipes its credentials, stops the gateway and shows setup again.
+- Close code **4010 `gateway_off`** is sent by the app when the user switches the gateway off on the phone. The server sets `gateway_off_at` and stops FCM wakes for the device (spec 009); the next `hello` clears it. The app does not reconnect after closing with 4010.
 - Liveness:
   - The app sends WebSocket ping frames every `config.ping_s` seconds (OkHttp `pingInterval`).
   - The server closes the socket (code 1001) if it receives no frame for `2 × ping_s + 30` seconds.
-  - The app reconnects after any close except 4003. It uses jittered exponential backoff (1 s doubling to 120 s, ±20 %), resets to 1 s after a connection has stayed up for 60 s, and also reconnects immediately when the default network changes.
+  - The app reconnects after any close except 4003, and except its own 4010. It uses jittered exponential backoff (1 s doubling to 120 s, ±20 %), resets to 1 s after a connection has stayed up for 60 s, and also reconnects immediately when the default network changes.
 
 ### Envelope
 Every text frame is one JSON object:
@@ -63,15 +64,26 @@ Every text frame is one JSON object:
 ### Device → server
 | type | data | when |
 |---|---|---|
-| `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted}, outbox}` | first frame after every connect |
+| `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted}, outbox, lifecycle}` | first frame after every connect |
 | `status` | `{msg_id, state:"sent"\|"delivered"\|"failed", at, parts, error:{code,message}\|null}` | each change of a message's outcome |
 | `inbound` | `{uid, from, body, sim, received_at}` | each received SMS, while forwarding is on, that passes the filters |
-| `health` | `{battery, network, permissions, outbox}` | every 15 min while connected, and on a change of charging state or permissions |
+| `health` | `{battery, network, permissions, outbox, fcm_token?}` | every 15 min while connected, on a change of charging state or permissions, and at once when FCM issues a new token |
 | `set_forwarding` | `{base_rev, receive_enabled, filters}` | the user saves the Forwarding screen on the phone, or the phone restores its own "off" (below) |
 
 - `status.parts` must be at least 1 when present. A `status` with `parts` below 1 is nacked `bad_frame` and changes nothing.
 - The server clamps `status.at` to the range from the message's `dispatched_at` to its own clock (just its own clock if the message has no `dispatched_at`), so a wrong phone clock never stores an outcome before dispatch or in the future.
 - An `inbound` that arrives while the stored `receive_enabled` is `false` (for example one queued on the phone before forwarding was turned off) is acked and dropped: its frame id is recorded, but no message is stored and no webhook fires. The check is made in the same write as the insert.
+- `hello.lifecycle` says how the app process was started and why the one before it ended. Both flavors send it:
+  ```json
+  {"start":{"reason":"push","at":1760700000000,"was_force_stopped":false},
+   "exit":{"reason":"low_memory","at":1760690000000,"description":null}}
+  ```
+  - `start` comes from `ApplicationStartInfo` for the current process. `reason` is one of `alarm`, `backup`, `boot_complete`, `broadcast`, `content_provider`, `job`, `launcher`, `launcher_recents`, `other`, `push`, `service`, `start_activity`, or `unknown_<int>`. `was_force_stopped` is true when the app had been force-stopped before this start.
+  - `exit` comes from `ApplicationExitInfo` for the previous process, or is `null` when the OS has none. `reason` is one of `anr`, `crash`, `crash_native`, `dependency_died`, `excessive_resource_usage`, `exit_self`, `freezer`, `initialization_failure`, `low_memory`, `other`, `package_state_change`, `package_updated`, `permission_change`, `signaled`, `unknown`, `user_requested`, `user_stopped`, or `unknown_<int>`. `description` is the OS's text, cut to 200 characters, or `null`.
+  - `at` values are epoch milliseconds from the phone's clock.
+  - `lifecycle` is optional so older apps keep working. A missing or malformed `lifecycle` is ignored, not nacked; every other `hello` field is checked as before.
+- `permissions.notifications` is true only when `POST_NOTIFICATIONS` is granted **and** the gateway notification channel is not blocked. FCM wakes depend on both (spec 009).
+- `health.fcm_token` is sent only when the token changed; when present, the server replaces the stored token.
 - `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100.
 - `inbound.uid` is the lowercase hex of the first 16 bytes of `SHA-256(from + "\n" + received_at + "\n" + body + "\n" + (sim ?: ""))`.
 - `status.error.code` is one of:
@@ -123,7 +135,7 @@ Every text frame is one JSON object:
 
 ### Server handling
 - Pacing and replay are covered in spec 006.
-- On `hello`, the server stores the telemetry, sets `connected=1`, acks, sends `welcome`, then wakes the dispatcher.
+- On `hello`, the server stores the telemetry and `lifecycle`, sets `connected=1`, clears the wake state (`wake_attempts=0`, `unreachable_at=NULL`, `gateway_off_at=NULL`, spec 009), acks, sends `welcome`, then wakes the dispatcher.
 
 ## Acceptance criteria
 1. AC-002-01 Every fixture in `protocol/fixtures/` parses and round-trips in both the server and the app test suites.
@@ -141,6 +153,8 @@ Every text frame is one JSON object:
 13. AC-002-13 A web save whose `filters_rev` is older than the stored one keeps the phone's newer filters and shows the reload error, while still saving the other fields and still able to turn forwarding off. With the current rev, or when the submitted filters equal the stored ones, it saves normally.
 14. AC-002-14 An `inbound` received while the stored `receive_enabled` is `false` is acked and its frame id recorded, but no message row or webhook is created.
 15. AC-002-15 A `status` with `parts` below 1 is nacked `bad_frame` and changes nothing. A `status.at` before `dispatched_at` is stored as `dispatched_at`, and one in the future as the server's now.
+16. AC-002-16 A `hello` with `lifecycle` stores it and clears `wake_attempts`, `unreachable_at` and `gateway_off_at`. A `hello` without `lifecycle`, or with a malformed one, is acked and connects as before. `protocol/fixtures/hello.json` carries a full `lifecycle`.
+17. AC-002-17 An app close with 4010 sets `gateway_off_at` and the app does not reconnect. A `health` with `fcm_token` replaces the stored token; one without leaves it unchanged.
 
 ## Test plan
 | AC | Test |
@@ -156,6 +170,8 @@ Every text frame is one JSON object:
 | 13 | `server/tests/ui.rs::ac_002_13_web_save_keeps_newer_phone_filters` |
 | 14 | `server/tests/device_ws.rs::ac_002_14_inbound_dropped_while_forwarding_off` |
 | 15 | `server/tests/device_ws.rs::ac_002_15_status_at_is_clamped_and_parts_checked` |
+| 16 | `server/tests/device_ws.rs::ac_002_16_hello_lifecycle_clears_wake_state`; app `ProtocolFixturesTest` |
+| 17 | `server/tests/device_ws.rs::ac_002_17_gateway_off_close_and_token_update` |
 
 ## Assumptions
 - Ping frames come from the app only. The server never sends pings, which saves server-initiated wakeups on the phone.

@@ -18,6 +18,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0002_otp_filters",
         include_str!("../../migrations/0002_otp_filters.sql"),
     ),
+    (
+        "0003_fcm_wake",
+        include_str!("../../migrations/0003_fcm_wake.sql"),
+    ),
 ];
 
 pub const READERS: usize = 3;

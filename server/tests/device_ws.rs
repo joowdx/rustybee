@@ -3,10 +3,12 @@
 mod common;
 
 use common::*;
+use futures_util::SinkExt;
 use rustybee::store::{devices, webhooks};
 use serde_json::json;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 
 async fn internal_id(s: &Server, public: &str) -> i64 {
     let p = public.to_string();
@@ -441,5 +443,154 @@ async fn ac_004_08_expired_message_takes_late_sent() {
             .unwrap();
         assert_eq!(n, 1, "{ev}");
     }
+    s.stop().await;
+}
+
+async fn wake_row(s: &Server, id: i64) -> devices::DeviceRow {
+    s.app()
+        .store
+        .read(move |c| devices::by_id(c, id))
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+async fn dirty_wake(s: &Server, id: i64) {
+    s.app()
+        .store
+        .write(move |c| {
+            c.execute(
+                "UPDATE devices SET wake_attempts=4, unreachable_at=11, gateway_off_at=22 WHERE id=?1",
+                [id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+async fn wait_down(s: &Server, id: i64) -> bool {
+    eventually(|| async {
+        !s.app()
+            .store
+            .read(move |c| devices::by_id(c, id))
+            .await
+            .unwrap()
+            .unwrap()
+            .connected
+    })
+    .await
+}
+
+#[tokio::test]
+async fn ac_002_16_hello_lifecycle_clears_wake_state() {
+    let s = server().await;
+    let (pid, token) = s.pair("A").await;
+    let id = internal_id(&s, &pid).await;
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../protocol/fixtures/hello.json")).unwrap();
+    dirty_wake(&s, id).await;
+    let d = Device::connect(&s, &token).await;
+    let row = wake_row(&s, id).await;
+    assert_eq!(row.wake_attempts, 0);
+    assert!(row.unreachable_at.is_none());
+    assert!(row.gateway_off_at.is_none());
+    assert!(row.connected);
+    let stored: serde_json::Value =
+        serde_json::from_str(row.lifecycle_json.as_deref().unwrap()).unwrap();
+    assert_eq!(stored, fixture["data"]["lifecycle"]);
+    d.close().await;
+    assert!(wait_down(&s, id).await);
+
+    // Malformed lifecycle is ignored: acked, connected, previous lifecycle kept.
+    dirty_wake(&s, id).await;
+    let mut hello = hello_frame();
+    hello["data"]["lifecycle"] = json!({"start": "nope"});
+    let mut d = Device {
+        ws: connect_raw(&s.ws_url(), &token).await.unwrap(),
+    };
+    d.send(&hello).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], hello["id"]);
+    d.recv_type("welcome").await;
+    let row = wake_row(&s, id).await;
+    assert_eq!(row.wake_attempts, 0);
+    assert!(row.unreachable_at.is_none());
+    assert!(row.gateway_off_at.is_none());
+    assert!(row.connected);
+    let stored: serde_json::Value =
+        serde_json::from_str(row.lifecycle_json.as_deref().unwrap()).unwrap();
+    assert_eq!(stored, fixture["data"]["lifecycle"]);
+    d.close().await;
+    assert!(wait_down(&s, id).await);
+
+    // No lifecycle field at all: same, and the stored one stays.
+    dirty_wake(&s, id).await;
+    let mut hello = hello_frame();
+    hello["data"].as_object_mut().unwrap().remove("lifecycle");
+    let mut d = Device {
+        ws: connect_raw(&s.ws_url(), &token).await.unwrap(),
+    };
+    d.send(&hello).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], hello["id"]);
+    d.recv_type("welcome").await;
+    let row = wake_row(&s, id).await;
+    assert_eq!(row.wake_attempts, 0);
+    assert!(row.unreachable_at.is_none());
+    assert!(row.gateway_off_at.is_none());
+    let stored: serde_json::Value =
+        serde_json::from_str(row.lifecycle_json.as_deref().unwrap()).unwrap();
+    assert_eq!(stored, fixture["data"]["lifecycle"]);
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_002_17_gateway_off_close_and_token_update() {
+    let s = server().await;
+    let (pid, token) = s.pair("A").await;
+    let id = internal_id(&s, &pid).await;
+    s.app()
+        .store
+        .write(move |c| {
+            c.execute("UPDATE devices SET fcm_token='old-token' WHERE id=?1", [id])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let mut d = Device::connect(&s, &token).await;
+    // The fixture hello carries a null token, which replaces the seeded one.
+    assert!(wake_row(&s, id).await.fcm_token.is_none());
+    let h = frame("health", json!({"outbox": 1, "fcm_token": "tok-new"}));
+    d.send(&h).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], h["id"]);
+    assert_eq!(wake_row(&s, id).await.fcm_token.as_deref(), Some("tok-new"));
+    let h = frame("health", json!({"outbox": 2}));
+    d.send(&h).await;
+    d.recv_type("ack").await;
+    assert_eq!(wake_row(&s, id).await.fcm_token.as_deref(), Some("tok-new"));
+    d.close().await;
+    assert!(wait_down(&s, id).await);
+    assert!(wake_row(&s, id).await.gateway_off_at.is_none());
+
+    let mut d = Device::connect(&s, &token).await;
+    let _ =
+        d.ws.send(tungstenite::Message::Close(Some(CloseFrame {
+            code: 4010.into(),
+            reason: "gateway_off".into(),
+        })))
+        .await;
+    let flagged = eventually(|| async {
+        s.app()
+            .store
+            .read(move |c| devices::by_id(c, id))
+            .await
+            .unwrap()
+            .unwrap()
+            .gateway_off_at
+            .is_some()
+    })
+    .await;
+    assert!(flagged);
+    assert!(!wake_row(&s, id).await.connected);
+    // The app does not open another socket after 4010.
     s.stop().await;
 }

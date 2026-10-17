@@ -13,7 +13,7 @@ Spec-driven development with a soft gate: see `CLAUDE.md`. The template is `_tem
 | [006](006-dispatch.md) | Dispatcher, pacing, replay | implemented |
 | [007](007-public-api.md) | `/api/v1` | implemented |
 | [008](008-webhooks.md) | Webhooks | implemented |
-| [009](009-fcm-wake.md) | Optional FCM wake | implemented |
+| [009](009-fcm-wake.md) | Optional FCM wake, idle wake with backoff, unreachable flag | implemented |
 | [010](010-web-ui.md) | Web UI | implemented |
 | [011](011-android-architecture.md) | Android architecture | implemented |
 | [012](012-android-sms.md) | Android SMS send and receive | implemented |

@@ -86,6 +86,14 @@ pub struct Hello {
     pub fcm_token: Option<String>,
     pub permissions: Option<Permissions>,
     pub outbox: Option<i64>,
+    /// How this process started and why the previous one ended. Missing or
+    /// malformed values are dropped so the rest of `hello` still stands (spec 002).
+    #[serde(
+        default,
+        deserialize_with = "de_lifecycle",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lifecycle: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -94,6 +102,60 @@ pub struct Health {
     pub network: Option<String>,
     pub permissions: Option<Permissions>,
     pub outbox: Option<i64>,
+    /// Sent only when the token changed; replaces the stored token (spec 002).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fcm_token: Option<String>,
+}
+
+/// Keep a `hello.lifecycle` object only when it has the shape from spec 002.
+/// Anything else is ignored rather than failing the frame.
+fn de_lifecycle<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.filter(lifecycle_well_formed))
+}
+
+fn lifecycle_well_formed(v: &Value) -> bool {
+    let Some(obj) = v.as_object() else {
+        return false;
+    };
+    // `start` is omitted when the OS has no record for this process (spec 011).
+    match obj.get("start") {
+        None | Some(Value::Null) => {}
+        Some(start) => {
+            let Some(start) = start.as_object() else {
+                return false;
+            };
+            if start.get("reason").and_then(Value::as_str).is_none()
+                || start.get("at").and_then(Value::as_i64).is_none()
+                || start
+                    .get("was_force_stopped")
+                    .and_then(Value::as_bool)
+                    .is_none()
+            {
+                return false;
+            }
+        }
+    }
+    match obj.get("exit") {
+        None | Some(Value::Null) => true,
+        Some(exit) => {
+            let Some(exit) = exit.as_object() else {
+                return false;
+            };
+            if exit.get("reason").and_then(Value::as_str).is_none()
+                || exit.get("at").and_then(Value::as_i64).is_none()
+            {
+                return false;
+            }
+            matches!(
+                exit.get("description"),
+                None | Some(Value::Null) | Some(Value::String(_))
+            )
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

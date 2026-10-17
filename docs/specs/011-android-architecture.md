@@ -6,7 +6,10 @@ Updated: 2026-10-17
 ## Design
 
 ### Build
-- **Project:** a single `:app` module with `applicationId dev.joowdx.rustybee`, `namespace dev.joowdx.rustybee`, and `compileSdk`, `minSdk` and `targetSdk` all set to 36.
+- **Project:** a single `:app` module with `applicationId dev.joowdx.rustybee`, `namespace dev.joowdx.rustybee`, `compileSdk` and `targetSdk` 36, and `minSdk` 35 (Android 15).
+  - Nothing in the app needs API 36. The floor is API 35 for `ApplicationStartInfo` (below); before that it would be API 34 for the `remoteMessaging` FGS type.
+  - An API 36 call added later needs an `SDK_INT` check, which lint enforces.
+  - Android 15 does not count jobs that run while an FGS is active against the job quota the way Android 16 does. Nothing here relies on either behaviour, but both versions are tested (below).
 - **Toolchain:** Kotlin 2.x with JVM target 17, the current stable AGP, and a version catalog in `gradle/libs.versions.toml`.
 - **Flavors:** dimension `dist` with `foss` (the default) and `gms`. Only `gms` applies the `com.google.gms.google-services` plugin, and only if `src/gms/google-services.json` exists; otherwise the gms build fails with a clear message.
 - **Release build:**
@@ -53,8 +56,8 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 - **Notification:** channel `gateway`, `IMPORTANCE_LOW`, ongoing. It shows "Connected" or "Reconnecting…" and the count of sends today. Tapping it opens `MainActivity`.
 - **Lifecycle:**
   - Started by the UI toggle, `BootReceiver`, `Watchdog`, `WakeService` and the receivers when work arrives.
-  - `onStartCommand` returns `START_STICKY`.
-  - It stops itself (`stopForeground` + `stopSelf`) when the gateway is disabled or unpaired.
+  - `onStartCommand` calls `startForeground` before anything else and returns `START_STICKY`. Without the battery exemption a sticky restart may be refused (spec 009); it is kept because it costs nothing when it works.
+  - It stops itself (`stopForeground` + `stopSelf`) when the gateway is disabled or unpaired. When the user switches the gateway off, it first closes the socket with 4010 `gateway_off` (spec 002), if open.
   - Android 14+ lets the user dismiss the notification. The service keeps running and re-posts the notification on the next state change.
 - **Scope:** one `CoroutineScope(SupervisorJob() + Dispatchers.Default)`. The parts below share one `Mutex`-free design: frames are processed in a single coroutine fed by a `Channel`.
   - **`Connection`:**
@@ -70,9 +73,21 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 ### Boot, watchdog and battery
 - `BootReceiver`: on `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`, if paired and enabled, calls `startForegroundService`. `remoteMessaging` is not in the list of types banned from boot.
 - `Watchdog`: a platform `JobScheduler` job, id 1, periodic every 15 min, with `NETWORK_TYPE_ANY` and persisted.
-  - If the gateway is enabled and the service isn't running: when the app is battery-unrestricted, start the FGS; otherwise post a high-importance "Gateway stopped — tap to restart" notification.
+  - If the gateway is enabled and the service isn't running: when the app is battery-unrestricted, start the FGS; otherwise post a high-importance "Gateway stopped — tap to restart" notification (the alerts channel).
+  - `WakeService` (gms) posts the same notification when its own start attempt throws (spec 009). `GatewayService.start` returns whether the start succeeded so callers can fall back.
   - The job finishes immediately.
 - The UI asks for the battery-optimization exemption with `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, and explains why.
+
+### FCM token (gms)
+- `Push.refresh` runs at service start and at pairing. Pairing waits up to 5 s for it, then sends whatever token it has (spec 009).
+- `WakeService.onNewToken` stores the token and, if the socket is open, sends a `health` with `fcm_token` at once.
+
+### Process lifecycle report
+- `Telemetry` adds `lifecycle` (spec 002) to every `hello`, in both flavors:
+  - `start`: the first entry of `ActivityManager.getHistoricalProcessStartReasons(1)`, if it belongs to the current process (its `pid` matches); otherwise `start` is omitted. Uses `getReason()`, `getStartupTimestamps()[START_TIMESTAMP_LAUNCH]` and `wasForceStopped()`.
+  - `exit`: the first entry of `ActivityManager.getHistoricalProcessExitReasons(packageName, 0, 1)`, or `null`. Uses `getReason()`, `getTimestamp()` and `getDescription()`.
+  - Both are read once per process, when `GatewayService` is created, and reused for every reconnect in that process.
+- The reason ints are mapped to the strings of spec 002 in a pure function, so the mapping is unit-tested on the JVM.
 
 ### Manifest
 - **Permissions:** `INTERNET`, `ACCESS_NETWORK_STATE`, `SEND_SMS`, `RECEIVE_SMS`, `READ_PHONE_STATE` (SIM list), `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_REMOTE_MESSAGING`, `RECEIVE_BOOT_COMPLETED`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `WAKE_LOCK`.
@@ -88,6 +103,8 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 6. AC-011-06 While connected and idle, `dumpsys power` shows no wake lock held by the app.
 7. AC-011-07 Log redaction keeps only the last 4 digits of numbers written with spaces, dashes, dots or parentheses, and leaves short numbers and ids alone.
 8. AC-011-08 Service start deletes `sent` rows in a final state older than 7 days and keeps `accepted` rows.
+9. AC-011-09 Every `ApplicationStartInfo` and `ApplicationExitInfo` reason constant maps to its spec 002 string, and an unknown int maps to `unknown_<int>`.
+10. AC-011-10 Killing the app process (`adb shell am kill`) with the gateway enabled and default battery settings: on gms the gateway reconnects with `hello.lifecycle.exit.reason` set and `start.reason="push"`; on foss the watchdog posts "Gateway stopped — tap to restart", and tapping it reconnects with `start.reason="start_activity"`. Manual check on an API 35 and an API 36+ emulator.
 
 ## Test plan
 | AC | Test |
@@ -99,6 +116,8 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 | 05, 06 | Manual check in M7 |
 | 07 | `RedactTest` |
 | 08 | `RedactTest` (final-state list); the `Db.pruneSent` SQL is checked by review, since Robolectric is not used |
+| 09 | `LifecycleReasonTest` |
+| 10 | Manual check; the gms half also covers AC-009-05 |
 
 ## Assumptions
 - Robolectric is not used, to keep the test toolchain light. Code that needs the Android framework is kept thin.

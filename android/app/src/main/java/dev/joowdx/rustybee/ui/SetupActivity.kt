@@ -201,7 +201,7 @@ class SetupActivity : Activity() {
 
     private class PairingException(message: String) : Exception(message)
 
-    private fun request(base: String, code: String): PairResponse {
+    private suspend fun request(base: String, code: String): PairResponse {
         val telemetry = Telemetry(this)
         val body = PairRequest(
             code = code,
@@ -211,7 +211,7 @@ class SetupActivity : Activity() {
             osVersion = Build.VERSION.RELEASE,
             appVersion = BuildConfig.VERSION_NAME,
             appBuild = BuildConfig.VERSION_CODE,
-            fcmToken = Push.token(this),
+            fcmToken = Push.refresh(this),
         )
         val client = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
         val req = Request.Builder()

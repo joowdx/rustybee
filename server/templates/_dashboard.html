@@ -8,7 +8,7 @@
 {% for d in devices %}
   <article class="phone">
     <div class="sb">
-      <span{% if d.online %} class="on"{% endif %}><span class="dot"></span> {% if d.online %}Online{% else %}Seen {{ d.last_seen }}{% endif %}</span>
+      <span{% if let Some(c) = d.status_class %} class="{{ c }}"{% endif %}><span class="dot"></span> {{ d.status_text }}</span>
       <span class="gap"></span>
       {% if d.network != "–" %}<span class="net"><svg aria-hidden="true"><use href="#i-{% if d.network == "wifi" %}wifi{% else %}cell{% endif %}"/></svg>{{ d.network }}</span>{% endif %}
       {% if let Some(p) = d.battery_pct %}<span class="bat{% if *p < 20 %} low{% endif %}{% if d.charging %} chg{% endif %}" title="{{ d.battery }}{% if d.charging %}, charging{% endif %}"><i><b style="width:{{ p }}%"></b></i>{{ d.battery }}</span>{% endif %}
@@ -17,7 +17,9 @@
       <h3>{{ d.name }}</h3>
       <div class="muted small">{{ d.model }}</div>
       <div class="ph-q"><span><b>{{ d.queued }}</b>queued</span>{% if d.outbox != "–" %}<span><b>{{ d.outbox }}</b>in phone outbox</span>{% endif %}</div>
+      {% if let Some(n) = d.unreachable %}<p class="warn">{{ n }}</p>{% endif %}
       {% for w in d.warnings %}<p class="warn">{{ w }}</p>{% endfor %}
+      {% if let Some(text) = d.restart %}{% if let Some(t) = d.restart_title %}<p class="muted small" title="{{ t }}">{{ text }}</p>{% else %}<p class="muted small">{{ text }}</p>{% endif %}{% endif %}
     </div>
   </article>
 {% endfor %}

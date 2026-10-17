@@ -2,7 +2,7 @@
 
 use super::pages::delivery_last;
 use super::{
-    Layout, Notice, Opt, Res, back_err, ise, last_seen, not_found, on, pct, render, see_other,
+    Layout, Notice, Opt, Res, back_err, device_face, ise, not_found, on, pct, render, see_other,
     sims_of,
 };
 use crate::app::{App, VERSION};
@@ -28,8 +28,12 @@ struct DeviceView {
     id: String,
     name: String,
     model: String,
-    online: bool,
-    last_seen: String,
+    status_class: Option<&'static str>,
+    status_text: String,
+    unreachable: Option<String>,
+    restart: Option<String>,
+    restart_title: Option<String>,
+    warnings: Vec<String>,
     battery_pct: Option<i64>,
     charging: bool,
     network: Option<String>,
@@ -67,6 +71,7 @@ struct DevicesPage {
 }
 
 fn device_view(now: i64, d: &DeviceRow) -> DeviceView {
+    let face = device_face(now, d);
     DeviceView {
         id: d.public_id.clone(),
         name: d.name.clone(),
@@ -75,8 +80,12 @@ fn device_view(now: i64, d: &DeviceRow) -> DeviceView {
             .flatten()
             .collect::<Vec<_>>()
             .join(" "),
-        online: d.connected,
-        last_seen: last_seen(now, d),
+        status_class: face.status_class,
+        status_text: face.status_text,
+        unreachable: face.unreachable,
+        restart: face.restart,
+        restart_title: face.restart_title,
+        warnings: face.warnings,
         battery_pct: d.battery_level().map(|b| b.clamp(0, 100)),
         charging: d.charging().unwrap_or(false),
         network: d.network(),
