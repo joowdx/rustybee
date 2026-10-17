@@ -25,7 +25,8 @@ The rewrite lives on the orphan branch `master`, which shares no history with th
   - `pr.yml` runs on every PR and fails unless the title is a Conventional Commit (`feat(android): ...`, `fix: ...`, `feat!: ...`). It is the check to require in branch protection; the path-filtered workflows below skip when their files are untouched.
   - `server.yml`, triggered by `server/**`, `protocol/**`, `deploy/**`:
     - on a PR: runs `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, then builds the image natively on amd64 and arm64 runners without pushing;
-    - on a push to `master` that touches what goes into the image (`server/**`, `deploy/Dockerfile`, `deploy/Dockerfile.dockerignore`): also publishes the multi-arch image `ghcr.io/joowdx/rustybee` tagged `latest`, `sha-<short>` and the major version of `server/Cargo.toml`.
+    - on a push to `master` that touches what goes into the image (`server/**`, `deploy/Dockerfile`, `deploy/Dockerfile.dockerignore`, `VERSION`): also computes the next server version, publishes the multi-arch image `ghcr.io/joowdx/rustybee` tagged `latest`, `sha-<short>`, `X`, `X.Y` and `X.Y.Z`, and tags the commit `server-vX.Y.Z`;
+    - on every master run and on a manual run: gives each `server-vX.Y.Z` tag's image (`sha-<short>`) the tag `X.Y.Z` if it lacks one, so a missed tagging heals itself. A manual run with nothing new since the last `server-v` tag only does this.
   - `android.yml`, triggered by `android/**`, `protocol/**`, `VERSION`, on JDK 21:
     - on a PR: runs `./gradlew testFossDebugUnitTest assembleFossRelease` unsigned (the signing key and its passwords are never handed to PR builds) and uploads the APK as a run artifact. A parallel `pr-checks` job compiles the gms flavor against the dummy `android/ci/google-services.dummy.json` and runs `lintFossRelease`;
     - on every run: `android/ci/check-apk.sh` checks AC-011-01 on the foss release APK (under 3 MB; `dexdump` finds no Firebase, Play services, AppCompat or Compose classes);
@@ -36,7 +37,7 @@ The rewrite lives on the orphan branch `master`, which shares no history with th
   - The project starts at **3.0.0**, after the 2.x releases of the old fork, and follows semver from here with no upstream suffix.
   - Releases are the Android app only. `.github/scripts/next-version.sh` bumps the last `vX.Y.Z` tag by the commits since it that touch `android/` or `protocol/`: a breaking change (`type!:` or a `BREAKING CHANGE:` footer) bumps major, a `feat` bumps minor, anything else bumps patch. Nothing is committed back; the tag is the record.
   - The repository-root `VERSION` file is a floor: the release is the higher of it and the bumped tag, so raising it in a PR forces a jump, and with no tag yet `VERSION` itself is released. Local builds read it; CI passes the release version in `RUSTYBEE_VERSION`. The app sets `versionName` to the version and `versionCode = major×10000 + minor×100 + patch`.
-  - `server/Cargo.toml` versions the server on its own; only its major goes into the image tag.
+  - The server image is versioned on its own by the same rules: `next-version.sh server` bumps the last `server-vX.Y.Z` tag by the commits since it that touch what goes into the image or `VERSION`. The app and the server share a major through the `VERSION` floor, but their minor and patch move independently. CI passes the version to the image build as `RUSTYBEE_VERSION`, which the binary reports; local builds report `server/Cargo.toml`.
 - Branding: the legacy bee icons are not carried over. The rusty bee in `branding/` is the source for every icon: the Android adaptive and notification icons, the web UI favicon and the header and login logo, which are one vector `bee.svg`. `branding/generate-icons.sh` regenerates them.
 
 ## Acceptance criteria
@@ -44,7 +45,7 @@ The rewrite lives on the orphan branch `master`, which shares no history with th
 2. AC-001-02 Secrets matching the `.gitignore` patterns can never be committed.
 3. AC-001-03 Both CI workflows pass on a clean checkout.
 4. AC-001-04 Merging a PR that touches `android/` publishes the signed APK in a GitHub release `v<version>`, versioned by its Conventional Commit title.
-5. AC-001-05 Merging a PR that touches `server/` publishes the multi-arch image to ghcr. A PR that only changes docs, `deploy/compose.yaml` or `deploy/.env.example` publishes nothing.
+5. AC-001-05 Merging a PR that touches `server/` publishes the multi-arch image to ghcr, tagged with its own `X.Y.Z` and the git tag `server-vX.Y.Z`. A PR that only changes docs, `deploy/compose.yaml` or `deploy/.env.example` publishes nothing.
 6. AC-001-06 A PR whose title is not a Conventional Commit fails `pr.yml`.
 
 ## Test plan

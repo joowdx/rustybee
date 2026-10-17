@@ -2,15 +2,20 @@
 #
 # Every push to master that touches the server pushes the multi-arch image
 # ghcr.io/<owner>/<repo> (linux/amd64 built on amd64, linux/arm64 on arm64),
-# tagged latest, sha-<short> and the major of server/Cargo.toml (spec 001).
+# tagged latest, sha-<short>, X, X.Y and X.Y.Z, and tags the commit
+# server-vX.Y.Z. `.github/scripts/next-version.sh server` picks the version
+# from the Conventional Commits since the last server-v tag (spec 001).
+#
+# Every master run, and a manual run, also gives each server-v tag's image its
+# X.Y.Z tag if it lacks one, so a missed or failed tagging heals itself.
 name: server
 on:
   pull_request:
-    paths: ["server/**", "protocol/**", "deploy/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "protocol/**", "deploy/**", "VERSION", ".github/workflows/server.yml", ".github/scripts/next-version.sh"]
   push:
     branches: [master]
     # Only what goes into the image publishes it; docs, compose and env examples don't.
-    paths: ["server/**", "deploy/Dockerfile", "deploy/Dockerfile.dockerignore"]
+    paths: ["server/**", "deploy/Dockerfile", "deploy/Dockerfile.dockerignore", "VERSION"]
   workflow_dispatch:
 
 permissions:
@@ -21,6 +26,20 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      # Empty when nothing in the image changed since the last server-v tag.
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0 }
+      - id: v
+        run: |
+          v=$(.github/scripts/next-version.sh server --if-changed)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Version: \`${v:-unchanged}\`" >> "$GITHUB_STEP_SUMMARY"
+
   test:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: server } }
@@ -35,7 +54,9 @@ jobs:
       - run: cargo test
 
   image:
-    needs: test
+    needs: [version, test]
+    # A manual run with nothing new to release only heals tags.
+    if: github.event_name == 'pull_request' || needs.version.outputs.version != ''
     strategy:
       matrix:
         include:
@@ -47,6 +68,7 @@ jobs:
       packages: write
     env:
       PUSH: ${{ github.event_name != 'pull_request' }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -61,6 +83,7 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.IMAGE }}
+          labels: org.opencontainers.image.version=${{ env.VERSION }}
       - id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -68,6 +91,7 @@ jobs:
           file: deploy/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: RUSTYBEE_VERSION=${{ env.VERSION }}
           outputs: ${{ env.PUSH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=cacheonly' }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: ${{ env.PUSH == 'true' && format('type=gha,mode=max,scope={0}', matrix.arch) || '' }}
@@ -83,18 +107,15 @@ jobs:
 
   manifest:
     if: github.event_name != 'pull_request'
-    needs: image
+    needs: [version, image]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with: { sparse-checkout: server/Cargo.toml, sparse-checkout-cone-mode: false }
-      - run: |
-          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-          cargo=$(sed -nE '0,/^version = "([^"]+)"/s//\1/p' server/Cargo.toml)
-          echo "MAJOR=${cargo%%.*}" >> "$GITHUB_ENV"
+      - run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with: { pattern: digest-*, merge-multiple: true, path: digests }
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -110,7 +131,9 @@ jobs:
           tags: |
             type=raw,value=latest
             type=sha,prefix=sha-
-            type=raw,value=${{ env.MAJOR }}
+            type=semver,pattern={{major}},value=${{ env.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.VERSION }}
+            type=semver,pattern={{version}},value=${{ env.VERSION }}
       - name: Create the multi-arch manifest
         working-directory: digests
         run: |
@@ -118,3 +141,45 @@ jobs:
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf "$IMAGE@sha256:%s " *)
           docker buildx imagetools inspect "$IMAGE:latest"
+      - name: Tag the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A rerun finds the tag already on this commit.
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/server-v$VERSION" -f sha="$GITHUB_SHA" ||
+            [ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/server-v$VERSION" --jq .object.sha)" = "$GITHUB_SHA" ]
+
+  # Gives every server-vX.Y.Z tag's image (sha-<short>) the tag X.Y.Z when it
+  # has none. Floating tags (latest, X, X.Y) are never moved back.
+  heal-tags:
+    if: always() && github.event_name != 'pull_request' && needs.version.result == 'success' && needs.manifest.result != 'failure'
+    needs: [version, manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0, filter: "blob:none" }
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          git fetch --tags --force origin
+          for tag in $(git tag --list 'server-v*' | grep -E '^server-v[0-9]+\.[0-9]+\.[0-9]+$'); do
+            v=${tag#server-v}
+            sha=$(git rev-parse --short=7 "$tag^{commit}")
+            if docker buildx imagetools inspect "$image:$v" >/dev/null 2>&1; then
+              continue
+            fi
+            if ! docker buildx imagetools inspect "$image:sha-$sha" >/dev/null 2>&1; then
+              echo "::warning::$tag: no image sha-$sha to tag"
+              continue
+            fi
+            docker buildx imagetools create -t "$image:$v" "$image:sha-$sha"
+            echo "Tagged \`sha-$sha\` as \`$v\`" >> "$GITHUB_STEP_SUMMARY"
+          done

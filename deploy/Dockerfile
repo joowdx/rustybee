@@ -8,6 +8,8 @@ FROM rust:1-alpine AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /src/server
 COPY server/ ./
+# CI passes the release version; local builds report server/Cargo.toml.
+ARG RUSTYBEE_VERSION
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/server/target \
