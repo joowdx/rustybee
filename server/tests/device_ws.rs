@@ -594,3 +594,91 @@ async fn ac_002_17_gateway_off_close_and_token_update() {
     // The app does not open another socket after 4010.
     s.stop().await;
 }
+
+async fn stored_radios(s: &Server, id: i64) -> serde_json::Value {
+    wake_row(s, id).await.telemetry["radios"].clone()
+}
+
+#[tokio::test]
+async fn ac_015_04_radios_cleaned_on_ingest() {
+    let s = server().await;
+    let (pid, token) = s.pair("A").await;
+    let id = internal_id(&s, &pid).await;
+    let mut d = Device::connect(&s, &token).await;
+    let long = "x".repeat(500);
+    let h = frame(
+        "health",
+        json!({"radios": {
+            "cellular": {"name": format!("  {long}  "), "level": 9, "dbm": 20, "tech": "6G"},
+            "wifi": {"name": "   ", "level": -3, "dbm": -60, "tech": "4G"},
+        }}),
+    );
+    d.send(&h).await;
+    d.recv_type("ack").await;
+    assert_eq!(
+        stored_radios(&s, id).await,
+        json!({
+            "cellular": {"name": "x".repeat(64), "level": 4},
+            "wifi": {"level": 0, "dbm": -60},
+        })
+    );
+    // Malformed radios count as absent: the health is still acked and what was stored stays.
+    let before = stored_radios(&s, id).await;
+    let h = frame(
+        "health",
+        json!({"outbox": 0, "radios": {"wifi": {"level": 2.5, "dbm": "loud"}}}),
+    );
+    d.send(&h).await;
+    d.recv_type("ack").await;
+    assert_eq!(stored_radios(&s, id).await, before);
+    d.close().await;
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_015_02_radios_stored_replaced_kept_and_cleared() {
+    let s = server().await;
+    let (pid, token) = s.pair("A").await;
+    let id = internal_id(&s, &pid).await;
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../protocol/fixtures/hello.json")).unwrap();
+
+    // A hello with radios stores them.
+    let mut d = Device::connect(&s, &token).await;
+    assert_eq!(stored_radios(&s, id).await, fixture["data"]["radios"]);
+
+    // A health with radios replaces them.
+    let cell = json!({"cellular": {"name": "Other", "level": 1, "dbm": -110}});
+    let h = frame("health", json!({"radios": cell}));
+    d.send(&h).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], h["id"]);
+    assert_eq!(stored_radios(&s, id).await, cell);
+
+    // A health without radios keeps them.
+    let h = frame("health", json!({"outbox": 3}));
+    d.send(&h).await;
+    d.recv_type("ack").await;
+    assert_eq!(stored_radios(&s, id).await, cell);
+
+    // `{}` replaces them too.
+    let h = frame("health", json!({"radios": {}}));
+    d.send(&h).await;
+    d.recv_type("ack").await;
+    assert_eq!(stored_radios(&s, id).await, json!({}));
+    d.close().await;
+    assert!(wait_down(&s, id).await);
+
+    // A hello without radios clears them.
+    let mut hello = hello_frame();
+    hello["data"].as_object_mut().unwrap().remove("radios");
+    let mut d = Device {
+        ws: connect_raw(&s.ws_url(), &token).await.unwrap(),
+    };
+    d.send(&hello).await;
+    d.recv_type("ack").await;
+    d.recv_type("welcome").await;
+    let row = wake_row(&s, id).await;
+    assert!(row.telemetry.get("radios").is_none());
+    assert!(row.radios_json().is_null());
+    s.stop().await;
+}

@@ -484,3 +484,21 @@ async fn ac_007_11_health_is_503_when_the_store_is_stuck() {
     assert_eq!(r.status(), 200);
     s.stop().await;
 }
+
+#[tokio::test]
+async fn ac_015_04_devices_list_returns_radios() {
+    let s = server().await;
+    let key = s.api_key().await;
+    let (_, token) = s.pair("A").await;
+    let (st, v) = s.api_get(&key, "/api/v1/devices").await;
+    assert_eq!(st, 200);
+    assert!(v[0]["radios"].is_null());
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../protocol/fixtures/hello.json")).unwrap();
+    let d = Device::connect(&s, &token).await;
+    let (st, v) = s.api_get(&key, "/api/v1/devices").await;
+    assert_eq!(st, 200);
+    assert_eq!(v[0]["radios"], fixture["data"]["radios"]);
+    d.close().await;
+    s.stop().await;
+}

@@ -746,3 +746,107 @@ async fn ac_010_08_unreachable_and_last_restart() {
     assert!(!page.contains("was force-stopped"));
     s.stop().await;
 }
+
+#[tokio::test]
+async fn ac_015_03_network_indicator_shows_name_and_signal() {
+    let s = server().await;
+    let (pid, _) = s.pair("Pixel").await;
+    let ui = Ui::new(&s).await;
+    let set = |telemetry: &'static str| {
+        let id = pid.clone();
+        let store = s.app().store.clone();
+        async move {
+            store
+                .write(move |c| {
+                    c.execute(
+                        "UPDATE devices SET telemetry_json=?2 WHERE public_id=?1",
+                        params![id, telemetry],
+                    )?;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+        }
+    };
+    // Without radios: the plain icon for the connection in use, no label, no signal.
+    set(r#"{"network":"wifi"}"#).await;
+    for path in ["/", "/devices"] {
+        let (st, page) = ui.get(path).await;
+        assert_eq!(st, 200, "{path}");
+        assert!(
+            page.contains(r##"<span class="net" title="wifi"><svg aria-hidden="true"><use href="#i-wifi"/></svg></span>"##),
+            "{path}"
+        );
+        assert!(!page.contains("class=\"sig\""), "{path}");
+    }
+    // A connection that is not a radio: its type and a plain network icon, never cellular bars.
+    set(r#"{"network":"ethernet"}"#).await;
+    for path in ["/", "/devices"] {
+        let (_, page) = ui.get(path).await;
+        assert!(
+            page.contains(r##"<span class="net" title="ethernet">ethernet<svg aria-hidden="true"><use href="#i-net"/></svg></span>"##),
+            "{path}"
+        );
+        assert!(!page.contains(r##"href="#i-cell""##), "{path}");
+    }
+    // On Wi-Fi with radios: the Wi-Fi name then its signal (level clamped to 4), then the carrier
+    // name, its generation and its bars.
+    set(r#"{"network":"wifi","radios":{"cellular":{"name":"Example Mobile","level":2,"dbm":-95,"tech":"5G"},"wifi":{"name":"HomeNet","level":9,"dbm":-55}}}"#).await;
+    for path in ["/", "/devices"] {
+        let (st, page) = ui.get(path).await;
+        assert_eq!(st, 200, "{path}");
+        assert!(page.contains(r#"title="HomeNet, -55 dBm""#), "{path}");
+        assert!(page.contains(r#"aria-label="4 of 4 bars""#), "{path}");
+        assert!(
+            page.contains(r#"-55 dBm">HomeNet<svg class="sig""#),
+            "{path}"
+        );
+        assert!(
+            page.contains(r#"-95 dBm">Example Mobile<span class="tech">5G</span><svg class="sig""#),
+            "{path}"
+        );
+        assert!(
+            page.find("HomeNet<svg") < page.find("Example Mobile<span"),
+            "{path}"
+        );
+        assert!(
+            page.contains(r#"aria-label="2 of 4 bars"><path d="M4 20v-3"/><path d="M9.3 20v-7"/><path class="dim" d="M14.7 20V9"/><path class="dim" d="M20 20V4"/></svg></span>"#),
+            "{path}"
+        );
+        assert!(!page.contains(">wifi</span>"), "{path}");
+    }
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_010_09_charging_bolt() {
+    let s = server().await;
+    let (pid, _) = s.pair("Pixel").await;
+    let ui = Ui::new(&s).await;
+    for charging in [true, false] {
+        let id = pid.clone();
+        let telemetry =
+            serde_json::json!({"battery": {"level": 80, "charging": charging}}).to_string();
+        s.app()
+            .store
+            .write(move |c| {
+                c.execute(
+                    "UPDATE devices SET telemetry_json=?2 WHERE public_id=?1",
+                    params![id, telemetry],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        for path in ["/", "/devices"] {
+            let (st, page) = ui.get(path).await;
+            assert_eq!(st, 200, "{path}");
+            assert!(page.contains("80%"), "{path}");
+            assert_eq!(
+                page.contains("aria-label=\"charging\""),
+                charging,
+                "{path} charging={charging}"
+            );
+        }
+    }
+}

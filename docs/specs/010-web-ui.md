@@ -52,6 +52,7 @@ All pages except `/login` require a session (spec 005).
 6. AC-010-06 The layout has no horizontal scroll at 375 px width.
 7. AC-010-07 UI responses carry the four security headers above; the login page has no inline `<script>` and its htmx config sets `allowEval`, `allowScriptTags` and `selfRequestsOnly` as above.
 8. AC-010-08 A device with `unreachable_at` set renders the unreachable notice on `/` and `/devices`; clearing it removes the notice. One with `gateway_off_at` set renders the switched-off state, and a gms device with notifications off renders the wake-up warning. A device with `lifecycle_json` renders the "Last restart" line with the mapped reasons.
+9. AC-010-09 A device whose telemetry has `battery.charging` true shows a labelled charging bolt inside its battery icon on `/` and `/devices`; one that is not charging shows none.
 10. AC-010-10 The dashboard refreshes on every burst of `device` and `message` events, ending with a refresh after the burst's last event. Events inside the one-second window are coalesced, never dropped, so a reconnect (close, `hello`, `health`) never leaves a card on an earlier state.
 
 ## Test plan
@@ -62,6 +63,7 @@ All pages except `/login` require a session (spec 005).
 | 06 | Manual check in the browser pane during M7 |
 | 07 | `server/tests/ui.rs` |
 | 08 | `server/tests/ui.rs::ac_010_08_unreachable_and_last_restart` |
+| 09 | `server/tests/ui.rs::ac_010_09_charging_bolt` |
 | 10 | `server/tests/ui.rs::ac_010_10_live_refresh_is_trailing` checks the markup; the coalescing in `app.js` was checked in the browser pane |
 
 ## Assumptions

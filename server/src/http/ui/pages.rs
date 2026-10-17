@@ -413,7 +413,7 @@ struct DevCard {
     battery: String,
     battery_pct: Option<i64>,
     charging: bool,
-    network: String,
+    net: Vec<devices::NetChip>,
     outbox: String,
     queued: i64,
     warnings: Vec<String>,
@@ -488,7 +488,7 @@ async fn dashboard_data(
                     .unwrap_or_else(|| "–".into()),
                 battery_pct: d.battery_level().map(|b| b.clamp(0, 100)),
                 charging: d.charging().unwrap_or(false),
-                network: d.network().unwrap_or_else(|| "–".into()),
+                net: d.net_chips(),
                 outbox: d
                     .outbox()
                     .map(|n| n.to_string())

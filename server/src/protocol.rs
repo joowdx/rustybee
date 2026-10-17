@@ -97,6 +97,14 @@ pub struct Hello {
         skip_serializing_if = "Option::is_none"
     )]
     pub lifecycle: Option<Value>,
+    /// Per-radio network name and signal, each field opt-in on the phone (spec 015).
+    /// Malformed values are treated as absent so the rest of `hello` still stands.
+    #[serde(
+        default,
+        deserialize_with = "de_radios",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub radios: Option<Radios>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -108,6 +116,79 @@ pub struct Health {
     /// Sent only when the token changed; replaces the stored token (spec 002).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fcm_token: Option<String>,
+    /// Replaces the stored radios when present, `{}` included; malformed counts as absent (spec 015).
+    #[serde(
+        default,
+        deserialize_with = "de_radios",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub radios: Option<Radios>,
+}
+
+/// Radios the phone reports (spec 015). A radio with nothing to report is absent.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Radios {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cellular: Option<Radio>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wifi: Option<Radio>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Radio {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Signal bars, 0–4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dbm: Option<i64>,
+    /// Cellular generation, "2G" to "5G", sent while mobile data is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tech: Option<String>,
+}
+
+impl Radios {
+    /// What the server stores (spec 015): names trimmed and capped, levels clamped, odd dBm and
+    /// unknown generations dropped. Only cellular has a generation.
+    pub fn cleaned(&self) -> Self {
+        Self {
+            cellular: self.cellular.as_ref().map(Radio::cleaned),
+            wifi: self.wifi.as_ref().map(|r| Radio {
+                tech: None,
+                ..r.cleaned()
+            }),
+        }
+    }
+}
+
+impl Radio {
+    const MAX_NAME: usize = 64;
+
+    fn cleaned(&self) -> Self {
+        Self {
+            name: self
+                .name
+                .as_deref()
+                .map(|n| n.trim().chars().take(Self::MAX_NAME).collect::<String>())
+                .filter(|n| !n.is_empty()),
+            level: self.level.map(|l| l.clamp(0, 4)),
+            dbm: self.dbm.filter(|d| (-150..=-1).contains(d)),
+            tech: self
+                .tech
+                .clone()
+                .filter(|t| ["2G", "3G", "4G", "5G"].contains(&t.as_str())),
+        }
+    }
+}
+
+/// Parse `radios` leniently: an opt-in detail must never fail the frame (spec 015).
+fn de_radios<'de, D>(deserializer: D) -> Result<Option<Radios>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 /// Keep a `hello.lifecycle` object only when it has the shape from spec 002.
