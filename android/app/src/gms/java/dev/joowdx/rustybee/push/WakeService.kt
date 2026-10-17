@@ -18,8 +18,11 @@ class WakeService : FirebaseMessagingService() {
         if (!GatewayService.start(this)) Notifications.postStopped(this)
     }
 
-    override fun onNewToken(token: String) {
+    /** A new or refreshed token, after every `register()` and on each FCM rotation (spec 009). */
+    override fun onRegistered(token: String) {
+        if (token.isEmpty()) return
         Graph.of(this).prefs.fcmToken = token
         GatewayService.onFcmToken(token)
+        Push.delivered(token)
     }
 }
