@@ -64,10 +64,10 @@ Every text frame is one JSON object:
 ### Device → server
 | type | data | when |
 |---|---|---|
-| `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted, read_phone_state?}, outbox, lifecycle}` | first frame after every connect |
+| `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted, read_phone_state?}, outbox, lifecycle, radios?}` (`radios` per spec 015) | first frame after every connect |
 | `status` | `{msg_id, state:"sent"\|"delivered"\|"failed", at, parts, error:{code,message}\|null}` | each change of a message's outcome |
 | `inbound` | `{uid, from, body, sim, received_at}` | each received SMS, while forwarding is on, that passes the filters |
-| `health` | `{battery, network, permissions, outbox, fcm_token?}` | every 15 min while connected, on a change of charging state or permissions, and at once when FCM issues a new token |
+| `health` | `{battery, network, permissions, outbox, fcm_token?, radios?}` (`radios` per spec 015) | every 15 min while connected, on a change of charging state, permissions or network type, and at once when FCM issues a new token |
 | `set_forwarding` | `{base_rev, receive_enabled, filters}` | the user saves the Forwarding screen on the phone, or the phone restores its own "off" (below) |
 
 - `status.parts` must be at least 1 when present. A `status` with `parts` below 1 is nacked `bad_frame` and changes nothing.
@@ -85,7 +85,7 @@ Every text frame is one JSON object:
 - `permissions.read_phone_state` is optional: newer apps send whether `READ_PHONE_STATE` is granted, older apps omit it. Without it the app can't list SIMs, so `sims` is empty and a `send` with `sim` fails `permission_denied` (spec 012). When omitted the server stores and re-encodes nothing for it; when `false` the web UI lists it with the other missing permissions.
 - `permissions.notifications` is true only when `POST_NOTIFICATIONS` is granted **and** the gateway notification channel is not blocked. FCM wakes depend on both (spec 009).
 - `health.fcm_token` is sent only when the token changed; when present, the server replaces the stored token.
-- `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100.
+- `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100. `battery.charging` is true while the phone is on external power, including when charging is paused at a charge limit or because the battery is full.
 - `inbound.uid` is the lowercase hex of the first 16 bytes of `SHA-256(from + "\n" + received_at + "\n" + body + "\n" + (sim ?: ""))`.
 - `status.error.code` is one of:
   - `generic_failure`, `no_service`, `null_pdu`, `radio_off`, `limit_exceeded`, `short_code_not_allowed`, `short_code_never_allowed`;
@@ -157,6 +157,7 @@ Every text frame is one JSON object:
 16. AC-002-16 A `hello` with `lifecycle` stores it and clears `wake_attempts`, `unreachable_at` and `gateway_off_at`. A `hello` without `lifecycle`, or with a malformed one, is acked and connects as before. `protocol/fixtures/hello.json` carries a full `lifecycle`.
 17. AC-002-17 An app close with 4010 sets `gateway_off_at` and the app does not reconnect. A `health` with `fcm_token` replaces the stored token; one without leaves it unchanged.
 18. AC-002-18 An HTTP 401 at the upgrade is not retried: the app wipes its credentials, stops, posts an alert and shows setup with the reason, as for 4003. Other upgrade failures are retried with the backoff.
+19. AC-002-19 When the default network's transport changes while connected (cellular to wifi or back, including under a VPN where the socket survives), the app sends a `health` whose `network` is the new type. After `welcome` it also sends one if the transport changed since its `hello` was built. An unchanged transport sends nothing.
 
 ## Test plan
 | AC | Test |
@@ -173,7 +174,7 @@ Every text frame is one JSON object:
 | 14 | `server/tests/device_ws.rs::ac_002_14_inbound_dropped_while_forwarding_off` |
 | 15 | `server/tests/device_ws.rs::ac_002_15_status_at_is_clamped_and_parts_checked` |
 | 16 | `server/tests/device_ws.rs::ac_002_16_hello_lifecycle_clears_wake_state`; app `ProtocolFixturesTest` |
-| 07, 17 (app side), 18 | app `GatewayPolicyTest` (`ac_002_07_*`, `ac_002_17_*`, `ac_002_18_*`) |
+| 07, 17 (app side), 18, 19 | app `GatewayPolicyTest` (`ac_002_07_*`, `ac_002_17_*`, `ac_002_18_*`, `ac_002_19_*`) |
 | 17 | `server/tests/device_ws.rs::ac_002_17_gateway_off_close_and_token_update` |
 
 ## Assumptions
@@ -184,3 +185,4 @@ Every text frame is one JSON object:
 ## Open questions
 - `permissions.read_phone_state` came from the 2026-10-17 review; the server only stores and shows it.
 - AC-002-18 (401 at the upgrade handled like 4003) came from the 2026-10-17 review.
+- AC-002-19 (health on a network type change) came from a field report: after cellular to wifi the web UI kept showing `cellular` while the device stayed connected.

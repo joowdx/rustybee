@@ -1,13 +1,15 @@
 package dev.joowdx.rustybee
 
+import android.net.NetworkCapabilities
 import dev.joowdx.rustybee.gateway.CLOSE_GATEWAY_OFF
 import dev.joowdx.rustybee.gateway.CloseDecision
 import dev.joowdx.rustybee.gateway.ConnectDecision
 import dev.joowdx.rustybee.gateway.GatewayPolicy
+import dev.joowdx.rustybee.gateway.Telemetry
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** The service's close and connect rules: AC-002-07, AC-002-17, AC-002-18 and AC-013-04. */
+/** The service's close and connect rules: AC-002-07, AC-002-17, AC-002-18, AC-002-19 and AC-013-04. */
 class GatewayPolicyTest {
     private fun closed(code: Int, http: Int? = null, stopping: Boolean = false, ownOff: Boolean = false) =
         GatewayPolicy.onClosed(code, http, stopping, ownOff)
@@ -65,5 +67,24 @@ class GatewayPolicyTest {
     fun connect_opens_when_paired_and_retries_an_unreadable_token() {
         assertEquals(ConnectDecision.Open, connect())
         assertEquals(ConnectDecision.Retry, connect(token = false))
+    }
+
+    @Test
+    fun ac_002_19_network_type_change_sends_health() {
+        assertEquals(true, GatewayPolicy.reportNetwork(welcomed = true, reported = "cellular", current = "wifi"))
+        assertEquals(true, GatewayPolicy.reportNetwork(welcomed = true, reported = "wifi", current = "cellular"))
+        assertEquals(false, GatewayPolicy.reportNetwork(welcomed = true, reported = "wifi", current = "wifi"))
+        // Before welcome a health must not precede the hello; with no callback yet there is nothing to correct.
+        assertEquals(false, GatewayPolicy.reportNetwork(welcomed = false, reported = "cellular", current = "wifi"))
+        assertEquals(false, GatewayPolicy.reportNetwork(welcomed = true, reported = "cellular", current = null))
+    }
+
+    @Test
+    fun ac_002_19_network_label_maps_transports() {
+        fun label(vararg t: Int) = Telemetry.networkLabel { it in t }
+        assertEquals("wifi", label(NetworkCapabilities.TRANSPORT_WIFI, NetworkCapabilities.TRANSPORT_VPN))
+        assertEquals("cellular", label(NetworkCapabilities.TRANSPORT_CELLULAR, NetworkCapabilities.TRANSPORT_VPN))
+        assertEquals("ethernet", label(NetworkCapabilities.TRANSPORT_ETHERNET))
+        assertEquals("other", label(NetworkCapabilities.TRANSPORT_VPN))
     }
 }

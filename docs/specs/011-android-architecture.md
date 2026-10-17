@@ -92,7 +92,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 - The reason ints are mapped to the strings of spec 002 in a pure function, so the mapping is unit-tested on the JVM.
 
 ### Manifest
-- **Permissions:** `INTERNET`, `ACCESS_NETWORK_STATE`, `SEND_SMS`, `RECEIVE_SMS`, `READ_PHONE_STATE` (SIM list), `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_REMOTE_MESSAGING`, `RECEIVE_BOOT_COMPLETED`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `WAKE_LOCK`.
+- **Permissions:** `INTERNET`, `ACCESS_NETWORK_STATE`, `SEND_SMS`, `RECEIVE_SMS`, `READ_PHONE_STATE` (SIM list), `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_REMOTE_MESSAGING`, `RECEIVE_BOOT_COMPLETED`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `WAKE_LOCK`. Optional, asked only when the Wi-Fi name is switched on (spec 015): `ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION`, `ACCESS_BACKGROUND_LOCATION`. A `gms` build published on Google Play needs Play's background-location declaration for these.
 - `uses-feature android.hardware.telephony required=true`.
 - **Network security:** one `network_security_config.xml` with a domain-agnostic `cleartextTrafficPermitted="true"` base config that is gated at runtime: release builds require https/wss unless the user ticked "Allow insecure http (LAN)" while pairing; debug builds accept http/ws without it. A `debug-overrides` block (debug builds only) also trusts user-installed CAs for local development servers.
 

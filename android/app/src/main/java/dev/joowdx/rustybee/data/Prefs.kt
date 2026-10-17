@@ -2,6 +2,7 @@ package dev.joowdx.rustybee.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import dev.joowdx.rustybee.gateway.RadioSwitches
 import dev.joowdx.rustybee.protocol.Config
 import dev.joowdx.rustybee.protocol.ProtocolJson
 
@@ -60,6 +61,21 @@ class Prefs(context: Context) {
             readToken()
             return sp.contains("token_enc")
         }
+
+    /** The Network screen's switches (spec 015). */
+    var radioSwitches: RadioSwitches
+        get() = RadioSwitches(
+            cellularName = sp.getBoolean("radio_cellular_name", false),
+            cellularSignal = sp.getBoolean("radio_cellular_signal", false),
+            wifiName = sp.getBoolean("radio_wifi_name", false),
+            wifiSignal = sp.getBoolean("radio_wifi_signal", false),
+        )
+        set(v) = sp.edit()
+            .putBoolean("radio_cellular_name", v.cellularName)
+            .putBoolean("radio_cellular_signal", v.cellularSignal)
+            .putBoolean("radio_wifi_name", v.wifiName)
+            .putBoolean("radio_wifi_signal", v.wifiSignal)
+            .apply()
 
     var gatewayEnabled: Boolean
         get() = sp.getBoolean("gateway_enabled", false)

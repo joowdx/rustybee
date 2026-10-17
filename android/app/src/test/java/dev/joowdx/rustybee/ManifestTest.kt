@@ -52,6 +52,14 @@ class ManifestTest {
     }
 
     @Test
+    fun ac_015_network_screen_and_location_permissions() {
+        assertEquals("false", component("activity", "dev.joowdx.rustybee.ui.NetworkActivity").getAttributeNS(ns, "exported"))
+        val perms = elements("uses-permission").map { it.getAttributeNS(ns, "name") }.toSet()
+        listOf("ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "ACCESS_BACKGROUND_LOCATION")
+            .forEach { assertTrue(it, "android.permission.$it" in perms) }
+    }
+
+    @Test
     fun camera_is_optional() {
         val camera = elements("uses-feature").single { it.getAttributeNS(ns, "name") == "android.hardware.camera.any" }
         assertEquals("false", camera.getAttributeNS(ns, "required"))

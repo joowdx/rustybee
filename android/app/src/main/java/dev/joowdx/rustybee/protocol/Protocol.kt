@@ -56,6 +56,14 @@ data class SimInfo(
 @Serializable
 data class Battery(val level: Int, val charging: Boolean)
 
+/** One radio's opt-in details (spec 015); a field is missing when its switch is off or it can't be read. */
+@Serializable
+data class Radio(val name: String? = null, val level: Int? = null, val dbm: Int? = null, val tech: String? = null)
+
+/** Sent as `{}` when every Network switch is off, so the server clears what it had. */
+@Serializable
+data class Radios(val cellular: Radio? = null, val wifi: Radio? = null)
+
 @Serializable
 data class Permissions(
     @SerialName("send_sms") val sendSms: Boolean,
@@ -101,6 +109,7 @@ data class Hello(
     val permissions: Permissions,
     val outbox: Int,
     val lifecycle: Lifecycle? = null,
+    val radios: Radios? = null,
 )
 
 @Serializable
@@ -110,6 +119,7 @@ data class Health(
     val permissions: Permissions,
     val outbox: Int,
     @SerialName("fcm_token") val fcmToken: String? = null,
+    val radios: Radios? = null,
 )
 
 @Serializable
