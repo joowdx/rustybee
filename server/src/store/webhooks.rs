@@ -246,7 +246,8 @@ pub struct Claimed {
     pub secret: String,
 }
 
-/// Lease up to `limit` due rows until `now + lease_ms`.
+/// Lease up to `limit` due rows until `now + lease_ms`. Rows of an inactive
+/// webhook are skipped and stay pending until it is enabled again.
 pub fn claim(
     c: &Connection,
     now: i64,
@@ -258,6 +259,7 @@ pub fn claim(
            SELECT id FROM webhook_deliveries
            WHERE next_attempt_at<=?1 AND (lease_until IS NULL OR lease_until<?1)
              AND delivered_at IS NULL AND aborted_at IS NULL
+             AND webhook_id IN (SELECT id FROM webhooks WHERE active=1)
            ORDER BY next_attempt_at LIMIT ?3)
          RETURNING id",
     )?;
@@ -331,11 +333,12 @@ pub fn prune_finished(c: &Connection, before: i64) -> rusqlite::Result<usize> {
     )
 }
 
-/// Earliest pending attempt, for the worker's sleep.
+/// Earliest pending attempt of an active webhook, for the worker's sleep.
 pub fn next_due(c: &Connection) -> rusqlite::Result<Option<i64>> {
     c.query_row(
         "SELECT min(max(next_attempt_at, COALESCE(lease_until, 0))) FROM webhook_deliveries
-         WHERE delivered_at IS NULL AND aborted_at IS NULL AND next_attempt_at IS NOT NULL",
+         WHERE delivered_at IS NULL AND aborted_at IS NULL AND next_attempt_at IS NOT NULL
+           AND webhook_id IN (SELECT id FROM webhooks WHERE active=1)",
         [],
         |r| r.get(0),
     )

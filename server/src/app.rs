@@ -297,9 +297,13 @@ pub async fn start(cfg: Config) -> Result<Running, String> {
         .await
         .map_err(|e| e.to_string())?;
     let fcm = Fcm::from_config(&cfg)?.map(Arc::new);
+    // No redirects: a 301/302 would turn a webhook POST into a bodyless GET
+    // (spec 008). Webhook requests override the overall timeout with their own.
     let http = reqwest::Client::builder()
         .user_agent(format!("rustybee/{VERSION}"))
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
+        .timeout(cfg.http_timeout)
         .build()
         .map_err(|e| e.to_string())?;
     let listener = tokio::net::TcpListener::bind(&cfg.bind)

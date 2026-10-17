@@ -31,6 +31,8 @@ pub struct Config {
     pub webhook_backoff: Vec<Duration>,
     pub webhook_lease: Duration,
     pub webhook_timeout: Duration,
+    /// Overall timeout of the shared outbound HTTP client (FCM, Turnstile).
+    pub http_timeout: Duration,
     pub fcm_interval: Duration,
     pub fcm_oauth_url: String,
     pub fcm_base_url: String,
@@ -126,6 +128,7 @@ impl Config {
             webhook_backoff: crate::domain::default_backoff(),
             webhook_lease: Duration::from_secs(60),
             webhook_timeout: Duration::from_secs(10),
+            http_timeout: Duration::from_secs(15),
             fcm_interval: Duration::from_secs(60),
             fcm_oauth_url: "https://oauth2.googleapis.com/token".into(),
             fcm_base_url: "https://fcm.googleapis.com".into(),

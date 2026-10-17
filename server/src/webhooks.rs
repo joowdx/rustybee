@@ -95,6 +95,16 @@ async fn post(
     match res {
         Ok(mut r) => {
             let status = r.status().as_u16();
+            // Redirects are not followed (spec 008): record where it pointed.
+            if r.status().is_redirection() {
+                let to = r
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+                    .unwrap_or_default();
+                let text = format!("redirect {status} to {to:?}; redirects are not followed");
+                return (Some(status), text.chars().take(MAX_ERROR_CHARS).collect());
+            }
             let mut buf = Vec::new();
             while buf.len() < MAX_RESPONSE_READ {
                 match r.chunk().await {

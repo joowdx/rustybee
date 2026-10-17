@@ -653,6 +653,8 @@ pub async fn update_webhook(
         .await
         .map_err(ise)?;
     found(n)?;
+    // Re-enabling resumes the hook's pending deliveries (spec 008).
+    app.webhook_notify.notify_one();
     Ok(see_other(&format!("{back}?ok=saved")))
 }
 
