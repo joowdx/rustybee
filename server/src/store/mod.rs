@@ -174,6 +174,11 @@ fn sidecars(path: &Path) -> [PathBuf; 2] {
     })
 }
 
+/// Create a directory (and missing parents) 0700 on unix.
+pub fn private_dir(dir: &Path) -> std::io::Result<()> {
+    private::create_dir(dir)
+}
+
 /// Make sure a file SQLite is about to create is private (0600 on unix).
 /// Used for the database itself and for backups before `VACUUM INTO`.
 pub fn private_file(path: &Path) -> rusqlite::Result<()> {
@@ -296,13 +301,33 @@ impl Store {
             .await
     }
 
-    /// `VACUUM INTO` a consistent copy at `dest`, created 0600 (unix).
+    /// `VACUUM INTO` a consistent copy at `dest`, created 0600 (unix). Runs
+    /// on a read-only pooled connection, so writes are not held up.
     pub async fn backup(&self, dest: &Path) -> Result<()> {
         private_file(dest)?;
         let dest = dest.to_string_lossy().to_string();
-        self.with_writer(move |c| c.execute("VACUUM INTO ?1", [dest]).map(|_| ()))
-            .await
+        self.read(move |c| vacuum_into(c, &dest)).await
     }
+}
+
+fn vacuum_into(c: &Connection, dest: &str) -> rusqlite::Result<()> {
+    c.execute("VACUUM INTO ?1", [dest]).map(|_| ())
+}
+
+/// `rustybee backup`: open the database read-only (no migrations, no
+/// writes) and `VACUUM INTO` a 0600 copy at `dest`.
+pub fn backup_file(src: &Path, dest: &Path) -> rusqlite::Result<()> {
+    let c = Connection::open_with_flags(src, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    c.busy_timeout(std::time::Duration::from_secs(5))?;
+    private_file(dest)?;
+    vacuum_into(&c, &dest.to_string_lossy())
+}
+
+/// `PRAGMA integrity_check` on a backup, opened read-only.
+pub fn check_backup(path: &Path) -> rusqlite::Result<std::result::Result<(), String>> {
+    let c = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let r: String = c.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+    Ok(if r == "ok" { Ok(()) } else { Err(r) })
 }
 
 /// Helper for optional single-row queries.
@@ -464,6 +489,38 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         let _store = Store::open(&path).unwrap();
         assert_eq!(mode(&path), 0o600);
+    }
+
+    #[test]
+    fn ac_003_09_backup_command_opens_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        // A database from before any migration: open_rw would migrate it.
+        let c = Connection::open(&path).unwrap();
+        c.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES(42);")
+            .unwrap();
+        drop(c);
+        let dest = dir.path().join("copy.db");
+        backup_file(&path, &dest).unwrap();
+        let c = Connection::open(&path).unwrap();
+        assert_eq!(pragma::<u32>(&c, "user_version"), 0, "source was migrated");
+        let copy = Connection::open(&dest).unwrap();
+        let x: i64 = copy.query_row("SELECT x FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(x, 42);
+        assert_eq!(check_backup(&dest).unwrap(), Ok(()));
+        // A WAL database with no server running (no -wal/-shm left behind).
+        let wal = dir.path().join("wal.db");
+        let c = open_rw(&wal).unwrap();
+        set_setting(&c, "a", "1").unwrap();
+        drop(c);
+        assert!(!sidecars(&wal)[0].exists());
+        let dest = dir.path().join("wal-copy.db");
+        backup_file(&wal, &dest).unwrap();
+        let copy = Connection::open(&dest).unwrap();
+        assert_eq!(get_setting(&copy, "a").unwrap().as_deref(), Some("1"));
+        // A missing database is an error, not a new empty file.
+        assert!(backup_file(&dir.path().join("none.db"), &dir.path().join("x.db")).is_err());
+        assert!(!dir.path().join("none.db").exists());
     }
 
     #[tokio::test]

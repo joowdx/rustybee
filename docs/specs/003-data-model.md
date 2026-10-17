@@ -80,7 +80,9 @@ CREATE TABLE seen_frames (device_id INTEGER NOT NULL REFERENCES devices(id) ON D
 - `seen_frames` makes inbound frames idempotent by envelope id. Rows older than 7 days are pruned daily.
 
 ### Backup
-`rustybee backup <path>` runs `VACUUM INTO '<path>'`, which is safe while the server is running.
+`rustybee backup <path>` opens the database read-only (no migrations, no writes, no WAL or SHM created) and runs `VACUUM INTO '<path>'`, which is safe while the server is running.
+
+With `RUSTYBEE_BACKUP_DIR` set, the daily sweeper job also writes `rustybee-YYYY-MM-DD.db` (UTC date) into that directory, at most once per day. It runs `VACUUM INTO` on a reader connection into a `.db.tmp` file, runs `PRAGMA integrity_check` on the copy, and renames it into place only if the check returns `ok`; a failed copy is deleted and logged. It then keeps the newest `RUSTYBEE_BACKUP_KEEP` dated files (default 7, minimum 1) and deletes older ones. Other files in the directory are never touched. The directory is created `0700` and backups are `0600` on unix.
 
 ## Acceptance criteria
 1. AC-003-01 Starting on an empty data directory creates the database at the latest `user_version`. Starting again does nothing.
@@ -91,12 +93,14 @@ CREATE TABLE seen_frames (device_id INTEGER NOT NULL REFERENCES devices(id) ON D
 6. AC-003-06 Without `RUSTYBEE_RETENTION_DAYS`, the prune deletes no messages or deliveries.
 7. AC-003-07 A database with a `user_version` above the latest migration is refused with an error naming both versions, and its `user_version` is unchanged.
 8. AC-003-08 On unix, a new data directory is `0700` and the database, WAL, SHM and backup files are `0600`; a database file left `0644` is `0600` after the next open.
+9. AC-003-09 `rustybee backup` opens the source read-only: it does not migrate an older schema, leaves no WAL or SHM next to the source, and fails on a missing source instead of creating it.
+10. AC-003-10 With `RUSTYBEE_BACKUP_DIR`, the daily job writes one integrity-checked `rustybee-YYYY-MM-DD.db` per day, never leaves a `.tmp` file, and keeps only the newest `RUSTYBEE_BACKUP_KEEP` dated files, leaving other files alone.
 
 ## Test plan
 | AC | Test |
 |---|---|
-| 01–04, 07–08 | `server/src/store` unit tests, using a temp dir |
-| 05–06 | `server/tests/retention.rs` with an injected clock |
+| 01–04, 07–09 | `server/src/store` unit tests, using a temp dir |
+| 05–06, 10 | `server/tests/retention.rs` with an injected clock; backup names in `server/src/sweeper.rs` unit tests |
 
 ## Assumptions
 - Removing a device is a soft delete: `removed_at` is set, `token_sha256` is replaced with random bytes, `fcm_token` and `is_default` are cleared, and the row is hidden from every device list, selection and dispatch. Its messages and batches stay in history. Every outbound message of the device still in `queued` or `dispatched` becomes `failed`/`cancelled`.
@@ -105,3 +109,4 @@ CREATE TABLE seen_frames (device_id INTEGER NOT NULL REFERENCES devices(id) ON D
 
 ## Open questions
 - AC-003-07 (refuse a newer schema) and AC-003-08 (owner-only file permissions) came from the 2026-10-17 review.
+- AC-003-09 (read-only backup command) and AC-003-10 (scheduled daily backups with an integrity check and rotation) came from the 2026-10-17 review.

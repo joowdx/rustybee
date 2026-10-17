@@ -19,7 +19,7 @@ Updated: 2026-10-17
 
 ### `deploy/compose.yaml`
 - One service `rustybee`, using the published image `ghcr.io/joowdx/rustybee:3` (or a local build from the Dockerfile with `docker compose build`), a named volume `rustybee-data:/data`, `restart: unless-stopped`, and port `127.0.0.1:8080:8080`: loopback only, for a reverse proxy or tunnel on the same host. Widen it to `8080:8080` only for direct access on a trusted LAN; public access needs a TLS-terminating proxy or tunnel.
-- Environment from `.env`: `RUSTYBEE_PUBLIC_URL`, `RUSTYBEE_ADMIN_PASSWORD` (first run only), and the optional `RUSTYBEE_PING_SECONDS`, `RUSTYBEE_TRUST_PROXY`, `RUSTYBEE_MAX_QUEUED`, `RUSTYBEE_ALLOW_SHORT_CODES`, `RUSTYBEE_RETENTION_DAYS`, `RUSTYBEE_TURNSTILE_SITE_KEY`, `RUSTYBEE_TURNSTILE_SECRET` and `RUSTYBEE_FCM_CREDENTIALS` (the file mounted read-only).
+- Environment from `.env`: `RUSTYBEE_PUBLIC_URL`, `RUSTYBEE_ADMIN_PASSWORD` (first run only), and the optional `RUSTYBEE_PING_SECONDS`, `RUSTYBEE_TRUST_PROXY`, `RUSTYBEE_MAX_QUEUED`, `RUSTYBEE_ALLOW_SHORT_CODES`, `RUSTYBEE_RETENTION_DAYS`, `RUSTYBEE_BACKUP_DIR`, `RUSTYBEE_BACKUP_KEEP`, `RUSTYBEE_TURNSTILE_SITE_KEY`, `RUSTYBEE_TURNSTILE_SECRET` and `RUSTYBEE_FCM_CREDENTIALS` (the file mounted read-only).
 - `deploy/.env.example` documents every variable.
 
 ### `deploy/rustybee.service`
@@ -31,7 +31,7 @@ A systemd unit for running without Docker:
 - **Caddy:** `reverse_proxy 127.0.0.1:8080`. WebSockets work by default; set `RUSTYBEE_TRUST_PROXY=1`.
 - **nginx:** `proxy_http_version 1.1`, the `Upgrade`/`Connection` headers, `proxy_read_timeout 600s`, and `proxy_buffering off` for `/events`.
 - **Cloudflare Tunnel:** set `RUSTYBEE_PING_SECONDS=60`, because idle WebSockets are cut at about 100 s. Set `RUSTYBEE_TRUST_PROXY=1`, and optionally the Turnstile keys (widget hostname = the public host).
-- **Backups:** `docker exec rustybee /rustybee backup /data/backup-$(date +%F).db`.
+- **Backups:** set `RUSTYBEE_BACKUP_DIR` (e.g. `/data/backups`) for daily, integrity-checked backups that keep the newest `RUSTYBEE_BACKUP_KEEP` files (spec 003), or run `docker exec rustybee /rustybee backup /data/backup-$(date +%F).db` by hand.
 
 ### Configuration (all optional except the public URL)
 | Var | Default | Meaning |
@@ -49,6 +49,8 @@ A systemd unit for running without Docker:
 | `RUSTYBEE_MAX_QUEUED` | `1000` | most queued messages per device before sends get 429 `queue_full` (spec 007) |
 | `RUSTYBEE_ALLOW_SHORT_CODES` | `0` | `1` to accept recipients with 3–6 digits (spec 004) |
 | `RUSTYBEE_RETENTION_DAYS` | — | prune finished messages and webhook deliveries older than this (spec 003) |
+| `RUSTYBEE_BACKUP_DIR` | — | write a daily integrity-checked backup here (spec 003) |
+| `RUSTYBEE_BACKUP_KEEP` | `7` | daily backups to keep in `RUSTYBEE_BACKUP_DIR` |
 | `RUST_LOG` | `info` | tracing filter |
 
 ## Acceptance criteria
@@ -64,3 +66,4 @@ Manual checks in M7, with the figures recorded in `docs/specs/README.md`.
 - The server terminates no TLS itself. A reverse proxy or tunnel is required for anything outside a trusted LAN.
 
 ## Open questions
+- The `RUSTYBEE_BACKUP_DIR` and `RUSTYBEE_BACKUP_KEEP` settings came from the 2026-10-17 review.

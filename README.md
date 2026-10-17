@@ -382,6 +382,8 @@ Everything is set with environment variables. Only `RUSTYBEE_PUBLIC_URL` is real
 | `RUSTYBEE_MAX_QUEUED` | `1000` | Most messages waiting for one phone. Sends beyond it get `429 queue_full`. |
 | `RUSTYBEE_ALLOW_SHORT_CODES` | `0` | `1` to allow recipients with 3–6 digits (short codes). Otherwise 7 digits are required. |
 | `RUSTYBEE_RETENTION_DAYS` | — | Delete finished messages and webhook deliveries older than this many days. Unset keeps everything. |
+| `RUSTYBEE_BACKUP_DIR` | — | Directory for a daily, integrity-checked database backup. Unset means no scheduled backups. |
+| `RUSTYBEE_BACKUP_KEEP` | `7` | How many daily backups to keep in `RUSTYBEE_BACKUP_DIR`. |
 | `RUSTYBEE_TURNSTILE_SITE_KEY` | — | Turnstile site key. Needs the secret too. |
 | `RUSTYBEE_TURNSTILE_SECRET` | — | Turnstile secret key. |
 | `RUSTYBEE_FCM_CREDENTIALS` | — | Path to a Firebase service-account JSON, for GMS wake-ups. |

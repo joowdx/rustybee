@@ -124,8 +124,13 @@ Cloudflare closes idle WebSockets after about 100 seconds, so set
 
 ## Backups
 
-`rustybee backup <path>` writes a consistent copy of the live database using
-SQLite's online backup, so the server can keep running.
+Set `RUSTYBEE_BACKUP_DIR` (for example `/data/backups` in Docker) and the
+server writes `rustybee-YYYY-MM-DD.db` there once a day, checks it with
+`PRAGMA integrity_check`, and keeps the newest `RUSTYBEE_BACKUP_KEEP` (default
+7). Copy that directory off the host.
+
+`rustybee backup <path>` writes a consistent copy on demand. It opens the
+live database read-only, so the server can keep running.
 
 ```sh
 # Docker
@@ -157,6 +162,8 @@ then start it again.
 | `RUSTYBEE_MAX_QUEUED` | `1000` | queued messages per device before sends get 429 `queue_full` |
 | `RUSTYBEE_ALLOW_SHORT_CODES` | `0` | `1` to accept 3–6 digit recipients (short codes) |
 | `RUSTYBEE_RETENTION_DAYS` | — | prune finished messages and webhook deliveries older than this |
+| `RUSTYBEE_BACKUP_DIR` | — | write a daily integrity-checked backup here |
+| `RUSTYBEE_BACKUP_KEEP` | `7` | daily backups to keep |
 | `RUSTYBEE_TURNSTILE_SITE_KEY` | — | Turnstile on Cloudflare-proxied logins; needs the secret too |
 | `RUSTYBEE_TURNSTILE_SECRET` | — | Turnstile Siteverify secret |
 | `RUSTYBEE_FCM_CREDENTIALS` | — | Firebase service-account JSON for wake-ups |

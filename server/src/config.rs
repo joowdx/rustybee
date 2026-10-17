@@ -24,6 +24,10 @@ pub struct Config {
     pub allow_short_codes: bool,
     /// Prune finished messages and webhook deliveries older than this (spec 003).
     pub retention_days: Option<u32>,
+    /// Daily backups go here when set (spec 003).
+    pub backup_dir: Option<PathBuf>,
+    /// Daily backups kept in `backup_dir`; older ones are deleted.
+    pub backup_keep: u32,
     // ---- injectable timings and endpoints (tests) ----
     pub inflight_timeout: Duration,
     pub status_timeout: Duration,
@@ -91,6 +95,8 @@ impl Config {
             Some("1" | "true" | "yes")
         );
         c.retention_days = env_num::<u32>("RUSTYBEE_RETENTION_DAYS")?.map(|d| d.max(1));
+        c.backup_dir = env("RUSTYBEE_BACKUP_DIR").map(PathBuf::from);
+        c.backup_keep = env_num("RUSTYBEE_BACKUP_KEEP")?.unwrap_or(7).max(1);
         c.turnstile = match (
             env("RUSTYBEE_TURNSTILE_SITE_KEY"),
             env("RUSTYBEE_TURNSTILE_SECRET"),
@@ -122,6 +128,8 @@ impl Config {
             max_queued: 1000,
             allow_short_codes: false,
             retention_days: None,
+            backup_dir: None,
+            backup_keep: 7,
             inflight_timeout: Duration::from_secs(120),
             status_timeout: Duration::from_secs(24 * 3600),
             sweep_interval: Duration::from_secs(60),

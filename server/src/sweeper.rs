@@ -3,6 +3,7 @@
 use crate::app::{App, UiEvent};
 use crate::store::messages::{self, MessageRow};
 use crate::store::{self};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const DAY_MS: i64 = 24 * 3600 * 1000;
@@ -23,6 +24,11 @@ pub async fn run(app: App) {
             last_prune = Some(now);
             if let Err(e) = prune_once(&app).await {
                 tracing::warn!(error = %e, "prune");
+            }
+            match backup_once(&app).await {
+                Ok(Some(p)) => tracing::info!(path = %p.display(), "backup written"),
+                Ok(None) => {}
+                Err(e) => tracing::warn!(error = %e, "backup"),
             }
         }
         if last_checkpoint.elapsed() >= Duration::from_secs(3600) {
@@ -64,6 +70,103 @@ pub async fn prune_once(app: &App) -> store::Result<(usize, usize)> {
     Ok((msgs, hooks))
 }
 
+const BACKUP_PREFIX: &str = "rustybee-";
+const BACKUP_SUFFIX: &str = ".db";
+
+/// `rustybee-YYYY-MM-DD.db` for the UTC day of `now_ms`.
+pub fn backup_name(now_ms: i64) -> String {
+    let t = time::OffsetDateTime::from_unix_timestamp(now_ms.div_euclid(1000))
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    format!(
+        "{BACKUP_PREFIX}{:04}-{:02}-{:02}{BACKUP_SUFFIX}",
+        t.year(),
+        u8::from(t.month()),
+        t.day()
+    )
+}
+
+fn is_backup_name(name: &str) -> bool {
+    name.strip_prefix(BACKUP_PREFIX)
+        .and_then(|r| r.strip_suffix(BACKUP_SUFFIX))
+        .is_some_and(|d| {
+            d.len() == 10
+                && d.bytes().enumerate().all(|(i, b)| {
+                    if i == 4 || i == 7 {
+                        b == b'-'
+                    } else {
+                        b.is_ascii_digit()
+                    }
+                })
+        })
+}
+
+/// Delete all but the newest `keep` dated backups in `dir`. Returns how
+/// many were deleted. Other files are left alone.
+fn rotate(dir: &Path, keep: usize) -> std::io::Result<usize> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| is_backup_name(n))
+        .collect();
+    names.sort();
+    let old = names.len().saturating_sub(keep);
+    for n in &names[..old] {
+        std::fs::remove_file(dir.join(n))?;
+    }
+    Ok(old)
+}
+
+/// The daily backup (spec 003): when `RUSTYBEE_BACKUP_DIR` is set, write
+/// today's `VACUUM INTO` copy (0600) through a temporary file, check it with
+/// `PRAGMA integrity_check`, then keep the newest `RUSTYBEE_BACKUP_KEEP`.
+/// Today's backup is not rewritten if it already exists.
+pub async fn backup_once(app: &App) -> Result<Option<PathBuf>, String> {
+    let Some(dir) = app.cfg.backup_dir.clone() else {
+        return Ok(None);
+    };
+    let keep = app.cfg.backup_keep.max(1) as usize;
+    let dest = dir.join(backup_name(app.clock.now_ms()));
+    let tmp = dest.with_extension("db.tmp");
+    let shown = dir.display().to_string();
+    let prepared = {
+        let (dir, dest, tmp) = (dir.clone(), dest.clone(), tmp.clone());
+        tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+            store::private_dir(&dir)?;
+            if dest.exists() {
+                return Ok(false);
+            }
+            match std::fs::remove_file(&tmp) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+                _ => Ok(true),
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{shown}: {e}"))?
+    };
+    if prepared {
+        app.store.backup(&tmp).await.map_err(|e| e.to_string())?;
+        let (dest, tmp) = (dest.clone(), tmp.clone());
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let checked = store::check_backup(&tmp).map_err(|e| e.to_string())?;
+            if let Err(problem) = checked {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("integrity check failed: {problem}"));
+            }
+            std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+    }
+    let removed = tokio::task::spawn_blocking(move || rotate(&dir, keep))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    if removed > 0 {
+        tracing::info!(removed, "old backups rotated");
+    }
+    Ok(prepared.then_some(dest))
+}
+
 /// One TTL / status-timeout pass (spec 004). Returns the changed messages.
 pub async fn sweep_once(app: &App) -> store::Result<Vec<MessageRow>> {
     let now = app.clock.now_ms();
@@ -82,4 +185,25 @@ pub async fn sweep_once(app: &App) -> store::Result<Vec<MessageRow>> {
         }
     }
     Ok(changed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ac_003_10_backup_names() {
+        assert_eq!(backup_name(0), "rustybee-1970-01-01.db");
+        assert_eq!(backup_name(1_760_000_000_000), "rustybee-2025-10-09.db");
+        assert!(is_backup_name("rustybee-2026-10-17.db"));
+        for n in [
+            "rustybee.db",
+            "rustybee-2026-10-17.db.tmp",
+            "rustybee-2026-1-17.db",
+            "other-2026-10-17.db",
+            "rustybee-2026x10-17.db",
+        ] {
+            assert!(!is_backup_name(n), "{n}");
+        }
+    }
 }
