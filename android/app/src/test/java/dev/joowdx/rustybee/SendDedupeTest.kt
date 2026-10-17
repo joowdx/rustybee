@@ -109,6 +109,17 @@ class SendDedupeTest {
     }
 
     @Test
+    fun ac_012_08_other_radio_exception_fails_with_generic_failure() {
+        radio.throwOnSend = IllegalStateException("radio gone")
+        sender.onSend(msg) { acks++ }
+        assertEquals(1, acks)
+        val s = statuses().single()
+        assertEquals("failed", s.state)
+        assertEquals("generic_failure", s.error?.code)
+        assertEquals(SentState.FAILED, sent.get("M1")!!.state)
+    }
+
+    @Test
     fun lost_outcome_after_10_minutes_is_failed_and_never_resent() {
         sender.onSend(msg) {}
         now += 10 * 60_000L + 1

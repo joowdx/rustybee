@@ -8,7 +8,7 @@ interface SmsRadio {
     fun activeSubscriptionIds(): Set<Int>
     fun divide(body: String, sim: Int?): List<String>
 
-    /** Hands all parts to SmsManager. May throw SecurityException or IllegalArgumentException. */
+    /** Hands all parts to SmsManager. May throw SecurityException, IllegalArgumentException or another RuntimeException. */
     fun send(msgId: String, to: String, parts: List<String>, sim: Int?)
 }
 
@@ -59,6 +59,10 @@ class Sender(
             fail(row, SmsErrors.permissionDenied, insert = false)
         } catch (e: IllegalArgumentException) {
             fail(row, SmsErrors.invalidDestination, insert = false)
+        } catch (e: RuntimeException) {
+            // The row is acked, so a status must always go out (spec 012 §5).
+            log("send ${send.msgId}: radio threw ${e.javaClass.simpleName}")
+            fail(row, SmsErrors.radioFailed(e), insert = false)
         }
     }
 

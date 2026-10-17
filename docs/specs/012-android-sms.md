@@ -1,7 +1,7 @@
 # 012 — Android SMS send and receive
 
 Status: implemented
-Updated: 2026-10-16
+Updated: 2026-10-17
 
 ## Design
 
@@ -19,7 +19,7 @@ Updated: 2026-10-16
    - extras `msg_id` and `part`;
    - request code taken from a monotonically increasing int stored in prefs, so every part gets a unique code;
    - flags `FLAG_ONE_SHOT` plus `FLAG_IMMUTABLE` for sent intents and `FLAG_MUTABLE` for delivered intents: the radio fills in the `pdu`/`format` extras, which an immutable PendingIntent drops. The intent is explicit, so only extras can be filled in.
-5. Call `sendMultipartTextMessage` (or `sendTextMessage` when n = 1). A `SecurityException` or `IllegalArgumentException` reports `failed` immediately.
+5. Call `sendMultipartTextMessage` (or `sendTextMessage` when n = 1). A `SecurityException` (`permission_denied`) or `IllegalArgumentException` (`invalid_destination`) reports `failed` immediately. Any other `RuntimeException` reports `failed`/`generic_failure`, so an acked `send` always gets a status.
 6. **Combining part results** (`SmsStatusReceiver` → `goAsync()` → `Sender.onPartResult`, persisted in `sent`):
    - **Sent result:** if the resultCode is `RESULT_OK`, `parts_sent++`; otherwise `parts_failed++` and the error is mapped (below).
    - When `parts_sent + parts_failed == parts`:
@@ -70,6 +70,7 @@ Updated: 2026-10-16
 5. AC-012-05 On the emulator, an SMS injected with `adb emu sms send` reaches the server as `inbound`. Manual check.
 6. AC-012-06 On the emulator, an API send reaches `sent`. The emulator also reports `delivered`. Manual check.
 7. AC-012-07 Another app cannot send `SMS_RECEIVED` to the receiver, because of the `BROADCAST_SMS` guard. Checked by reviewing the manifest.
+8. AC-012-08 A radio call that throws any other `RuntimeException` after the ack reports `failed`/`generic_failure`.
 
 ## Test plan
 | AC | Test |
@@ -80,6 +81,7 @@ Updated: 2026-10-16
 | 04 | `FilterTest` |
 | 05, 06 | Manual check in M7 |
 | 07 | Manifest assertion test that parses the merged manifest |
+| 08 | `SendDedupeTest::ac_012_08_*` |
 
 ## Assumptions
 - Delivery reports are always requested. They cost nothing in battery, and carriers that don't support them simply never report.
@@ -89,3 +91,4 @@ Updated: 2026-10-16
 - `hello.sims[].number` is always null: reading it needs `READ_PHONE_NUMBERS`, which is not requested.
 
 ## Open questions
+- AC-012-08 came from the 2026-10-17 review.

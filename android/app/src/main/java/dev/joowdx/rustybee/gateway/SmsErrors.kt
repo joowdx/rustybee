@@ -28,5 +28,6 @@ object SmsErrors {
     val invalidDestination = StatusError("invalid_destination", "Invalid destination or body")
     val simUnavailable = StatusError("sim_unavailable", "Requested SIM is not active")
     val deliveryFailed = StatusError("delivery_failed", "Carrier reported delivery failure")
+    fun radioFailed(e: RuntimeException) = StatusError("generic_failure", "Radio call failed: ${e.javaClass.simpleName}")
     val outcomeLost = StatusError("generic_failure", "outcome lost")
 }
