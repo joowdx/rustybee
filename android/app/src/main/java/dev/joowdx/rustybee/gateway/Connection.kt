@@ -9,6 +9,9 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
 
+/** App-initiated close when the user switches the gateway off (spec 002). */
+const val CLOSE_GATEWAY_OFF = 4010
+
 /** One OkHttp WebSocket at a time. Callbacks carry a generation so stale sockets are ignored. */
 class Connection(private val events: SendChannel<GatewayEvent>) {
     private val base = OkHttpClient.Builder()
@@ -23,10 +26,22 @@ class Connection(private val events: SendChannel<GatewayEvent>) {
     @Volatile
     private var socket: WebSocket? = null
 
+    /** Set when this side closes with [CLOSE_GATEWAY_OFF]. [open] then refuses until [allowReconnect]. */
+    @Volatile
+    var reconnectSuppressed = false
+        private set
+
     var pingSeconds = 0
         private set
 
+    val isOpen: Boolean get() = socket != null
+
+    fun allowReconnect() {
+        reconnectSuppressed = false
+    }
+
     fun open(url: String, token: String, pingS: Int): Int {
+        if (reconnectSuppressed) return generation
         close(1000, "reconnect")
         val gen = ++generation
         pingSeconds = pingS
@@ -39,7 +54,9 @@ class Connection(private val events: SendChannel<GatewayEvent>) {
     fun send(text: String): Boolean = socket?.send(text) ?: false
 
     fun close(code: Int = 1000, reason: String? = null) {
-        socket?.let { if (!it.close(code, reason)) it.cancel() }
+        val current = socket
+        if (current != null && code == CLOSE_GATEWAY_OFF) reconnectSuppressed = true
+        current?.let { if (!it.close(code, reason)) it.cancel() }
         socket = null
         generation++
     }
@@ -73,5 +90,6 @@ sealed interface GatewayEvent {
     data object NetworkChanged : GatewayEvent
     data object Nudge : GatewayEvent
     data object HealthTick : GatewayEvent
+    data class FcmToken(val token: String) : GatewayEvent
     data class SaveForwarding(val receiveEnabled: Boolean, val filters: Filters, val baseRev: Long) : GatewayEvent
 }

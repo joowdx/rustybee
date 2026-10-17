@@ -295,6 +295,123 @@ pub fn last_seen(now: i64, d: &DeviceRow) -> String {
     }
 }
 
+/// What a device card shows for connection, wake failure, and the last process start.
+pub struct DeviceFace {
+    /// `on`, `unreachable`, `off`, or none for a plain offline dot.
+    pub status_class: Option<&'static str>,
+    pub status_text: String,
+    pub unreachable: Option<String>,
+    pub restart: Option<String>,
+    pub restart_title: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+pub fn device_face(now: i64, d: &DeviceRow) -> DeviceFace {
+    // A live socket is online. A phone the user switched off is not "offline",
+    // and that state wins over a stale unreachable flag.
+    let (status_class, status_text, unreachable) = if d.connected {
+        (Some("on"), "Online".into(), None)
+    } else if let Some(t) = d.gateway_off_at {
+        (
+            Some("off"),
+            format!("Gateway switched off on the phone since {}", ago(now, t)),
+            None,
+        )
+    } else if let Some(t) = d.unreachable_at {
+        (
+            Some("unreachable"),
+            format!("Seen {}", last_seen(now, d)),
+            Some(format!(
+                "Not answering wake-ups since {}. It was probably force-stopped or blocked by the phone's battery manager. Open the app on the phone.",
+                ago(now, t)
+            )),
+        )
+    } else {
+        (None, format!("Seen {}", last_seen(now, d)), None)
+    };
+    let (restart, restart_title) = restart_line(now, d.lifecycle_json.as_deref());
+    DeviceFace {
+        status_class,
+        status_text,
+        unreachable,
+        restart,
+        restart_title,
+        warnings: permission_warnings(d),
+    }
+}
+
+fn notifications_off(d: &DeviceRow) -> bool {
+    d.telemetry
+        .pointer("/permissions/notifications")
+        .and_then(Value::as_bool)
+        == Some(false)
+}
+
+fn permission_warnings(d: &DeviceRow) -> Vec<String> {
+    let mut warnings: Vec<String> = d
+        .missing_permissions()
+        .into_iter()
+        .map(|p| format!("Missing permission: {p}"))
+        .collect();
+    // gms phones are the ones that carry an FCM token. The specific sentence
+    // replaces the generic missing-permission line for notifications.
+    if d.fcm_token.is_some() && notifications_off(d) {
+        warnings.retain(|w| w != "Missing permission: notifications");
+        warnings.push("Notifications are off on the phone, so wake-ups will not work".into());
+    }
+    warnings
+}
+
+fn reason_words(code: &str) -> &str {
+    match code {
+        "push" => "wake-up push",
+        "job" => "watchdog",
+        "boot_complete" => "phone boot",
+        "low_memory" => "low memory",
+        "user_requested" => "stopped from settings",
+        other => other,
+    }
+}
+
+/// "Last restart …" from `lifecycle_json`, or nothing when it is missing.
+fn restart_line(now: i64, raw: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(raw) = raw else {
+        return (None, None);
+    };
+    let Ok(v) = serde_json::from_str::<Value>(raw) else {
+        return (None, None);
+    };
+    let Some(reason) = v.pointer("/start/reason").and_then(Value::as_str) else {
+        return (None, None);
+    };
+    let Some(at) = v.pointer("/start/at").and_then(Value::as_i64) else {
+        return (None, None);
+    };
+    // The app sends `at=0` when the OS gave no launch timestamp.
+    let mut text = if at > 0 {
+        format!("Last restart {}: {}", ago(now, at), reason_words(reason))
+    } else {
+        format!("Last restart: {}", reason_words(reason))
+    };
+    let mut title = None;
+    if let Some(exit_reason) = v.pointer("/exit/reason").and_then(Value::as_str) {
+        text.push_str(", after ");
+        text.push_str(reason_words(exit_reason));
+        title = v
+            .pointer("/exit/description")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+    }
+    if v.pointer("/start/was_force_stopped")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        text.push_str(", was force-stopped");
+    }
+    (Some(text), title)
+}
+
 pub fn sse_event(ev: UiEvent) -> axum::response::sse::Event {
     let (name, id) = match ev {
         UiEvent::Device(id) => ("device", id),

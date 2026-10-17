@@ -158,6 +158,10 @@ a.li{color:inherit;text-decoration:none}a.li:hover{background:var(--sunk)}
 .bat.low b{background:var(--bad)}.bat.chg b{background:var(--accent)}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--line2);display:inline-block}
 .on .dot,.dot.on{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 20%,transparent)}
+.sb .unreachable{color:var(--bad)}
+.sb .unreachable .dot{background:var(--bad);box-shadow:0 0 0 3px color-mix(in srgb,var(--bad) 20%,transparent)}
+.sb .off{color:var(--muted)}
+.sb .off .dot{background:var(--muted)}
 .ph-body{padding:14px 12px 0}
 .ph-body h3{font-family:var(--round);font-size:1.2rem;font-weight:700;letter-spacing:-.01em}
 .ph-q{display:flex;gap:20px;margin-top:14px;font-size:.85rem;color:var(--muted)}

@@ -19,7 +19,7 @@ All pages except `/login` require a session (spec 005).
 | Route | Content |
 |---|---|
 | `/login` | "Text me a code" when a code can be sent, then the code form. The password form appears only when spec 005 allows it; otherwise a hint says when it opens. Shows the "set password" hint when none is set. |
-| `/` | Device cards: name, online dot, battery and charging, network, last seen, outbox depth, permission warnings. Today's counts: sent, delivered, failed, received, queued. Recent 10 messages. Updated live over SSE. |
+| `/` | Device cards: name, status dot (online, offline, or unreachable, below), battery and charging, network, last seen, outbox depth, permission warnings, and a "Last restart" line (below). Today's counts: sent, delivered, failed, received, queued. Recent 10 messages. Updated live over SSE. |
 | `/send` | Recipient chip input. The body textarea shows encoding, characters, parts and remaining. Device and SIM selects. Submits via htmx and shows the result inline. |
 | `/bulk` | Step 1: upload a CSV (≤ 1 MB, ≤ 1000 rows), parsed on the server with the `csv` crate. Step 2: pick the phone column; the rest are variables. Step 3: write a `{{column}}` template with a preview of the first 5 rows and the segment count. Step 4: confirm, which calls the batch endpoint internally. The parsed CSV is kept in memory under a random token for 30 min, so there are no temp files. |
 | `/messages` | Unified history. Filters (direction, state, device, peer, q, date range) live in the query string. Keyset "Load more" via htmx. |
@@ -38,6 +38,11 @@ All pages except `/login` require a session (spec 005).
 - **No inline script.** All page code lives in `app.js`, including the Turnstile `data-callback` (`rbTurnstileOk`, spec 005). The Turnstile loader is `defer`, so it runs after `app.js`.
 - **htmx config:** `allowEval: false`, `allowScriptTags: false`, `selfRequestsOnly: true`. Templates use no `hx-on`, `js:` values or trigger filters, and swapped partials carry no `<script>`.
 
+- **Unreachable devices** (spec 009): when `unreachable_at` is set, the dot is red and the card says "Not answering wake-ups since <time>. It was probably force-stopped or blocked by the phone's battery manager. Open the app on the phone." The same notice shows on the device's row on `/devices`.
+- **Switched off on the phone**: when `gateway_off_at` is set, the dot is grey and the card says "Gateway switched off on the phone since <time>" instead of offline. No wake-ups are sent (spec 009).
+- **Notifications off** (gms devices, those with an `fcm_token`): when `permissions.notifications` is false, the card's permission warnings include "Notifications are off on the phone, so wake-ups will not work".
+- **Last restart** (from `lifecycle_json`, spec 002): "Last restart <relative time>: <start reason>", plus ", after <exit reason>" when an exit is known and ", was force-stopped" when `was_force_stopped` is true. Reasons show in plain words (`push` → "wake-up push", `job` → "watchdog", `boot_complete` → "phone boot", `low_memory` → "low memory", `user_requested` → "stopped from settings", other codes as written). The exit's `description`, when present, is the line's `title` tooltip. No line when `lifecycle_json` is NULL.
+
 ## Acceptance criteria
 1. AC-010-01 Every listed route renders 200 with a session. Without one, `/login` renders and the others redirect.
 2. AC-010-02 Sending from `/send` creates queued messages that are visible in `/messages`.
@@ -46,6 +51,7 @@ All pages except `/login` require a session (spec 005).
 5. AC-010-05 The total compressed weight of the embedded static assets is under 40 KB.
 6. AC-010-06 The layout has no horizontal scroll at 375 px width.
 7. AC-010-07 UI responses carry the four security headers above; the login page has no inline `<script>` and its htmx config sets `allowEval`, `allowScriptTags` and `selfRequestsOnly` as above.
+8. AC-010-08 A device with `unreachable_at` set renders the unreachable notice on `/` and `/devices`; clearing it removes the notice. One with `gateway_off_at` set renders the switched-off state, and a gms device with notifications off renders the wake-up warning. A device with `lifecycle_json` renders the "Last restart" line with the mapped reasons.
 
 ## Test plan
 | AC | Test |
@@ -54,6 +60,7 @@ All pages except `/login` require a session (spec 005).
 | 05 | Test that sums the gzip sizes of the embedded files |
 | 06 | Manual check in the browser pane during M7 |
 | 07 | `server/tests/ui.rs` |
+| 08 | `server/tests/ui.rs::ac_010_08_unreachable_and_last_restart` |
 
 ## Assumptions
 - No command palette and no charts.

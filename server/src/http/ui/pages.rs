@@ -1,7 +1,7 @@
 //! Login, dashboard, live events, sending and message history.
 
 use super::{
-    DevOpt, Layout, Notice, Opt, Res, RowView, back_err, device_opts, ise, last_seen, not_found,
+    DevOpt, Layout, Notice, Opt, Res, RowView, back_err, device_face, device_opts, ise, not_found,
     pct, render, see_other, sim_opts, sse_event,
 };
 use crate::app::{App, BulkUpload, Draft};
@@ -405,12 +405,15 @@ pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Response {
 struct DevCard {
     name: String,
     model: String,
-    online: bool,
+    status_class: Option<&'static str>,
+    status_text: String,
+    unreachable: Option<String>,
+    restart: Option<String>,
+    restart_title: Option<String>,
     battery: String,
     battery_pct: Option<i64>,
     charging: bool,
     network: String,
-    last_seen: String,
     outbox: String,
     queued: i64,
     warnings: Vec<String>,
@@ -463,13 +466,9 @@ async fn dashboard_data(
     let cards = devs
         .into_iter()
         .map(|(d, queued)| {
-            let mut warnings: Vec<String> = d
-                .missing_permissions()
-                .into_iter()
-                .map(|p| format!("Missing permission: {p}"))
-                .collect();
+            let mut face = device_face(now, &d);
             if !d.enabled {
-                warnings.push("Disabled for sending".into());
+                face.warnings.push("Disabled for sending".into());
             }
             DevCard {
                 name: d.name.clone(),
@@ -478,7 +477,11 @@ async fn dashboard_data(
                     .flatten()
                     .collect::<Vec<_>>()
                     .join(" "),
-                online: d.connected,
+                status_class: face.status_class,
+                status_text: face.status_text,
+                unreachable: face.unreachable,
+                restart: face.restart,
+                restart_title: face.restart_title,
                 battery: d
                     .battery_level()
                     .map(|b| format!("{b}%"))
@@ -486,13 +489,12 @@ async fn dashboard_data(
                 battery_pct: d.battery_level().map(|b| b.clamp(0, 100)),
                 charging: d.charging().unwrap_or(false),
                 network: d.network().unwrap_or_else(|| "–".into()),
-                last_seen: last_seen(now, &d),
                 outbox: d
                     .outbox()
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| "–".into()),
                 queued,
-                warnings,
+                warnings: face.warnings,
             }
         })
         .collect();

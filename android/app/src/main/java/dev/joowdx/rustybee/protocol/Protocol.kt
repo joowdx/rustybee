@@ -65,6 +65,27 @@ data class Permissions(
 )
 
 @Serializable
+data class LifecycleStart(
+    val reason: String,
+    val at: Long,
+    @SerialName("was_force_stopped") val wasForceStopped: Boolean,
+)
+
+@Serializable
+data class LifecycleExit(
+    val reason: String,
+    val at: Long,
+    val description: String? = null,
+)
+
+/** How this process started, and why the previous one ended. Either side may be absent. */
+@Serializable
+data class Lifecycle(
+    val start: LifecycleStart? = null,
+    val exit: LifecycleExit? = null,
+)
+
+@Serializable
 data class Hello(
     @SerialName("app_version") val appVersion: String,
     @SerialName("app_build") val appBuild: Int,
@@ -77,6 +98,7 @@ data class Hello(
     @SerialName("fcm_token") val fcmToken: String? = null,
     val permissions: Permissions,
     val outbox: Int,
+    val lifecycle: Lifecycle? = null,
 )
 
 @Serializable
@@ -85,6 +107,7 @@ data class Health(
     val network: String,
     val permissions: Permissions,
     val outbox: Int,
+    @SerialName("fcm_token") val fcmToken: String? = null,
 )
 
 @Serializable

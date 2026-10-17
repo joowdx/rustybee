@@ -30,11 +30,16 @@ pub struct DeviceRow {
     pub last_wake_at: Option<i64>,
     pub created_at: i64,
     pub filters_rev: i64,
+    pub wake_attempts: i64,
+    pub unreachable_at: Option<i64>,
+    pub gateway_off_at: Option<i64>,
+    pub lifecycle_json: Option<String>,
 }
 
 const COLS: &str = "id, public_id, name, enabled, is_default, send_delay_ms, receive_enabled, sim, \
     filters_json, fcm_token, manufacturer, model, os_version, app_version, app_build, telemetry_json, \
-    sims_json, connected, last_seen_at, last_wake_at, created_at, filters_rev";
+    sims_json, connected, last_seen_at, last_wake_at, created_at, filters_rev, \
+    wake_attempts, unreachable_at, gateway_off_at, lifecycle_json";
 
 fn from_row(r: &Row) -> rusqlite::Result<DeviceRow> {
     let filters: String = r.get(8)?;
@@ -67,6 +72,10 @@ fn from_row(r: &Row) -> rusqlite::Result<DeviceRow> {
         last_wake_at: r.get(19)?,
         created_at: r.get(20)?,
         filters_rev: r.get(21)?,
+        wake_attempts: r.get(22)?,
+        unreachable_at: r.get(23)?,
+        gateway_off_at: r.get(24)?,
+        lifecycle_json: r.get(25)?,
     })
 }
 
@@ -211,9 +220,14 @@ pub fn apply_hello(c: &Connection, id: i64, h: &Hello, now: i64) -> rusqlite::Re
         "permissions": h.permissions,
         "outbox": h.outbox,
     });
+    // A missing or malformed lifecycle is already `None` and must not wipe a previous one.
+    let lifecycle = h.lifecycle.as_ref().map(ToString::to_string);
     c.execute(
         "UPDATE devices SET app_version=?2, app_build=?3, os_version=?4, manufacturer=?5, model=?6,
-           sims_json=?7, telemetry_json=?8, fcm_token=?9, connected=1, last_seen_at=?10 WHERE id=?1",
+           sims_json=?7, telemetry_json=?8, fcm_token=?9, connected=1, last_seen_at=?10,
+           wake_attempts=0, unreachable_at=NULL, gateway_off_at=NULL,
+           lifecycle_json=COALESCE(?11, lifecycle_json)
+         WHERE id=?1",
         params![
             id,
             h.app_version,
@@ -224,7 +238,8 @@ pub fn apply_hello(c: &Connection, id: i64, h: &Hello, now: i64) -> rusqlite::Re
             serde_json::to_string(&h.sims).unwrap_or_else(|_| "[]".into()),
             telemetry.to_string(),
             h.fcm_token,
-            now
+            now,
+            lifecycle
         ],
     )?;
     Ok(())
@@ -254,10 +269,18 @@ pub fn apply_health(c: &Connection, id: i64, h: &Health, now: i64) -> rusqlite::
     if let Some(o) = h.outbox {
         obj.insert("outbox".into(), json!(o));
     }
-    c.execute(
-        "UPDATE devices SET telemetry_json=?2, last_seen_at=?3 WHERE id=?1",
-        params![id, t.to_string(), now],
-    )?;
+    let telemetry = t.to_string();
+    if let Some(token) = &h.fcm_token {
+        c.execute(
+            "UPDATE devices SET telemetry_json=?2, last_seen_at=?3, fcm_token=?4 WHERE id=?1",
+            params![id, telemetry, now, token],
+        )?;
+    } else {
+        c.execute(
+            "UPDATE devices SET telemetry_json=?2, last_seen_at=?3 WHERE id=?1",
+            params![id, telemetry, now],
+        )?;
+    }
     Ok(())
 }
 
@@ -265,6 +288,15 @@ pub fn set_connected(c: &Connection, id: i64, connected: bool, now: i64) -> rusq
     c.execute(
         "UPDATE devices SET connected=?2, last_seen_at=?3 WHERE id=?1",
         params![id, connected, now],
+    )?;
+    Ok(())
+}
+
+/// The app closed with 4010 because the user switched the gateway off (spec 009).
+pub fn set_gateway_off(c: &Connection, id: i64, now: i64) -> rusqlite::Result<()> {
+    c.execute(
+        "UPDATE devices SET gateway_off_at=?2 WHERE id=?1",
+        params![id, now],
     )?;
     Ok(())
 }
@@ -420,7 +452,8 @@ pub fn delete(c: &Connection, id: i64, now: i64) -> rusqlite::Result<()> {
         )?;
     }
     c.execute(
-        "UPDATE devices SET removed_at=?2, token_sha256=?3, fcm_token=NULL, is_default=0, connected=0
+        "UPDATE devices SET removed_at=?2, token_sha256=?3, fcm_token=NULL, is_default=0, connected=0,
+           unreachable_at=NULL, wake_attempts=0
          WHERE id=?1 AND removed_at IS NULL",
         params![id, now, crate::util::random_bytes::<32>().as_slice()],
     )?;

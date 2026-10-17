@@ -12,11 +12,8 @@ class Watchdog : JobService() {
     override fun onStartJob(params: JobParameters): Boolean {
         val prefs = Graph.of(this).prefs
         if (prefs.paired && prefs.gatewayEnabled && !GatewayService.running) {
-            if (Telemetry(this).batteryUnrestricted()) {
-                GatewayService.start(this)
-            } else {
-                Notifications.postStopped(this)
-            }
+            val started = Telemetry(this).batteryUnrestricted() && GatewayService.start(this)
+            if (!started) Notifications.postStopped(this)
         }
         return false
     }

@@ -8,5 +8,6 @@ object Push {
 
     fun token(context: Context): String? = null
 
-    fun refresh(context: Context) = Unit
+    /** No Firebase on this flavor, so there is nothing to wait for. */
+    suspend fun refresh(context: Context): String? = null
 }

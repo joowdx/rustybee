@@ -3,7 +3,7 @@
 use crate::app::{App, UiEvent};
 use crate::domain::lifecycle::Event;
 use crate::error::ApiError;
-use crate::hub::{Outgoing, dispatcher};
+use crate::hub::{self, Outgoing, dispatcher};
 use crate::protocol::{
     self, Ack, Envelope, Frame, Nack, PairRequest, PairResponse, StatusState, Welcome,
 };
@@ -113,6 +113,7 @@ async fn connection(app: App, mut socket: WebSocket, dev: DeviceRow) {
     tracing::info!(device = %dev.public_id, "device connected");
     let idle = app.cfg.idle_timeout;
     let mut deadline = Instant::now() + idle;
+    let mut gateway_off = false;
     loop {
         tokio::select! {
             biased;
@@ -133,7 +134,13 @@ async fn connection(app: App, mut socket: WebSocket, dev: DeviceRow) {
             msg = socket.recv() => {
                 deadline = Instant::now() + idle;
                 match msg {
-                    None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                    None | Some(Err(_)) => break,
+                    Some(Ok(Message::Close(frame))) => {
+                        gateway_off = frame
+                            .as_ref()
+                            .is_some_and(|f| f.code == hub::CLOSE_GATEWAY_OFF);
+                        break;
+                    }
                     Some(Ok(Message::Text(t))) => {
                         let replies = match conn.handle(t.as_str()).await {
                             Ok(r) => r,
@@ -171,7 +178,13 @@ async fn connection(app: App, mut socket: WebSocket, dev: DeviceRow) {
         let id = dev.id;
         let _ = app
             .store
-            .write(move |c| devices::set_connected(c, id, false, now))
+            .write(move |c| {
+                devices::set_connected(c, id, false, now)?;
+                if gateway_off {
+                    devices::set_gateway_off(c, id, now)?;
+                }
+                Ok(())
+            })
             .await;
         app.publish(UiEvent::Device(dev.public_id.clone()));
     }

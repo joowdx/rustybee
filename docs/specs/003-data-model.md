@@ -64,6 +64,13 @@ CREATE TABLE seen_frames (device_id INTEGER NOT NULL REFERENCES devices(id) ON D
 - Migration `0002` adds:
   - `messages.internal INTEGER NOT NULL DEFAULT 0`: 1 for admin login codes (spec 005). Internal messages never reach webhooks or the public API; the web UI lists them, with the body replaced once the message finishes.
   - `devices.filters_rev INTEGER NOT NULL DEFAULT 0`: goes up by one on every change to `receive_enabled` or the filters (spec 002).
+- Migration `0003` adds, for the FCM wake and process lifecycle (specs 002 and 009):
+  - `devices.wake_attempts INTEGER NOT NULL DEFAULT 0`: wakes FCM accepted since the device last sent `hello`. Drives the backoff.
+  - `devices.unreachable_at INTEGER`: when the device stopped answering wakes; NULL while it answers or has never been woken.
+  - `devices.gateway_off_at INTEGER`: when the app closed with 4010 because the user switched the gateway off; NULL otherwise. No wakes while set.
+  - `devices.lifecycle_json TEXT`: the last `hello.lifecycle`, as sent. Kept apart from `telemetry_json`, which `health` overwrites.
+
+  Removing a device also clears `unreachable_at` and resets `wake_attempts`.
 - Settings keys used by spec 005: `admin_phone` (E.164) and `otp_send_failures` (a count).
 - Batch counters are not stored. They are computed with `GROUP BY state` over `messages_batch`.
 - `seen_frames` makes inbound frames idempotent by envelope id. Rows older than 7 days are pruned daily.

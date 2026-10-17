@@ -4,6 +4,7 @@ mod common;
 
 use common::*;
 use rustybee::assets::Assets;
+use rustybee::store::rusqlite::params;
 use std::io::Write;
 
 struct Ui<'a> {
@@ -592,5 +593,140 @@ async fn ac_010_07_security_headers_on_ui_responses() {
         .unwrap();
     assert!(!page.contains("<script>"), "no inline script");
     assert!(page.contains(r#""allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true"#));
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_010_08_unreachable_and_last_restart() {
+    let s = server().await;
+    let (pid, _) = s.pair("Pixel").await;
+    let now = s.app().clock.now_ms();
+    let start_at = now - 180_000;
+    let lifecycle = serde_json::json!({
+        "start": {"reason": "push", "at": start_at, "was_force_stopped": false},
+        "exit": {"reason": "low_memory", "at": start_at - 1000, "description": null}
+    })
+    .to_string();
+    let id = pid.clone();
+    s.app()
+        .store
+        .write(move |c| {
+            c.execute(
+                "UPDATE devices SET fcm_token='tok', unreachable_at=?2, telemetry_json=?3, lifecycle_json=?4
+                 WHERE public_id=?1",
+                params![
+                    id,
+                    now - 120_000,
+                    r#"{"permissions":{"notifications":false,"send_sms":true}}"#,
+                    lifecycle
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let ui = Ui::new(&s).await;
+    for path in ["/", "/devices"] {
+        let (st, page) = ui.get(path).await;
+        assert_eq!(st, 200, "{path}");
+        assert!(page.contains("class=\"unreachable\""), "{path}");
+        assert!(page.contains("Not answering wake-ups since"), "{path}");
+        assert!(
+            // The apostrophe is HTML-escaped, so match around it.
+            page.contains("It was probably force-stopped or blocked by the phone")
+                && page.contains("battery manager. Open the app on the phone."),
+            "{path}"
+        );
+        assert!(page.contains("Last restart"), "{path}");
+        assert!(page.contains("wake-up push"), "{path}");
+        assert!(page.contains("low memory"), "{path}");
+        assert!(!page.contains("was force-stopped"), "{path}");
+        assert!(
+            page.contains("Notifications are off on the phone, so wake-ups will not work"),
+            "{path}"
+        );
+    }
+    let id = pid.clone();
+    s.app()
+        .store
+        .write(move |c| {
+            c.execute(
+                "UPDATE devices SET unreachable_at=NULL WHERE public_id=?1",
+                [id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    for path in ["/", "/devices"] {
+        let (_, page) = ui.get(path).await;
+        assert!(!page.contains("Not answering wake-ups"), "{path}");
+        assert!(page.contains("Last restart"), "{path}");
+        assert!(page.contains("wake-up push"), "{path}");
+    }
+    let id = pid.clone();
+    s.app()
+        .store
+        .write(move |c| {
+            c.execute(
+                "UPDATE devices SET gateway_off_at=?2 WHERE public_id=?1",
+                params![id, now - 60_000],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    for path in ["/", "/devices"] {
+        let (_, page) = ui.get(path).await;
+        assert!(page.contains("class=\"off\""), "{path}");
+        assert!(
+            page.contains("Gateway switched off on the phone since"),
+            "{path}"
+        );
+        assert!(!page.contains("Not answering wake-ups"), "{path}");
+    }
+    let id = pid.clone();
+    let lifecycle = serde_json::json!({
+        "start": {"reason": "job", "at": start_at, "was_force_stopped": true},
+        "exit": {"reason": "user_requested", "at": 1, "description": "from settings"}
+    })
+    .to_string();
+    s.app()
+        .store
+        .write(move |c| {
+            c.execute(
+                "UPDATE devices SET lifecycle_json=?2 WHERE public_id=?1",
+                params![id, lifecycle],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (_, page) = ui.get("/").await;
+    assert!(page.contains("watchdog"), "{page}");
+    assert!(page.contains("stopped from settings"));
+    assert!(page.contains("was force-stopped"));
+    assert!(page.contains("title=\"from settings\""));
+    let id = pid.clone();
+    let lifecycle = serde_json::json!({
+        "start": {"reason": "boot_complete", "at": start_at, "was_force_stopped": false},
+        "exit": {"reason": "freezer", "at": 1, "description": null}
+    })
+    .to_string();
+    s.app()
+        .store
+        .write(move |c| {
+            c.execute(
+                "UPDATE devices SET lifecycle_json=?2 WHERE public_id=?1",
+                params![id, lifecycle],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (_, page) = ui.get("/devices").await;
+    assert!(page.contains("phone boot"));
+    assert!(page.contains("freezer"));
+    assert!(!page.contains("was force-stopped"));
     s.stop().await;
 }

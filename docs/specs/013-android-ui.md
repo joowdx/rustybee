@@ -40,7 +40,7 @@ A single scrolling screen with these sections:
    - a gateway on/off `Switch`, which starts or stops the service and sets prefs.
 2. **Health checklist:** one row per item, each with a ✓/✗ and an action button.
    - SMS permissions (send, receive, phone state);
-   - notifications;
+   - notifications, including the gateway notification channel not being blocked. On gms the row's hint says "Needed for wake-ups after Android stops the app" (spec 009);
    - battery unrestricted (`isIgnoringBatteryOptimizations`);
    - "If permissions are greyed out" help, which explains App info → ⋮ → Allow restricted settings and opens app details;
    - (gms) FCM token present.

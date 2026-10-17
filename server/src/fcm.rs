@@ -1,6 +1,6 @@
 //! Optional FCM wake (spec 009). Only a `{"t":"wake"}` data message is ever sent.
 
-use crate::app::App;
+use crate::app::{App, UiEvent};
 use crate::config::Config;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use rusqlite::params;
@@ -9,8 +9,40 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 
 const SCOPE: &str = "https://www.googleapis.com/auth/firebase.messaging";
-const QUIET_MS: i64 = 3 * 60 * 1000;
-const WAKE_EVERY_MS: i64 = 15 * 60 * 1000;
+const QUIET_PENDING_MS: i64 = 3 * 60 * 1000;
+const QUIET_IDLE_MS: i64 = 5 * 60 * 1000;
+const ANSWER_WINDOW_MS: i64 = 2 * 60 * 1000;
+const BACKOFF_BASE_MS: i64 = 15 * 60 * 1000;
+
+/// Backoff after `attempts` wakes FCM has accepted: 15 min for n ≤ 1, then
+/// 30 min, 1 h, 2 h, 4 h, and 8 h for n ≥ 6 (spec 009).
+fn backoff_ms(attempts: i64) -> i64 {
+    let steps = (attempts.max(1) - 1).clamp(0, 5) as u32;
+    BACKOFF_BASE_MS * (1_i64 << steps)
+}
+
+/// Quiet time is measured from `last_seen_at` (or `created_at`). Backoff is
+/// strict: the interval must be more than `backoff(attempts)` ago.
+fn wake_due(
+    attempts: i64,
+    last_wake_at: Option<i64>,
+    quiet_from: i64,
+    pending: bool,
+    now: i64,
+) -> bool {
+    let quiet = if pending {
+        QUIET_PENDING_MS
+    } else {
+        QUIET_IDLE_MS
+    };
+    if now.saturating_sub(quiet_from) <= quiet {
+        return false;
+    }
+    match last_wake_at {
+        None => true,
+        Some(t) => now.saturating_sub(t) > backoff_ms(attempts),
+    }
+}
 
 #[derive(Deserialize)]
 struct Credentials {
@@ -109,7 +141,7 @@ impl Fcm {
             self.base_url, self.project_id
         );
         let body = json!({"message": {"token": token, "data": {"t": "wake"},
-            "android": {"priority": "HIGH", "ttl": "600s"}}});
+            "android": {"priority": "HIGH", "ttl": "3600s", "collapse_key": "wake"}}});
         match app
             .http
             .post(&url)
@@ -148,24 +180,41 @@ pub async fn run(app: App, fcm: Arc<Fcm>) {
     }
 }
 
-/// Evaluate the wake rule once. Returns the device ids that were woken.
+/// Evaluate the wake rule once. Returns the device ids FCM accepted a wake for.
 pub async fn check_once(app: &App, fcm: &Fcm) -> crate::store::Result<Vec<i64>> {
     let now = app.clock.now_ms();
     let due: Vec<(i64, String)> = app
         .store
         .write(move |c| {
             let mut st = c.prepare(
-                "SELECT id, fcm_token FROM devices d WHERE removed_at IS NULL AND connected=0 AND fcm_token IS NOT NULL
-                   AND (last_seen_at IS NULL OR last_seen_at<?1)
-                   AND (last_wake_at IS NULL OR last_wake_at<?2)
-                   AND EXISTS(SELECT 1 FROM messages m WHERE m.device_id=d.id AND (m.state='queued'
-                       OR (m.state='dispatched' AND m.device_acked_at IS NULL)))",
+                "SELECT id, fcm_token, wake_attempts, last_wake_at, COALESCE(last_seen_at, created_at),
+                        EXISTS(SELECT 1 FROM messages m WHERE m.device_id=devices.id
+                          AND (m.state='queued' OR (m.state='dispatched' AND m.device_acked_at IS NULL)))
+                 FROM devices
+                 WHERE removed_at IS NULL AND enabled=1 AND connected=0
+                   AND gateway_off_at IS NULL AND fcm_token IS NOT NULL
+                 ORDER BY id",
             )?;
-            let due: Vec<(i64, String)> = st
-                .query_map(params![now - QUIET_MS, now - WAKE_EVERY_MS], |r| {
-                    Ok((r.get(0)?, r.get(1)?))
+            let rows: Vec<(i64, String, i64, Option<i64>, i64, bool)> = st
+                .query_map([], |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
                 })?
                 .collect::<rusqlite::Result<_>>()?;
+            let due: Vec<(i64, String)> = rows
+                .into_iter()
+                .filter(|(_, _, attempts, last_wake, quiet_from, pending)| {
+                    wake_due(*attempts, *last_wake, *quiet_from, *pending, now)
+                })
+                .map(|(id, token, _, _, _, _)| (id, token))
+                .collect();
+            // Any attempt, including one FCM will reject, stamps last_wake_at.
             for (id, _) in &due {
                 c.execute(
                     "UPDATE devices SET last_wake_at=?2 WHERE id=?1",
@@ -180,6 +229,15 @@ pub async fn check_once(app: &App, fcm: &Fcm) -> crate::store::Result<Vec<i64>> 
         match fcm.wake(app, &token).await {
             WakeResult::Sent => {
                 tracing::info!(device_id = id, "FCM wake sent");
+                app.store
+                    .write(move |c| {
+                        c.execute(
+                            "UPDATE devices SET wake_attempts=wake_attempts+1 WHERE id=?1",
+                            [id],
+                        )
+                        .map(|_| ())
+                    })
+                    .await?;
                 woken.push(id);
             }
             WakeResult::Unregistered => {
@@ -194,5 +252,44 @@ pub async fn check_once(app: &App, fcm: &Fcm) -> crate::store::Result<Vec<i64>> 
             WakeResult::Failed(e) => tracing::warn!(device_id = id, error = %e, "FCM wake failed"),
         }
     }
+    flag_unreachable(app).await?;
     Ok(woken)
+}
+
+/// Set `unreachable_at` when an accepted wake has gone unanswered for 2 min.
+async fn flag_unreachable(app: &App) -> crate::store::Result<()> {
+    let now = app.clock.now_ms();
+    let flagged: Vec<String> = app
+        .store
+        .write(move |c| {
+            let mut st = c.prepare(
+                "SELECT id, public_id, last_wake_at FROM devices
+                 WHERE removed_at IS NULL AND enabled=1 AND connected=0
+                   AND gateway_off_at IS NULL AND fcm_token IS NOT NULL
+                   AND unreachable_at IS NULL AND wake_attempts>=1
+                   AND last_wake_at IS NOT NULL AND last_wake_at<?1
+                   AND (last_seen_at IS NULL OR last_seen_at<last_wake_at)",
+            )?;
+            let rows: Vec<(i64, String, i64)> = st
+                .query_map(params![now - ANSWER_WINDOW_MS], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?
+                .collect::<rusqlite::Result<_>>()?;
+            let mut ids = Vec::new();
+            for (id, public_id, wake_at) in rows {
+                let n = c.execute(
+                    "UPDATE devices SET unreachable_at=?2 WHERE id=?1 AND unreachable_at IS NULL",
+                    params![id, wake_at],
+                )?;
+                if n == 1 {
+                    ids.push(public_id);
+                }
+            }
+            Ok(ids)
+        })
+        .await?;
+    for id in flagged {
+        app.publish(UiEvent::Device(id));
+    }
+    Ok(())
 }
