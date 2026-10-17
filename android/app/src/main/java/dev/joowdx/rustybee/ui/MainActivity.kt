@@ -60,6 +60,16 @@ class MainActivity : Activity() {
             collect?.cancel()
             render(GatewayState())
         }
+
+        // Stopping the service kills a flags-0 binding for good; rebind so the next start is delivered.
+        override fun onBindingDied(name: ComponentName) {
+            rebind()
+        }
+    }
+
+    private fun rebind() {
+        if (bound) unbindService(connectionCallback)
+        bound = bindService(Intent(this, GatewayService::class.java), connectionCallback, 0)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -277,7 +287,7 @@ class MainActivity : Activity() {
     private fun startGateway() {
         Watchdog.schedule(this)
         GatewayService.start(this)
-        if (!bound) bound = bindService(Intent(this, GatewayService::class.java), connectionCallback, 0)
+        rebind()
         refreshChecklist()
     }
 
