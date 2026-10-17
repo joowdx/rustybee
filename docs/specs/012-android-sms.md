@@ -11,7 +11,7 @@ Updated: 2026-10-17
    - `.createForSubscriptionId(sim)` when `sim` is not null and is an active subscription;
    - otherwise use `config.sim` from the server if set;
    - otherwise the system default SMS subscription. When there is none (`SubscriptionManager.getDefaultSmsSubscriptionId()` is `INVALID_SUBSCRIPTION_ID`, i.e. "Ask every time" on dual-SIM), use the single active subscription, or else the active one in the lowest slot; with no active subscription visible, fall back to the plain `SmsManager`. The pure `SimChoice` makes this choice.
-   - If the requested `sim` is not active, report `failed`/`sim_unavailable`.
+   - If the requested `sim` is not active, report `failed`/`sim_unavailable`. Without `READ_PHONE_STATE` the active list can't be read, so a requested `sim` reports `failed`/`permission_denied` instead, and nothing is sent; `health.permissions.read_phone_state` shows the cause (spec 002).
 3. Split the body with `divideMessage(body)` into `parts` (n). Store `parts=n`.
 4. For each part `i`, create a sent PendingIntent and, when delivery reports are wanted (always), a delivered one:
    - explicit `Intent(context, SmsStatusReceiver::class.java)`;
@@ -72,6 +72,7 @@ Updated: 2026-10-17
 7. AC-012-07 Another app cannot send `SMS_RECEIVED` to the receiver, because of the `BROADCAST_SMS` guard. Checked by reviewing the manifest.
 8. AC-012-08 A radio call that throws any other `RuntimeException` after the ack reports `failed`/`generic_failure`.
 9. AC-012-09 With no default SMS subscription, a send without `sim` or an active `config.sim` uses the single active subscription, or else the lowest slot; with a default set, the system default.
+10. AC-012-10 Without `READ_PHONE_STATE`, a `send` with `sim` reports `failed`/`permission_denied` and sends nothing; one without `sim` is sent as usual.
 
 ## Test plan
 | AC | Test |
@@ -84,14 +85,17 @@ Updated: 2026-10-17
 | 07 | Manifest assertion test that parses the merged manifest |
 | 08 | `SendDedupeTest::ac_012_08_*` |
 | 09 | `SimChoiceTest` |
+| 10 | `SendDedupeTest::ac_012_10_*` |
 
 ## Assumptions
 - Delivery reports are always requested. They cost nothing in battery, and carriers that don't support them simply never report.
 - A delivered callback without a PDU counts as success when its resultCode is `RESULT_OK`, otherwise as pending.
 - A duplicate `send` for a message already `delivered` re-reports `sent` and then `delivered`, so the server never sees `dispatched → delivered`. `sent` and `failed` re-report just that state.
-- If `config.sim` is set but not active, the system default SMS subscription is used. Without `READ_PHONE_STATE` no subscription counts as active, so an explicit `sim` fails with `sim_unavailable`.
+- If `config.sim` is set but not active (or can't be checked without `READ_PHONE_STATE`), the fallback in §2 is used.
+- An explicit `sim` without `READ_PHONE_STATE` fails with `permission_denied` rather than being passed through unchecked: sending on an unverified subscription could go out on the wrong SIM, and the spec reports problems rather than guessing.
 - `hello.sims[].number` is always null: reading it needs `READ_PHONE_NUMBERS`, which is not requested.
 
 ## Open questions
 - AC-012-08 came from the 2026-10-17 review.
 - AC-012-09 came from the 2026-10-17 review.
+- AC-012-10 and `read_phone_state` came from the 2026-10-17 review. The server ignores the new field until its `Permissions` struct gains it; only then can a fixture carry it (the server fixture test round-trips every field).

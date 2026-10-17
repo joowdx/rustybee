@@ -14,11 +14,12 @@ import dev.joowdx.rustybee.data.Prefs
 /** Thin SmsManager wrapper (spec 012 §2–5). */
 class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : SmsRadio {
 
+    override fun canReadSims(): Boolean =
+        context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+
     @SuppressLint("MissingPermission")
     override fun activeSubscriptionIds(): Set<Int> {
-        if (context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
-            return emptySet()
-        }
+        if (!canReadSims()) return emptySet()
         val sm = context.getSystemService(SubscriptionManager::class.java) ?: return emptySet()
         return sm.activeSubscriptionInfoList.orEmpty().map { it.subscriptionId }.toSet()
     }
@@ -26,9 +27,7 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
     /** Active subscriptions with their slots; empty without READ_PHONE_STATE. */
     @SuppressLint("MissingPermission")
     private fun activeSubs(): List<SimChoice.Sub> {
-        if (context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
-            return emptyList()
-        }
+        if (!canReadSims()) return emptyList()
         val sm = context.getSystemService(SubscriptionManager::class.java) ?: return emptyList()
         return sm.activeSubscriptionInfoList.orEmpty().map { SimChoice.Sub(it.subscriptionId, it.simSlotIndex) }
     }

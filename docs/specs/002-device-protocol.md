@@ -64,7 +64,7 @@ Every text frame is one JSON object:
 ### Device → server
 | type | data | when |
 |---|---|---|
-| `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted}, outbox, lifecycle}` | first frame after every connect |
+| `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted, read_phone_state?}, outbox, lifecycle}` | first frame after every connect |
 | `status` | `{msg_id, state:"sent"\|"delivered"\|"failed", at, parts, error:{code,message}\|null}` | each change of a message's outcome |
 | `inbound` | `{uid, from, body, sim, received_at}` | each received SMS, while forwarding is on, that passes the filters |
 | `health` | `{battery, network, permissions, outbox, fcm_token?}` | every 15 min while connected, on a change of charging state or permissions, and at once when FCM issues a new token |
@@ -82,6 +82,7 @@ Every text frame is one JSON object:
   - `exit` comes from `ApplicationExitInfo` for the previous process, or is `null` when the OS has none. `reason` is one of `anr`, `crash`, `crash_native`, `dependency_died`, `excessive_resource_usage`, `exit_self`, `freezer`, `initialization_failure`, `low_memory`, `other`, `package_state_change`, `package_updated`, `permission_change`, `signaled`, `unknown`, `user_requested`, `user_stopped`, or `unknown_<int>`. `description` is the OS's text, cut to 200 characters, or `null`.
   - `at` values are epoch milliseconds from the phone's clock.
   - `lifecycle` is optional so older apps keep working. A missing or malformed `lifecycle` is ignored, not nacked; every other `hello` field is checked as before.
+- `permissions.read_phone_state` (optional; older apps omit it) is whether `READ_PHONE_STATE` is granted. Without it the app can't list SIMs, so `sims` is empty and a `send` with `sim` fails `permission_denied` (spec 012).
 - `permissions.notifications` is true only when `POST_NOTIFICATIONS` is granted **and** the gateway notification channel is not blocked. FCM wakes depend on both (spec 009).
 - `health.fcm_token` is sent only when the token changed; when present, the server replaces the stored token.
 - `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100.
@@ -181,4 +182,5 @@ Every text frame is one JSON object:
 - The idle-close timeout is derived from `ping_s` but can be injected directly, for tests only.
 
 ## Open questions
+- `permissions.read_phone_state` came from the 2026-10-17 review.
 - AC-002-18 (401 at the upgrade handled like 4003) came from the 2026-10-17 review.
