@@ -165,7 +165,7 @@ Every text frame is one JSON object:
 20. AC-002-20 `set_sim` stores `sim` (`null` included) and is acked, followed by a `config` with the stored `sim`; a replay is acked with the current `config` and does not undo a later edit. A `sim` not in the device's SIM list is nacked `invalid` with the current `config`, and nothing is stored.
 21. AC-002-21 A `health` with `sims` replaces the stored SIM list, `[]` included; one without keeps it. The app sends a `health` with `sims` when the active SIM list changes while connected.
 22. AC-002-22 A web save whose SIM equals its `sim_base` keeps a SIM the phone picked since the form loaded; a changed SIM is saved. A stored SIM the phone no longer reports stays selected in the form.
-23. AC-002-23 The SIMs the app reports, lists and sends on are the active subscriptions whose SIM is on: a SIM whose card is absent, not ready, disabled or faulty, or whose radio is off outside airplane mode, is left out, so a phone with every SIM turned off reports `sims: []`. A SIM turning on or off, or airplane mode changing, sends a `health` with `sims` while connected.
+23. AC-002-23 The SIMs the app reports, lists and sends on are the active subscriptions whose SIM is on: a SIM whose card state isn't ready (a SIM turned off in Settings included), or one whose radio is off outside airplane mode, is left out, so a phone with every SIM turned off reports `sims: []`. A SIM turning on or off, or airplane mode changing, sends a `health` with `sims` while connected.
 
 ## Test plan
 | AC | Test |
@@ -199,4 +199,4 @@ Every text frame is one JSON object:
 - AC-002-18 (401 at the upgrade handled like 4003) came from the 2026-10-17 review.
 - AC-002-19 (health on a network type change) came from a field report: after cellular to wifi the web UI kept showing `cellular` while the device stayed connected.
 - AC-002-20 to AC-002-22 (preferred SIM from the phone, SIMs in `health`, and the code review fixes) were built on a direct request on 2026-10-20 without a separate spec review.
-- AC-002-23 (a SIM turned off counts as no SIM) came from a field report on 2026-10-20: a Samsung A56 with both SIMs turned off in Settings kept them in its active subscription list, so the web UI showed no "No SIM".
+- AC-002-23 (a SIM turned off counts as no SIM) came from a field report on 2026-10-20: a Samsung A56 with both SIMs turned off in Settings kept one in its active subscription list (SIM state 16, out of service), so the web UI showed no "No SIM".

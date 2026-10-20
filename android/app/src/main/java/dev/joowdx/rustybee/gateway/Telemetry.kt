@@ -180,8 +180,9 @@ class Telemetry(private val context: Context) {
 
     companion object {
         /**
-         * Active subscriptions whose SIM is on. A SIM turned off in Settings can stay in the active
-         * list on some phones (Samsung), so its card and radio state decide (spec 002 §SIMs).
+         * Active subscriptions whose SIM is on. A SIM turned off in Settings stays in the active
+         * list (Samsung) with a SIM state that isn't ready, so the card and radio state decide
+         * (spec 002 §SIMs).
          * Needs READ_PHONE_STATE.
          */
         @SuppressLint("MissingPermission")
@@ -200,22 +201,12 @@ class Telemetry(private val context: Context) {
         }
 
         /**
-         * A SIM is on unless its card isn't usable, or its radio is off outside airplane mode
-         * (airplane mode turns every radio off and isn't "no SIM"). Unknown states count as on.
+         * A SIM is on when its card is ready and its radio isn't off outside airplane mode
+         * (airplane mode turns every radio off and isn't "no SIM").
          */
-        fun simOn(simState: Int, serviceState: Int?, airplane: Boolean): Boolean = when {
-            simState in OFF_SIM_STATES -> false
-            serviceState == ServiceState.STATE_POWER_OFF && !airplane -> false
-            else -> true
-        }
-
-        private val OFF_SIM_STATES = setOf(
-            TelephonyManager.SIM_STATE_ABSENT,
-            TelephonyManager.SIM_STATE_NOT_READY,
-            TelephonyManager.SIM_STATE_PERM_DISABLED,
-            TelephonyManager.SIM_STATE_CARD_IO_ERROR,
-            TelephonyManager.SIM_STATE_CARD_RESTRICTED,
-        )
+        fun simOn(simState: Int, serviceState: Int?, airplane: Boolean): Boolean =
+            simState == TelephonyManager.SIM_STATE_READY &&
+                !(serviceState == ServiceState.STATE_POWER_OFF && !airplane)
 
         /** The protocol's `network` value; a VPN carries its underlying transports. */
         fun networkLabel(hasTransport: (Int) -> Boolean): String = when {
