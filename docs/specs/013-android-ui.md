@@ -1,7 +1,7 @@
 # 013 — Android UI
 
 Status: implemented
-Updated: 2026-10-17
+Updated: 2026-10-20
 
 ## Design
 
@@ -45,7 +45,7 @@ A single scrolling screen with these sections:
    - battery unrestricted (`isIgnoringBatteryOptimizations`);
    - "If permissions are greyed out" help, which explains App info → ⋮ → Allow restricted settings and opens app details;
    - (gms) FCM token present.
-3. **SIMs:** a list of active subscriptions (read-only). The preferred SIM is set in the web UI.
+3. **SIMs:** a list of active subscriptions, shown as a warning when there is none, and the preferred SIM: "Phone default" or one of the active SIMs, the same setting as in the web UI (spec 002 `set_sim`). It can be changed only while connected.
 4. **Log:** the last 100 entries, monospace, with Copy and Clear buttons.
 5. **Unpair:** asks for confirmation, wipes the credentials and the db, stops the service and opens Setup.
 
@@ -81,6 +81,8 @@ Requested in one runtime request, with a short rationale, when the gateway is fi
 7. AC-013-07 A deep link, new intent or scan result fills the link field but does not pair. Pair shows a confirmation naming the host; when already paired it says it replaces the current server and wipes local data. Nothing is sent or wiped before confirming.
 8. AC-013-08 Re-pairing while paired and connected stops the gateway before the wipe, so no socket stays open to the old server, drops the old server's settings except the FCM token, and connects to the new server. A close event still in flight from the stopping instance (a 4003 or an upgrade 401) never unpairs, so it can't wipe the new pairing; a real revoke surfaces again on the next connect. Manual check, plus `GatewayPolicyTest`.
 
+9. AC-013-09 The SIMs section checks the preferred SIM from the latest `config`; picking another sends `set_sim` and the choice follows the `config` that answers it. While not connected the choice is disabled. Manual check.
+
 ## Test plan
 Manual checks in M7, with screenshots attached to the M7 notes, except:
 
@@ -97,3 +99,4 @@ Manual checks in M7, with screenshots attached to the M7 notes, except:
 
 ## Open questions
 - AC-013-08 came from the 2026-10-17 review.
+- AC-013-09 (preferred SIM on the phone) was built on a direct request on 2026-10-20 without a separate spec review.

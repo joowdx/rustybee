@@ -27,8 +27,9 @@ object FrameType {
     const val ACK = "ack"
     const val NACK = "nack"
     const val SET_FORWARDING = "set_forwarding"
+    const val SET_SIM = "set_sim"
 
-    val ALL = setOf(HELLO, STATUS, INBOUND, HEALTH, WELCOME, CONFIG, SEND, ACK, NACK, SET_FORWARDING)
+    val ALL = setOf(HELLO, STATUS, INBOUND, HEALTH, WELCOME, CONFIG, SEND, ACK, NACK, SET_FORWARDING, SET_SIM)
 }
 
 @Serializable
@@ -120,6 +121,8 @@ data class Health(
     val outbox: Int,
     @SerialName("fcm_token") val fcmToken: String? = null,
     val radios: Radios? = null,
+    /** Omitted without READ_PHONE_STATE, so the server keeps what it had; empty means no SIM. */
+    val sims: List<SimInfo>? = null,
 )
 
 @Serializable
@@ -175,6 +178,10 @@ data class SetForwarding(
     @SerialName("receive_enabled") val receiveEnabled: Boolean,
     val filters: Filters,
 )
+
+/** The preferred SIM picked on the phone; null is the phone's default SMS SIM. */
+@Serializable
+data class SetSim(val sim: Int?)
 
 @Serializable
 data class Welcome(
@@ -241,6 +248,7 @@ object Frames {
         FrameType.ACK -> Ack.serializer()
         FrameType.NACK -> Nack.serializer()
         FrameType.SET_FORWARDING -> SetForwarding.serializer()
+        FrameType.SET_SIM -> SetSim.serializer()
         else -> null
     }
 }

@@ -116,6 +116,10 @@ pub struct Health {
     /// Sent only when the token changed; replaces the stored token (spec 002).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fcm_token: Option<String>,
+    /// The active SIMs, sent by newer apps when they can read them; replaces the stored list,
+    /// `[]` included. Absent keeps it (spec 002).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sims: Option<Vec<Sim>>,
     /// Replaces the stored radios when present, `{}` included; malformed counts as absent (spec 015).
     #[serde(
         default,
@@ -286,6 +290,12 @@ pub struct DeviceConfig {
     pub filters_rev: i64,
 }
 
+/// The preferred SIM picked on the device; `None` is the phone's default SMS SIM (spec 002).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetSim {
+    pub sim: Option<i64>,
+}
+
 /// Forwarding edited on the device, based on the `filters_rev` it last saw.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetForwarding {
@@ -341,6 +351,7 @@ pub enum Frame {
     Ack(Ack),
     Nack(Nack),
     SetForwarding(SetForwarding),
+    SetSim(SetSim),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -365,6 +376,7 @@ impl Frame {
             Frame::Ack(_) => "ack",
             Frame::Nack(_) => "nack",
             Frame::SetForwarding(_) => "set_forwarding",
+            Frame::SetSim(_) => "set_sim",
         }
     }
 
@@ -380,6 +392,7 @@ impl Frame {
             Frame::Ack(d) => serde_json::to_value(d),
             Frame::Nack(d) => serde_json::to_value(d),
             Frame::SetForwarding(d) => serde_json::to_value(d),
+            Frame::SetSim(d) => serde_json::to_value(d),
         };
         v.unwrap_or(Value::Null)
     }
@@ -421,6 +434,7 @@ pub fn decode(text: &str) -> Result<(String, Frame), DecodeError> {
         "ack" => typed(env.data).map(Frame::Ack),
         "nack" => typed(env.data).map(Frame::Nack),
         "set_forwarding" => typed(env.data).map(Frame::SetForwarding),
+        "set_sim" => typed(env.data).map(Frame::SetSim),
         other => return Err(err("unsupported", format!("unknown type {other:?}"))),
     }
     .map_err(|m| err("invalid", m))?;

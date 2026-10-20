@@ -682,3 +682,59 @@ async fn ac_015_02_radios_stored_replaced_kept_and_cleared() {
     assert!(row.radios_json().is_null());
     s.stop().await;
 }
+
+#[tokio::test]
+async fn ac_002_20_set_sim_stores_and_pushes_config() {
+    let s = server().await;
+    let (pid, token) = s.pair("A").await;
+    let id = internal_id(&s, &pid).await;
+    let mut d = Device::connect(&s, &token).await;
+    let f = frame("set_sim", json!({"sim": 2}));
+    d.send(&f).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
+    assert_eq!(d.recv_type("config").await["data"]["sim"], 2);
+    assert_eq!(wake_row(&s, id).await.sim, Some(2));
+
+    // A replay is acked again with the current config, not reapplied over a later edit.
+    let back = frame("set_sim", json!({"sim": null}));
+    d.send(&back).await;
+    d.recv_type("ack").await;
+    assert!(d.recv_type("config").await["data"]["sim"].is_null());
+    d.send(&f).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
+    assert!(d.recv_type("config").await["data"]["sim"].is_null());
+    assert_eq!(wake_row(&s, id).await.sim, None);
+
+    // The app leaves out a null `sim`; that is the phone's default too.
+    d.send(&frame("set_sim", json!({"sim": 1}))).await;
+    d.recv_type("ack").await;
+    d.recv_type("config").await;
+    d.send(&frame("set_sim", json!({}))).await;
+    d.recv_type("ack").await;
+    assert!(d.recv_type("config").await["data"]["sim"].is_null());
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_002_21_health_sims_replace_or_keep() {
+    let s = server().await;
+    let (pid, token) = s.pair("A").await;
+    let id = internal_id(&s, &pid).await;
+    let mut d = Device::connect(&s, &token).await;
+    let hello: serde_json::Value =
+        serde_json::from_str(include_str!("../../protocol/fixtures/hello.json")).unwrap();
+    assert_eq!(wake_row(&s, id).await.sims, hello["data"]["sims"]);
+
+    // A health without sims keeps them.
+    let h = frame("health", json!({"outbox": 0}));
+    d.send(&h).await;
+    d.recv_type("ack").await;
+    assert_eq!(wake_row(&s, id).await.sims, hello["data"]["sims"]);
+
+    // A health with sims replaces them, `[]` included.
+    let h = frame("health", json!({"sims": []}));
+    d.send(&h).await;
+    d.recv_type("ack").await;
+    assert_eq!(wake_row(&s, id).await.sims, json!([]));
+    s.stop().await;
+}

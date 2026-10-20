@@ -11,6 +11,7 @@ import dev.joowdx.rustybee.protocol.ProtocolJson
 import dev.joowdx.rustybee.protocol.Radio
 import dev.joowdx.rustybee.protocol.Radios
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -117,5 +118,18 @@ class RadiosTest {
         assertEquals(RadioDecision.Now, RadioReport.decide(true, sent, now, 60_000))
         // Mobile data turning off drops the generation, and that reports at once.
         assertEquals(RadioDecision.Now, RadioReport.decide(true, sent, Radios(cellular = Radio(level = 3)), 5_000))
+    }
+
+    @Test
+    fun ac_015_10_generation_only_on_mobile_data() {
+        assertTrue(RadioReport.showsTech("cellular"))
+        // On Wi-Fi (or anything else) the data SIM's 4G/5G is not shown, even with mobile data switched on.
+        assertFalse(RadioReport.showsTech("wifi"))
+        assertFalse(RadioReport.showsTech("ethernet"))
+        assertFalse(RadioReport.showsTech("none"))
+        assertFalse(RadioReport.showsTech(null))
+        // Moving to Wi-Fi drops the generation, and that reports at once.
+        val onCell = Radios(cellular = Radio(level = 3, tech = "5G"))
+        assertEquals(RadioDecision.Now, RadioReport.decide(true, onCell, Radios(cellular = Radio(level = 3)), 5_000))
     }
 }

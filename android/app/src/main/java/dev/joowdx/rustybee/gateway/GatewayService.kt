@@ -32,6 +32,8 @@ import dev.joowdx.rustybee.protocol.Nack
 import dev.joowdx.rustybee.protocol.Permissions
 import dev.joowdx.rustybee.protocol.Radios
 import dev.joowdx.rustybee.protocol.SetForwarding
+import dev.joowdx.rustybee.protocol.SetSim
+import dev.joowdx.rustybee.protocol.SimInfo
 import dev.joowdx.rustybee.protocol.Ulid
 import dev.joowdx.rustybee.protocol.Welcome
 import dev.joowdx.rustybee.push.Push
@@ -106,6 +108,10 @@ class GatewayService : Service() {
     private var pendingForwarding: String? = null
     /** The `receive_enabled` of the save in flight. */
     private var pendingReceiveEnabled = false
+    /** Frame id of the `set_sim` in flight. */
+    private var pendingSim: String? = null
+    /** The SIM list as last sent on this connection; the listener also fires without a change. */
+    private var reportedSims: List<SimInfo>? = null
     /** What the posted gateway notification shows, so unchanged state is not re-posted. */
     @Volatile
     private var notified: Notifications.GatewayContent? = null
@@ -116,6 +122,11 @@ class GatewayService : Service() {
         /** Send forwarding edited on the phone; the result shows in [GatewayState.forwardingSave]. */
         fun saveForwarding(receiveEnabled: Boolean, filters: Filters, baseRev: Long) {
             events.trySend(GatewayEvent.SaveForwarding(receiveEnabled, filters, baseRev))
+        }
+
+        /** Send the preferred SIM picked on the phone; null is the phone's default. Needs a live connection. */
+        fun saveSim(sim: Int?) {
+            events.trySend(GatewayEvent.SaveSim(sim))
         }
     }
 
@@ -139,6 +150,12 @@ class GatewayService : Service() {
         override fun onLost(network: Network) {
             if (network == lastNetwork) lastNetwork = null
             events.trySend(GatewayEvent.NetworkChanged)
+        }
+    }
+
+    private val subscriptionsListener = object : SubscriptionManager.OnSubscriptionsChangedListener() {
+        override fun onSubscriptionsChanged() {
+            events.trySend(GatewayEvent.SimsChanged)
         }
     }
 
@@ -173,6 +190,10 @@ class GatewayService : Service() {
         instance = this
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
         watchRadios()
+        // A SIM removed or added reaches the server without a reconnect; the list needs READ_PHONE_STATE.
+        runCatching {
+            getSystemService(SubscriptionManager::class.java).addOnSubscriptionsChangedListener(mainExecutor, subscriptionsListener)
+        }.onFailure { graph.log("SIM listener failed: $it", "E") }
         registerReceiver(
             powerReceiver,
             IntentFilter().apply {
@@ -227,6 +248,7 @@ class GatewayService : Service() {
         if (instance === this) instance = null
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
         runCatching { unregisterReceiver(powerReceiver) }
+        runCatching { getSystemService(SubscriptionManager::class.java).removeOnSubscriptionsChangedListener(subscriptionsListener) }
         unwatchWifi()
         unwatchCellular()
         graph.uplink.detach()
@@ -275,8 +297,16 @@ class GatewayService : Service() {
                 sendHealth()
             }
             is GatewayEvent.NetworkType -> {
+                // Capabilities change often on one network; only a transport change re-reads the
+                // cellular generation, which shows only on mobile data.
+                val changed = ev.label != currentNetwork
                 currentNetwork = ev.label
-                maybeSendHealthOnNetworkChange()
+                if (changed) readCellular()
+                if (GatewayPolicy.reportNetwork(welcomed, reportedNetwork, currentNetwork)) {
+                    sendHealth(fresh = changed)
+                } else if (changed) {
+                    checkRadios()
+                }
             }
             GatewayEvent.RadioSettings -> {
                 watchRadios()
@@ -291,6 +321,12 @@ class GatewayService : Service() {
             }
             is GatewayEvent.FcmToken -> if (ev.token != announcedToken) sendHealth(ev.token)
             is GatewayEvent.SaveForwarding -> saveForwarding(ev.receiveEnabled, ev.filters, ev.baseRev)
+            is GatewayEvent.SaveSim -> saveSim(ev.sim)
+            GatewayEvent.SimsChanged -> if (welcomed && telemetry.granted(Manifest.permission.READ_PHONE_STATE) &&
+                telemetry.sims() != reportedSims
+            ) {
+                sendHealth()
+            }
             is GatewayEvent.Opened -> if (ev.gen == connection.generation) onOpened()
             is GatewayEvent.Message -> if (ev.gen == connection.generation) {
                 handler.handle(ev.text) { connection.send(it) }
@@ -358,6 +394,7 @@ class GatewayService : Service() {
             reportedRadios = hello.radios
             lastReportAt = SystemClock.elapsedRealtime()
             reportedNetwork = hello.network
+            reportedSims = hello.sims
         }
         graph.log("socket open; hello sent")
     }
@@ -417,10 +454,33 @@ class GatewayService : Service() {
         sendForwarding(frame, Ulid.next())
     }
 
+    /** Spec 002 `set_sim`: the server answers with an ack and a `config` carrying the new SIM, applied by onConfig. */
+    private fun saveSim(sim: Int?) {
+        if (!welcomed) {
+            setState { it.copy(simError = "Not connected to the server") }
+            return
+        }
+        val id = Ulid.next()
+        if (!connection.send(Frames.encode(FrameType.SET_SIM, SetSim.serializer(), SetSim(sim), id))) {
+            setState { it.copy(simError = "Not connected to the server") }
+            return
+        }
+        pendingSim = id
+        setState { it.copy(simError = null) }
+    }
+
     private fun sendForwarding(f: SetForwarding, id: String) =
         connection.send(Frames.encode(FrameType.SET_FORWARDING, SetForwarding.serializer(), f, id))
 
     private fun onReply(ref: String, nack: Nack?) {
+        if (ref == pendingSim) {
+            pendingSim = null
+            if (nack != null) {
+                graph.log("preferred SIM not saved: ${nack.code}", "E")
+                setState { it.copy(simError = nack.message ?: nack.code) }
+            }
+            return
+        }
         if (ref != pendingForwarding) return
         pendingForwarding = null
         if (nack == null && pendingReceiveEnabled) graph.prefs.forwardingOffHere = false
@@ -437,6 +497,10 @@ class GatewayService : Service() {
         if (pendingForwarding != null) {
             pendingForwarding = null
             setState { it.copy(forwardingSave = ForwardingSave.Failed("Connection lost before the server answered")) }
+        }
+        if (pendingSim != null) {
+            pendingSim = null
+            setState { it.copy(simError = "Connection lost before the server answered") }
         }
         graph.uplink.detach()
         healthJob?.cancel()
@@ -480,17 +544,21 @@ class GatewayService : Service() {
         if (!welcomed) return
         val token = fcmToken?.takeIf { it != announcedToken }
         if (!fresh) readCellular()
-        val health = telemetry.health(graph.uplink.size(), token, currentNetwork ?: telemetry.network(), currentRadios())
+        val health = telemetry.health(graph.uplink.size(), token, network(), currentRadios())
         lastPermissions = health.permissions
         if (connection.send(Frames.encode(FrameType.HEALTH, Health.serializer(), health))) {
             reportedRadios = health.radios
             lastReportAt = SystemClock.elapsedRealtime()
             reportedNetwork = health.network
+            health.sims?.let { reportedSims = it }
             if (token != null) announcedToken = token
         }
     }
 
     // --- network details (spec 015)
+
+    /** The `network` value to report: the callback's latest, or a fresh read while it is unknown. */
+    private fun network(): String = currentNetwork ?: telemetry.network()
 
     private fun currentRadios(): Radios {
         val sw = graph.prefs.radioSwitches
@@ -512,7 +580,7 @@ class GatewayService : Service() {
             watchRadios()
         }
         val signal = graph.prefs.radioSwitches.cellularSignal
-        cellReading = runCatching { telemetry.cellularReading(cellSignal, cellDisplay, signal) }.getOrNull()
+        cellReading = runCatching { telemetry.cellularReading(cellSignal, cellDisplay, network(), signal) }.getOrNull()
     }
 
     private fun checkRadios() {
@@ -676,6 +744,7 @@ class GatewayService : Service() {
                 sendsToday = graph.prefs.today("sends"),
                 receivesToday = graph.prefs.today("receives"),
                 filtersRev = graph.prefs.config.filtersRev,
+                sim = graph.prefs.config.sim,
             )
         }
         val state = stateFlow.value

@@ -420,6 +420,25 @@ impl Conn {
                     ],
                 })
             }
+            Frame::SetSim(s) => {
+                let fid = id.clone();
+                let dev = app
+                    .store
+                    .write(move |c| {
+                        // A replay of a pick already applied is acked again, not reapplied.
+                        if first_sight(c, device_id, &fid, now)? {
+                            devices::set_sim(c, device_id, s.sim)?;
+                        }
+                        devices::by_id(c, device_id)
+                    })
+                    .await?;
+                let Some(dev) = dev else {
+                    return Ok(vec![]);
+                };
+                let config = Envelope::new("config", dev.config(app.cfg.ping_s)).to_text();
+                app.publish(UiEvent::Device(dev.public_id));
+                Ok(vec![ack(&id), config])
+            }
             Frame::Welcome(_) | Frame::Config(_) | Frame::Send(_) => Ok(vec![nack(
                 &id,
                 "unsupported",

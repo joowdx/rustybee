@@ -11,6 +11,10 @@ data class GatewayState(
     /** The `filters_rev` of the config the phone holds. */
     val filtersRev: Long = 0,
     val forwardingSave: ForwardingSave = ForwardingSave.Idle,
+    /** The preferred SIM (`config.sim`) the phone holds; null is the phone's default. */
+    val sim: Int? = null,
+    /** Why the last preferred SIM change from the phone failed, or null. */
+    val simError: String? = null,
 )
 
 /** Progress of the last forwarding edit sent from the phone. */

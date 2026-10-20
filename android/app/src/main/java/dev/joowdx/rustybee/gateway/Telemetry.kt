@@ -101,7 +101,15 @@ class Telemetry(private val context: Context) {
     )
 
     fun health(outbox: Int, fcmToken: String? = null, network: String = network(), radios: Radios? = null): Health =
-        Health(battery(), network, permissions(), outbox, fcmToken, radios)
+        Health(
+            battery = battery(),
+            network = network,
+            permissions = permissions(),
+            outbox = outbox,
+            fcmToken = fcmToken,
+            radios = radios,
+            sims = if (granted(Manifest.permission.READ_PHONE_STATE)) sims() else null,
+        )
 
     /** The data SIM's TelephonyManager, or the default one without a data SIM. */
     fun dataTelephony(): TelephonyManager {
@@ -113,11 +121,16 @@ class Telemetry(private val context: Context) {
     /**
      * The data SIM's carrier, signal and generation, or null when no SIM is ready. [signal] and
      * [display] are the listeners' latest; without [display] the generation needs READ_PHONE_STATE.
-     * Like the status bar, the generation shows only while mobile data is on. With [withSignal] off,
-     * the bars and generation (never reported then) are not read.
+     * The generation shows only while [network] (the reported default network) is cellular, so not
+     * on Wi-Fi. With [withSignal] off, the bars and generation (never reported then) are not read.
      */
     @SuppressLint("MissingPermission")
-    fun cellularReading(signal: SignalStrength?, display: TelephonyDisplayInfo?, withSignal: Boolean = true): RadioReading? {
+    fun cellularReading(
+        signal: SignalStrength?,
+        display: TelephonyDisplayInfo?,
+        network: String,
+        withSignal: Boolean = true,
+    ): RadioReading? {
         val tm = dataTelephony()
         if (tm.simState != TelephonyManager.SIM_STATE_READY) return null
         val ss = if (withSignal) signal ?: tm.signalStrength else null
@@ -127,7 +140,7 @@ class Telemetry(private val context: Context) {
             dbm = ss?.cellSignalStrengths?.firstOrNull()?.dbm?.takeIf { it in -150..-1 },
             tech = when {
                 !withSignal -> null
-                !runCatching { tm.isDataEnabled }.getOrDefault(false) -> null
+                !RadioReport.showsTech(network) -> null
                 display != null -> RadioReport.tech(display.networkType, display.overrideNetworkType)
                 granted(Manifest.permission.READ_PHONE_STATE) -> runCatching { RadioReport.tech(tm.dataNetworkType) }.getOrNull()
                 else -> null

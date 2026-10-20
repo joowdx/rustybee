@@ -48,6 +48,8 @@ pub struct NetChip {
     /// Cellular generation, "2G" to "5G".
     pub tech: Option<String>,
     pub title: String,
+    /// Shown as a fault, like "No SIM".
+    pub bad: bool,
 }
 
 impl NetChip {
@@ -149,6 +151,8 @@ impl DeviceRow {
             .get("radios")
             .and_then(|v| serde_json::from_value::<Radios>(v.clone()).ok())
             .unwrap_or_default();
+        let net = self.network();
+        let on_cell = net.as_deref() == Some("cellular");
         let chip = |icon: &'static str, kind: &str, radio: &Radio, label: Option<String>| {
             let mut title = radio.name.clone().unwrap_or_else(|| kind.to_string());
             if let Some(d) = radio.dbm {
@@ -158,12 +162,13 @@ impl DeviceRow {
                 icon,
                 label,
                 level: radio.level.map(|l| l.clamp(0, 4)),
-                tech: radio.tech.clone(),
+                // The generation shows only while mobile data carries the traffic, like the status bar.
+                tech: radio.tech.clone().filter(|_| on_cell),
                 title,
+                bad: false,
             }
         };
         let none = Radio::default();
-        let net = self.network();
         let mut out = vec![];
         if let Some(other) = net
             .as_deref()
@@ -184,7 +189,29 @@ impl DeviceRow {
                 None => {}
             }
         }
+        if self.no_sim() {
+            // Without a SIM the phone is no gateway: always say so in place of the cellular chip.
+            out.retain(|c| c.icon != "cell");
+            out.push(NetChip {
+                icon: "cell",
+                label: Some("No SIM".into()),
+                level: None,
+                tech: None,
+                title: "No SIM in the phone".into(),
+                bad: true,
+            });
+        }
         out
+    }
+
+    /// The device can read its SIMs and has none in service, so it cannot send or receive.
+    pub fn no_sim(&self) -> bool {
+        let readable = self
+            .telemetry
+            .pointer("/permissions/read_phone_state")
+            .and_then(Value::as_bool)
+            == Some(true);
+        readable && self.sims.as_array().is_some_and(Vec::is_empty)
     }
 
     /// Names of permissions the device reports as missing.
@@ -352,6 +379,15 @@ pub fn apply_health(c: &Connection, id: i64, h: &Health, now: i64) -> rusqlite::
         obj.insert("radios".into(), json!(r.cleaned()));
     }
     let telemetry = t.to_string();
+    if let Some(sims) = &h.sims {
+        c.execute(
+            "UPDATE devices SET sims_json=?2 WHERE id=?1",
+            params![
+                id,
+                serde_json::to_string(sims).unwrap_or_else(|_| "[]".into())
+            ],
+        )?;
+    }
     if let Some(token) = &h.fcm_token {
         c.execute(
             "UPDATE devices SET telemetry_json=?2, last_seen_at=?3, fcm_token=?4 WHERE id=?1",
@@ -491,6 +527,12 @@ pub fn set_forwarding(
         r.get(0)
     })?;
     Ok(if n == 1 { Ok(rev) } else { Err(rev) })
+}
+
+/// Save the preferred SIM picked on the device; the last edit, phone or web, wins (spec 002).
+pub fn set_sim(c: &Connection, id: i64, sim: Option<i64>) -> rusqlite::Result<()> {
+    c.execute("UPDATE devices SET sim=?2 WHERE id=?1", params![id, sim])?;
+    Ok(())
 }
 
 pub fn set_default(c: &Connection, id: i64) -> rusqlite::Result<()> {

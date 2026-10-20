@@ -1,11 +1,15 @@
 package dev.joowdx.rustybee
 
 import dev.joowdx.rustybee.protocol.Envelope
+import dev.joowdx.rustybee.protocol.FrameType
 import dev.joowdx.rustybee.protocol.Frames
+import dev.joowdx.rustybee.protocol.Health
 import dev.joowdx.rustybee.protocol.PROTOCOL_VERSION
 import dev.joowdx.rustybee.protocol.PairRequest
 import dev.joowdx.rustybee.protocol.PairResponse
 import dev.joowdx.rustybee.protocol.ProtocolJson
+import dev.joowdx.rustybee.protocol.SetSim
+import dev.joowdx.rustybee.protocol.SimInfo
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -55,6 +59,29 @@ class ProtocolFixturesTest {
             }
             assertEquals(file.name, normalize(original), normalize(again))
         }
+    }
+
+    @Test
+    fun ac_002_20_set_sim_frame() {
+        val env = ProtocolJson.decodeFromString(Envelope.serializer(), Fixtures.read("set_sim.json"))
+        assertEquals(FrameType.SET_SIM, env.type)
+        assertEquals(SetSim(2), ProtocolJson.decodeFromJsonElement(SetSim.serializer(), env.data))
+        // "Phone default" is a null sim, omitted on output like every null optional.
+        val frame = Frames.encode(FrameType.SET_SIM, SetSim.serializer(), SetSim(null), "01JA0000000000000000000014")
+        assertEquals("{\"v\":1,\"id\":\"01JA0000000000000000000014\",\"type\":\"set_sim\",\"data\":{}}", frame)
+        assertEquals(SetSim(null), ProtocolJson.decodeFromString(SetSim.serializer(), "{\"sim\":null}"))
+    }
+
+    @Test
+    fun ac_002_21_health_sims_optional() {
+        val env = ProtocolJson.decodeFromString(Envelope.serializer(), Fixtures.read("health.json"))
+        val health = ProtocolJson.decodeFromJsonElement(Health.serializer(), env.data)
+        assertEquals(listOf(SimInfo(1, 0, "Example Mobile", null)), health.sims)
+        // Without READ_PHONE_STATE the list is left out, so the server keeps what it had.
+        val text = ProtocolJson.encodeToString(Health.serializer(), health.copy(sims = null))
+        assertTrue(!text.contains("\"sims\""))
+        // An empty list is sent: it means no SIM.
+        assertTrue(ProtocolJson.encodeToString(Health.serializer(), health.copy(sims = emptyList())).contains("\"sims\":[]"))
     }
 
     @Test
