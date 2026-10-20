@@ -122,6 +122,44 @@ jobs:
       - name: Compile gms and lint foss release
         run: ./gradlew --no-daemon compileGmsReleaseKotlin lintFossRelease
 
+  # PRs only: pair, send and receive on an Android 11 emulator against a local
+  # server (AC-011-13). Lint can't see a system service that is null on API 30,
+  # or a permission only the old code path needs.
+  api30-smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with: { cache-read-only: true }
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: server, save-if: false }
+      - name: Build the server and the foss debug APK
+        run: |
+          (cd server && cargo build --locked)
+          (cd android && ./gradlew --no-daemon assembleFossDebug)
+          sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Smoke test on API 30
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim
+          script: android/ci/api30-smoke.sh server/target/debug/rustybee android/app/build/outputs/apk/foss/debug/app-foss-debug.apk
+
   release:
     if: github.event_name != 'pull_request'
     needs: [version, apk]

@@ -34,8 +34,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -46,6 +48,9 @@ import java.util.concurrent.TimeUnit
 class SetupActivity : Activity() {
     private val scope: CoroutineScope = MainScope()
     private var pairing: Job? = null
+    /** The pairing request in flight: a blocking call, so cancelling [pairing] alone would wait for it. */
+    @Volatile
+    private var pairCall: Call? = null
 
     private lateinit var link: EditText
     private lateinit var insecure: CheckBox
@@ -53,7 +58,7 @@ class SetupActivity : Activity() {
     private lateinit var pairButton: Button
 
     // Back cancels a running pairing. Touched only on API 33+: the callback type is missing on Android 11.
-    private val cancelPairing by lazy { OnBackInvokedCallback { pairing?.cancel() } }
+    private val cancelPairing by lazy { OnBackInvokedCallback { cancelRunningPairing() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -204,13 +209,19 @@ class SetupActivity : Activity() {
             } catch (e: PairingException) {
                 showError(e.message)
             } catch (e: java.io.IOException) {
-                showError("Could not reach the server: ${e.message ?: e.javaClass.simpleName}")
+                // Back cancels the call too (AC-011-14); that ends here and is not an error.
+                if (isActive) showError("Could not reach the server: ${e.message ?: e.javaClass.simpleName}")
             } finally {
                 pairButton.isEnabled = true
                 pairButton.text = "Pair"
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) interceptBack(false)
             }
         }
+    }
+
+    private fun cancelRunningPairing() {
+        pairing?.cancel()
+        pairCall?.cancel()
     }
 
     @TargetApi(Build.VERSION_CODES.TIRAMISU)
@@ -229,9 +240,8 @@ class SetupActivity : Activity() {
     @SuppressLint("GestureBackNavigation")
     @Deprecated("Replaced by OnBackInvokedDispatcher from API 33")
     override fun onBackPressed() {
-        val p = pairing
-        if (p?.isActive == true) {
-            p.cancel()
+        if (pairing?.isActive == true) {
+            cancelRunningPairing()
         } else {
             @Suppress("DEPRECATION")
             super.onBackPressed()
@@ -261,7 +271,17 @@ class SetupActivity : Activity() {
             .url("$base/api/device/pair")
             .post(ProtocolJson.encodeToString(PairRequest.serializer(), body).toRequestBody("application/json".toMediaType()))
             .build()
-        client.newCall(req).execute().use { resp ->
+        val call = client.newCall(req).also { pairCall = it }
+        if (pairing?.isCancelled == true) call.cancel()
+        try {
+            return readPairResponse(call)
+        } finally {
+            pairCall = null
+        }
+    }
+
+    private fun readPairResponse(call: Call): PairResponse {
+        call.execute().use { resp ->
             val text = resp.body.string()
             if (resp.isSuccessful) {
                 return runCatching { ProtocolJson.decodeFromString(PairResponse.serializer(), text) }

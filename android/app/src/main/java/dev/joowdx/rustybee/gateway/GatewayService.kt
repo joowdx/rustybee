@@ -93,11 +93,9 @@ class GatewayService : Service() {
     /** When [radioJob] fires, and until when newly started listeners hold reports back. */
     private var radioDueAt = 0L
     private var settleUntil = 0L
-    /** Whether [wifiCallback] asked for location info. */
-    private var wifiWithName = false
     /** Volatile: callbacks compare themselves to these to drop stale events. */
     @Volatile
-    private var wifiCallback: ConnectivityManager.NetworkCallback? = null
+    private var wifiCallback: WifiCallback? = null
     @Volatile
     private var cellCallback: TelephonyWatch? = null
     @Volatile
@@ -687,7 +685,7 @@ class GatewayService : Service() {
         val sw = graph.prefs.radioSwitches
         // Location info (the Wi-Fi name) is asked for only while the name is reported, so the signal
         // alone never counts as a location access.
-        if (wifiCallback != null && (!sw.wifi || wifiWithName != sw.wifiName)) unwatchWifi()
+        if (wifiCallback != null && (!sw.wifi || wifiCallback?.withName != sw.wifiName)) unwatchWifi()
         if (sw.wifi && wifiCallback == null) {
             // Location info is only included with this flag, and only shown with the location permissions.
             // Android 11 has no flag: there the name comes from WifiManager (Telemetry.wifiReading).
@@ -698,7 +696,6 @@ class GatewayService : Service() {
             }
             val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
             wifiCallback = cb
-            wifiWithName = sw.wifiName
             settle()
             runCatching { getSystemService(ConnectivityManager::class.java).registerNetworkCallback(request, cb) }
                 .onFailure {
@@ -757,7 +754,8 @@ class GatewayService : Service() {
      * A callback already queued from a replaced listener is ignored.
      */
     private inner class WifiCallback : ConnectivityManager.NetworkCallback {
-        private val withName: Boolean
+        /** Whether this callback reports the network name (and, from API 31, asked for location info). */
+        val withName: Boolean
 
         constructor(withName: Boolean) : super() {
             this.withName = withName

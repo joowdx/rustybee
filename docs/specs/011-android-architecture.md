@@ -109,7 +109,8 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 10. AC-011-10 Killing the app process (`adb shell am kill`) with the gateway enabled and default battery settings: on gms the gateway reconnects with `hello.lifecycle.exit.reason` set and `start.reason="push"`; on foss the watchdog posts "Gateway stopped — tap to restart", and tapping it reconnects with `start.reason="start_activity"`. Manual check on an API 35 and an API 36+ emulator.
 11. AC-011-11 A stored token that can't be decrypted because its Keystore key is lost counts as not paired: the pairing is cleared, and Setup shows why. Manual check: restore the app data onto another phone.
 12. AC-011-12 `http://` and `ws://` are accepted only for a LAN host (loopback, RFC 1918, link-local, IPv6 ULA, `localhost`, `*.local`). Pairing with a cleartext public host is refused with a message, and the service refuses to connect to one.
-13. AC-011-13 On API 30–34 the app pairs, sends and receives, and reports network details; its `hello.lifecycle` has `exit` and no `start`. Below API 33 the checklist asks for no notification permission. Manual check on an API 30 emulator.
+13. AC-011-13 On API 30–34 the app pairs, sends and receives, and reports network details; its `hello.lifecycle` has `exit` and no `start`. Below API 33 the checklist asks for no notification permission. CI pairs, sends and receives on an API 30 emulator on every app PR.
+14. AC-011-14 Pressing back while a pairing is running cancels the pairing, including the request in flight, so Setup stays open with its Pair button back at once, on every API level: below API 33, on API 33–35 (where the app does not opt in to `OnBackInvokedDispatcher`) and where the dispatcher callback is in effect. Manual check on an API 30 and an API 34 emulator.
 
 ## Test plan
 | AC | Test |
@@ -125,7 +126,8 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 | 10 | Manual check; the gms half also covers AC-009-05 |
 | 11 | Manual check; the Keystore can't run on the JVM |
 | 12 | `CleartextTest` |
-| 13 | `RuntimePermissionsTest` (the permission set by API level); the rest is a manual check on an API 30 emulator |
+| 13 | `RuntimePermissionsTest` (the permission set by API level), `TelephonyWatchTest` (the Android 11 listener flags), `ManifestTest`; CI job `api30-smoke` (`android/ci/api30-smoke.sh`) pairs, sends and receives on an API 30 emulator; network details are a manual check |
+| 14 | Manual check on an API 30 and an API 34 emulator |
 
 ## Assumptions
 - Robolectric is not used, to keep the test toolchain light. Code that needs the Android framework is kept thin.
@@ -141,4 +143,5 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 - AC-011-11 came from the 2026-10-17 review.
 - AC-011-12 (LAN-only cleartext, no certificate pinning) came from the 2026-10-17 review.
 - AC-011-13 (minSdk 30, for Android 11 phones) was asked for on 2026-10-20 and planned in chat; the gates above keep newer phones unchanged.
+- AC-011-14 came from the 2026-10-20 review of the minSdk 30 change: on API 33–35 back during pairing used to close Setup.
 - Running the prunes and `failLost` on the health tick, not only at service start (AC-011-08), came from the 2026-10-17 review.
