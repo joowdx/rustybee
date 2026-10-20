@@ -32,13 +32,16 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
     }
 
     private fun manager(sim: Int?): SmsManager {
-        val base = context.getSystemService(SmsManager::class.java)
         // With "Ask every time" the plain SmsManager has no subscription to send on (spec 012 §2).
         val id = sim ?: SimChoice.fallback(SubscriptionManager.getDefaultSmsSubscriptionId(), activeSubs())
-        if (id == null) return base
-        // Android 11 has the per-subscription manager under its older name (spec 012).
-        @Suppress("DEPRECATION")
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) base.createForSubscriptionId(id) else SmsManager.getSmsManagerForSubscriptionId(id)
+        // SmsManager is a system service only from API 31; Android 11 has the older static
+        // getters (spec 012).
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            @Suppress("DEPRECATION")
+            return if (id == null) SmsManager.getDefault() else SmsManager.getSmsManagerForSubscriptionId(id)
+        }
+        val base = context.getSystemService(SmsManager::class.java)
+        return if (id == null) base else base.createForSubscriptionId(id)
     }
 
     override fun divide(body: String, sim: Int?): List<String> = manager(sim).divideMessage(body).orEmpty()
