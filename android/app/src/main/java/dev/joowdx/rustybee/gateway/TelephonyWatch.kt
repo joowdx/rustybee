@@ -12,12 +12,18 @@ import android.telephony.TelephonyManager
 import java.util.concurrent.Executor
 
 /**
- * One telephony listener for a set of [Kind]s: a [TelephonyCallback] on API 31+, a
+ * One telephony listener of a fixed [Watch]: a [TelephonyCallback] on API 31+, a
  * [PhoneStateListener] on Android 11 (spec 011). [onEvent] gets this watch, so a callback
  * already queued from a replaced watch can be told apart.
  */
-class TelephonyWatch(val kinds: Set<Kind>, private val onEvent: (TelephonyWatch, Event) -> Unit) {
-    enum class Kind { SERVICE_STATE, SIGNAL, DISPLAY_INFO, MOBILE_DATA }
+class TelephonyWatch(val watch: Watch, private val onEvent: (TelephonyWatch, Event) -> Unit) {
+    /** The listener sets the service uses, with their Android 11 `LISTEN_*` flags. */
+    @Suppress("DEPRECATION")
+    enum class Watch(val listenEvents: Int) {
+        SERVICE_STATE(PhoneStateListener.LISTEN_SERVICE_STATE),
+        SERVICE_STATE_AND_SIGNAL(PhoneStateListener.LISTEN_SERVICE_STATE or PhoneStateListener.LISTEN_SIGNAL_STRENGTHS),
+        DISPLAY_INFO_AND_MOBILE_DATA(PhoneStateListener.LISTEN_DISPLAY_INFO_CHANGED or PhoneStateListener.LISTEN_USER_MOBILE_DATA_STATE),
+    }
 
     sealed interface Event {
         data object Service : Event
@@ -40,26 +46,25 @@ class TelephonyWatch(val kinds: Set<Kind>, private val onEvent: (TelephonyWatch,
 
     private fun emit(e: Event) = onEvent(this, e)
 
-    // A TelephonyCallback registers for exactly the listener interfaces it implements, so each set
-    // of kinds the service uses has its own class.
+    // A TelephonyCallback registers for exactly the listener interfaces it implements, so each
+    // [Watch] has its own class.
     @TargetApi(Build.VERSION_CODES.S)
     @SuppressLint("MissingPermission")
     private fun startCallback(tm: TelephonyManager, executor: Executor): () -> Unit {
-        val cb: TelephonyCallback = when (kinds) {
-            setOf(Kind.SERVICE_STATE) -> object : TelephonyCallback(), TelephonyCallback.ServiceStateListener {
+        val cb: TelephonyCallback = when (watch) {
+            Watch.SERVICE_STATE -> object : TelephonyCallback(), TelephonyCallback.ServiceStateListener {
                 override fun onServiceStateChanged(serviceState: ServiceState) = emit(Event.Service)
             }
-            setOf(Kind.SERVICE_STATE, Kind.SIGNAL) ->
+            Watch.SERVICE_STATE_AND_SIGNAL ->
                 object : TelephonyCallback(), TelephonyCallback.ServiceStateListener, TelephonyCallback.SignalStrengthsListener {
                     override fun onServiceStateChanged(serviceState: ServiceState) = emit(Event.Service)
                     override fun onSignalStrengthsChanged(signalStrength: SignalStrength) = emit(Event.Signal(signalStrength))
                 }
-            setOf(Kind.DISPLAY_INFO, Kind.MOBILE_DATA) ->
+            Watch.DISPLAY_INFO_AND_MOBILE_DATA ->
                 object : TelephonyCallback(), TelephonyCallback.DisplayInfoListener, TelephonyCallback.UserMobileDataStateListener {
                     override fun onDisplayInfoChanged(telephonyDisplayInfo: TelephonyDisplayInfo) = emit(Event.Display(telephonyDisplayInfo))
                     override fun onUserMobileDataStateChanged(enabled: Boolean) = emit(Event.MobileData)
                 }
-            else -> error("unsupported kinds $kinds")
         }
         tm.registerTelephonyCallback(executor, cb)
         return { tm.unregisterTelephonyCallback(cb) }
@@ -76,12 +81,7 @@ class TelephonyWatch(val kinds: Set<Kind>, private val onEvent: (TelephonyWatch,
             override fun onDisplayInfoChanged(telephonyDisplayInfo: TelephonyDisplayInfo) = emit(Event.Display(telephonyDisplayInfo))
             override fun onUserMobileDataStateChanged(enabled: Boolean) = emit(Event.MobileData)
         }
-        var events = 0
-        if (Kind.SERVICE_STATE in kinds) events = events or PhoneStateListener.LISTEN_SERVICE_STATE
-        if (Kind.SIGNAL in kinds) events = events or PhoneStateListener.LISTEN_SIGNAL_STRENGTHS
-        if (Kind.DISPLAY_INFO in kinds) events = events or PhoneStateListener.LISTEN_DISPLAY_INFO_CHANGED
-        if (Kind.MOBILE_DATA in kinds) events = events or PhoneStateListener.LISTEN_USER_MOBILE_DATA_STATE
-        tm.listen(listener, events)
+        tm.listen(listener, watch.listenEvents)
         return { tm.listen(listener, PhoneStateListener.LISTEN_NONE) }
     }
 }

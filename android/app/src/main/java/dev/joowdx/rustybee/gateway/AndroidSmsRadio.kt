@@ -53,7 +53,8 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
         parts.indices.forEach { i ->
             sent += pending(SmsStatusReceiver.ACTION_SENT, msgId, i, PendingIntent.FLAG_IMMUTABLE)
             // Mutable so the radio can fill in the `pdu`/`format` extras; the intent is explicit.
-            delivered += pending(SmsStatusReceiver.ACTION_DELIVERED, msgId, i, PendingIntent.FLAG_MUTABLE)
+            // Android 11 has no flag: PendingIntents are mutable there by default.
+            delivered += pending(SmsStatusReceiver.ACTION_DELIVERED, msgId, i, MUTABLE)
         }
         val wl = context.getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "rustybee:send")
@@ -81,5 +82,9 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
             intent,
             mutability or PendingIntent.FLAG_ONE_SHOT,
         )
+    }
+
+    private companion object {
+        val MUTABLE = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
     }
 }

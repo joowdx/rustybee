@@ -52,8 +52,8 @@ class SetupActivity : Activity() {
     private lateinit var error: TextView
     private lateinit var pairButton: Button
 
-    // Back cancels a running pairing. Created only on API 33+: the callback type is missing on Android 11.
-    private var cancelPairing: Any? = null
+    // Back cancels a running pairing. Touched only on API 33+: the callback type is missing on Android 11.
+    private val cancelPairing by lazy { OnBackInvokedCallback { pairing?.cancel() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -215,20 +215,22 @@ class SetupActivity : Activity() {
 
     @TargetApi(Build.VERSION_CODES.TIRAMISU)
     private fun interceptBack(on: Boolean) {
-        val cb = (cancelPairing as? OnBackInvokedCallback) ?: OnBackInvokedCallback { pairing?.cancel() }.also { cancelPairing = it }
         if (on) {
-            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, cb)
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, cancelPairing)
         } else {
-            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(cb)
+            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(cancelPairing)
         }
     }
 
-    /** Below API 33 back arrives here (spec 011); from 33 [interceptBack] handles it instead. */
+    /**
+     * Back arrives here whenever the dispatcher callback isn't in effect: below API 33, and on
+     * API 33–35, where the app doesn't opt in to it (spec 011). Either way it cancels a pairing.
+     */
     @SuppressLint("GestureBackNavigation")
     @Deprecated("Replaced by OnBackInvokedDispatcher from API 33")
     override fun onBackPressed() {
         val p = pairing
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && p?.isActive == true) {
+        if (p?.isActive == true) {
             p.cancel()
         } else {
             @Suppress("DEPRECATION")

@@ -160,12 +160,13 @@ class Telemetry(private val context: Context) {
     }
 
     /** A connected Wi-Fi network's name and signal, from capabilities that carry location info. */
-    fun wifiReading(caps: NetworkCapabilities): RadioReading {
+    fun wifiReading(caps: NetworkCapabilities, withName: Boolean): RadioReading {
         val wm = context.getSystemService(WifiManager::class.java)
-        // Android 11 carries no WifiInfo in the capabilities; WifiManager has the same reading there.
+        // Android 11 carries no WifiInfo in the capabilities; WifiManager has the name there. The
+        // capabilities still carry the signal, so it is asked only while the name is reported.
         @Suppress("DEPRECATION")
         val info = caps.transportInfo as? WifiInfo
-            ?: if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) runCatching { wm.connectionInfo }.getOrNull() else null
+            ?: if (withName && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) runCatching { wm.connectionInfo }.getOrNull() else null
         val rssi = (info?.rssi ?: caps.signalStrength).takeIf { it in -127..-1 }
         return RadioReading(
             name = RadioReport.ssid(info?.ssid),

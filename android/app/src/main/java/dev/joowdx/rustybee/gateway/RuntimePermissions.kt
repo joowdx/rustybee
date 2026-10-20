@@ -10,7 +10,7 @@ object RuntimePermissions {
         Manifest.permission.READ_PHONE_STATE,
     )
 
-    const val NOTIFICATIONS = "android.permission.POST_NOTIFICATIONS"
+    const val NOTIFICATIONS = Manifest.permission.POST_NOTIFICATIONS
 
     fun notificationsNeedPermission(sdk: Int): Boolean = sdk >= 33
 

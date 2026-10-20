@@ -18,7 +18,7 @@ Updated: 2026-10-20
    - action `dev.joowdx.rustybee.SMS_SENT` or `…SMS_DELIVERED`;
    - extras `msg_id` and `part`;
    - request code taken from a monotonically increasing int stored in prefs, so every part gets a unique code;
-   - flags `FLAG_ONE_SHOT` plus `FLAG_IMMUTABLE` for sent intents and `FLAG_MUTABLE` for delivered intents: the radio fills in the `pdu`/`format` extras, which an immutable PendingIntent drops. The intent is explicit, so only extras can be filled in.
+   - flags `FLAG_ONE_SHOT` plus `FLAG_IMMUTABLE` for sent intents and `FLAG_MUTABLE` for delivered intents (below API 31, no flag: PendingIntents are mutable by default): the radio fills in the `pdu`/`format` extras, which an immutable PendingIntent drops. The intent is explicit, so only extras can be filled in.
 5. Call `sendMultipartTextMessage` (or `sendTextMessage` when n = 1). A `SecurityException` (`permission_denied`) or `IllegalArgumentException` (`invalid_destination`) reports `failed` immediately. Any other `RuntimeException` reports `failed`/`generic_failure`, so an acked `send` always gets a status.
 6. **Combining part results** (`SmsStatusReceiver` → `goAsync()` → `Sender.onPartResult`, persisted in `sent`):
    - **Sent result:** if the resultCode is `RESULT_OK`, `parts_sent++`; otherwise `parts_failed++` and the error is mapped (below).

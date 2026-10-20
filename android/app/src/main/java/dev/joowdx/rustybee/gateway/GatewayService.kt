@@ -609,7 +609,7 @@ class GatewayService : Service() {
         unwatchSims(simWatch.keys - subs)
         val tm = getSystemService(TelephonyManager::class.java)
         for (sub in subs - simWatch.keys) {
-            val cb = TelephonyWatch(setOf(TelephonyWatch.Kind.SERVICE_STATE)) { _, _ -> events.trySend(GatewayEvent.SimsChanged) }
+            val cb = TelephonyWatch(TelephonyWatch.Watch.SERVICE_STATE) { _, _ -> events.trySend(GatewayEvent.SimsChanged) }
             runCatching { cb.start(tm.createForSubscriptionId(sub), mainExecutor) }
                 .onSuccess { simWatch[sub] = cb }
                 .onFailure { graph.log("SIM radio listener failed: $it", "E") }
@@ -692,9 +692,9 @@ class GatewayService : Service() {
             // Location info is only included with this flag, and only shown with the location permissions.
             // Android 11 has no flag: there the name comes from WifiManager (Telemetry.wifiReading).
             val cb = if (sw.wifiName && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                WifiCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO)
+                WifiCallback(withName = true, ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO)
             } else {
-                WifiCallback()
+                WifiCallback(sw.wifiName)
             }
             val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
             wifiCallback = cb
@@ -707,18 +707,14 @@ class GatewayService : Service() {
                 }
         }
         // Signal ticks come every few seconds; listen for them only while the bars are reported.
-        if (cellCallback != null && (!sw.cellular || cellCallback?.kinds?.contains(TelephonyWatch.Kind.SIGNAL) != sw.cellularSignal)) {
+        if (cellCallback != null && (!sw.cellular || (cellCallback?.watch == TelephonyWatch.Watch.SERVICE_STATE_AND_SIGNAL) != sw.cellularSignal)) {
             unwatchCellular()
         }
         if (sw.cellular && cellCallback == null) {
             // Service state changes carry carrier changes; signal changes carry the bars. A callback
             // already queued from a replaced listener (e.g. the old data SIM) is ignored.
-            val kinds = if (sw.cellularSignal) {
-                setOf(TelephonyWatch.Kind.SERVICE_STATE, TelephonyWatch.Kind.SIGNAL)
-            } else {
-                setOf(TelephonyWatch.Kind.SERVICE_STATE)
-            }
-            val cb = TelephonyWatch(kinds) { watch, e ->
+            val watch = if (sw.cellularSignal) TelephonyWatch.Watch.SERVICE_STATE_AND_SIGNAL else TelephonyWatch.Watch.SERVICE_STATE
+            val cb = TelephonyWatch(watch) { watch, e ->
                 if (cellCallback !== watch) return@TelephonyWatch
                 if (e is TelephonyWatch.Event.Signal) cellSignal = e.strength
                 events.trySend(GatewayEvent.CellularChanged)
@@ -739,7 +735,7 @@ class GatewayService : Service() {
         if (sw.cellularSignal && cellCallback != null && displayCallback == null &&
             telemetry.granted(Manifest.permission.READ_PHONE_STATE)
         ) {
-            val cb = TelephonyWatch(setOf(TelephonyWatch.Kind.DISPLAY_INFO, TelephonyWatch.Kind.MOBILE_DATA)) { watch, e ->
+            val cb = TelephonyWatch(TelephonyWatch.Watch.DISPLAY_INFO_AND_MOBILE_DATA) { watch, e ->
                 if (displayCallback !== watch) return@TelephonyWatch
                 if (e is TelephonyWatch.Event.Display) cellDisplay = e.info
                 events.trySend(GatewayEvent.CellularChanged)
@@ -761,16 +757,22 @@ class GatewayService : Service() {
      * A callback already queued from a replaced listener is ignored.
      */
     private inner class WifiCallback : ConnectivityManager.NetworkCallback {
-        constructor() : super()
+        private val withName: Boolean
+
+        constructor(withName: Boolean) : super() {
+            this.withName = withName
+        }
 
         @TargetApi(Build.VERSION_CODES.S)
-        constructor(flags: Int) : super(flags)
+        constructor(withName: Boolean, flags: Int) : super(flags) {
+            this.withName = withName
+        }
 
         override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
             if (wifiCallback !== this) return
             val cur = wifi
             if (cur != null && cur.first != network) return
-            wifi = network to telemetry.wifiReading(caps)
+            wifi = network to telemetry.wifiReading(caps, withName)
             events.trySend(GatewayEvent.RadiosChanged)
         }
 
