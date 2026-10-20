@@ -20,7 +20,9 @@ import android.os.PowerManager
 import android.os.Process
 import android.os.SystemClock
 import android.provider.Settings
+import android.telephony.ServiceState
 import android.telephony.SignalStrength
+import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
@@ -78,8 +80,7 @@ class Telemetry(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun sims(): List<SimInfo> {
         if (!granted(Manifest.permission.READ_PHONE_STATE)) return emptyList()
-        val sm = context.getSystemService(SubscriptionManager::class.java) ?: return emptyList()
-        return sm.activeSubscriptionInfoList.orEmpty().map {
+        return usableSubscriptions(context).map {
             SimInfo(it.subscriptionId, it.simSlotIndex, it.carrierName?.toString(), null)
         }
     }
@@ -178,6 +179,35 @@ class Telemetry(private val context: Context) {
     }
 
     companion object {
+        /**
+         * Active subscriptions whose SIM is on. A SIM turned off in Settings stays in the active
+         * list (Samsung) with a SIM state that isn't ready, so the card and radio state decide
+         * (spec 002 §SIMs).
+         * Needs READ_PHONE_STATE.
+         */
+        @SuppressLint("MissingPermission")
+        fun usableSubscriptions(context: Context): List<SubscriptionInfo> {
+            val sm = context.getSystemService(SubscriptionManager::class.java) ?: return emptyList()
+            val tm = context.getSystemService(TelephonyManager::class.java)
+            val airplane = Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) != 0
+            return sm.activeSubscriptionInfoList.orEmpty().filter { info ->
+                val simState = runCatching { tm.getSimState(info.simSlotIndex) }.getOrDefault(TelephonyManager.SIM_STATE_READY)
+                val serviceState = runCatching {
+                    tm.createForSubscriptionId(info.subscriptionId)
+                        .getServiceState(TelephonyManager.INCLUDE_LOCATION_DATA_NONE)?.state
+                }.getOrNull()
+                simOn(simState, serviceState, airplane)
+            }
+        }
+
+        /**
+         * A SIM is on when its card is ready and its radio isn't off outside airplane mode
+         * (airplane mode turns every radio off and isn't "no SIM").
+         */
+        fun simOn(simState: Int, serviceState: Int?, airplane: Boolean): Boolean =
+            simState == TelephonyManager.SIM_STATE_READY &&
+                !(serviceState == ServiceState.STATE_POWER_OFF && !airplane)
+
         /** The protocol's `network` value; a VPN carries its underlying transports. */
         fun networkLabel(hasTransport: (Int) -> Boolean): String = when {
             hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"

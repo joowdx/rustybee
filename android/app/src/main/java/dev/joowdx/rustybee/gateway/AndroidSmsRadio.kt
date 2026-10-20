@@ -20,16 +20,14 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
     @SuppressLint("MissingPermission")
     override fun activeSubscriptionIds(): Set<Int> {
         if (!canReadSims()) return emptySet()
-        val sm = context.getSystemService(SubscriptionManager::class.java) ?: return emptySet()
-        return sm.activeSubscriptionInfoList.orEmpty().map { it.subscriptionId }.toSet()
+        return Telemetry.usableSubscriptions(context).map { it.subscriptionId }.toSet()
     }
 
     /** Active subscriptions with their slots; empty without READ_PHONE_STATE. */
     @SuppressLint("MissingPermission")
     private fun activeSubs(): List<SimChoice.Sub> {
         if (!canReadSims()) return emptyList()
-        val sm = context.getSystemService(SubscriptionManager::class.java) ?: return emptyList()
-        return sm.activeSubscriptionInfoList.orEmpty().map { SimChoice.Sub(it.subscriptionId, it.simSlotIndex) }
+        return Telemetry.usableSubscriptions(context).map { SimChoice.Sub(it.subscriptionId, it.simSlotIndex) }
     }
 
     private fun manager(sim: Int?): SmsManager {

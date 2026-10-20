@@ -1,12 +1,14 @@
 package dev.joowdx.rustybee.gateway
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationManager
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
@@ -163,6 +165,16 @@ class GatewayService : Service() {
         }
     }
 
+    /** A SIM turned on or off, or airplane mode, changes the usable SIMs without a subscription change. */
+    private val simReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            events.trySend(GatewayEvent.SimsChanged)
+        }
+    }
+
+    /** One radio listener per active subscription, so a SIM turned off is seen whichever it is. */
+    private val simWatch = mutableMapOf<Int, TelephonyCallback>()
+
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             events.trySend(GatewayEvent.HealthTick)
@@ -200,6 +212,15 @@ class GatewayService : Service() {
         runCatching {
             getSystemService(SubscriptionManager::class.java).addOnSubscriptionsChangedListener(mainExecutor, subscriptionsListener)
         }.onFailure { graph.log("SIM listener failed: $it", "E") }
+        registerReceiver(
+            simReceiver,
+            IntentFilter().apply {
+                addAction(ACTION_SIM_STATE_CHANGED)
+                addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED)
+            },
+            RECEIVER_NOT_EXPORTED,
+        )
+        watchSims()
         registerReceiver(
             powerReceiver,
             IntentFilter().apply {
@@ -254,6 +275,8 @@ class GatewayService : Service() {
         if (instance === this) instance = null
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
         runCatching { unregisterReceiver(powerReceiver) }
+        runCatching { unregisterReceiver(simReceiver) }
+        unwatchSims(simWatch.keys.toSet())
         runCatching { getSystemService(SubscriptionManager::class.java).removeOnSubscriptionsChangedListener(subscriptionsListener) }
         unwatchWifi()
         unwatchCellular()
@@ -556,12 +579,38 @@ class GatewayService : Service() {
     /** [fresh]: the cellular reading was just taken, so it is not read again. */
     /** The listener also fires without a change, so only a different list redraws or reports. */
     private fun onSimsChanged() {
+        watchSims()
         val now = telemetry.readableSims() ?: return
         if (now != seenSims) {
             seenSims = now
             setState { it.copy(simRev = it.simRev + 1) }
         }
         if (welcomed && now != reportedSims) sendHealth(sims = now)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun watchSims() {
+        if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return
+        val subs = runCatching {
+            getSystemService(SubscriptionManager::class.java).activeSubscriptionInfoList.orEmpty().map { it.subscriptionId }.toSet()
+        }.getOrDefault(emptySet())
+        unwatchSims(simWatch.keys - subs)
+        val tm = getSystemService(TelephonyManager::class.java)
+        for (sub in subs - simWatch.keys) {
+            val cb = object : TelephonyCallback(), TelephonyCallback.ServiceStateListener {
+                override fun onServiceStateChanged(serviceState: ServiceState) {
+                    events.trySend(GatewayEvent.SimsChanged)
+                }
+            }
+            runCatching { tm.createForSubscriptionId(sub).registerTelephonyCallback(mainExecutor, cb) }
+                .onSuccess { simWatch[sub] = cb }
+                .onFailure { graph.log("SIM radio listener failed: $it", "E") }
+        }
+    }
+
+    private fun unwatchSims(subs: Set<Int>) {
+        val tm = getSystemService(TelephonyManager::class.java)
+        for (sub in subs) simWatch.remove(sub)?.let { runCatching { tm.unregisterTelephonyCallback(it) } }
     }
 
     private fun sendHealth(fcmToken: String? = null, fresh: Boolean = false, sims: List<SimInfo>? = telemetry.readableSims()) {
@@ -782,6 +831,9 @@ class GatewayService : Service() {
     }
 
     companion object {
+        /** Intent.ACTION_SIM_STATE_CHANGED, a system broadcast without a public constant. */
+        private const val ACTION_SIM_STATE_CHANGED = "android.intent.action.SIM_STATE_CHANGED"
+
 
         @Volatile
         var running = false
