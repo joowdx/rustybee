@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
@@ -23,6 +24,7 @@ import dev.joowdx.rustybee.gateway.ConnectionState
 import dev.joowdx.rustybee.gateway.GatewayService
 import dev.joowdx.rustybee.gateway.GatewayState
 import dev.joowdx.rustybee.gateway.Graph
+import dev.joowdx.rustybee.gateway.RuntimePermissions
 import dev.joowdx.rustybee.gateway.Telemetry
 import dev.joowdx.rustybee.gateway.Watchdog
 import dev.joowdx.rustybee.push.Push
@@ -205,15 +207,15 @@ class MainActivity : Activity() {
 
     private fun refreshChecklist() {
         checklist.removeAllViews()
-        val sms = SMS_PERMISSIONS.all(::granted)
+        val sms = RuntimePermissions.SMS.all(::granted)
         checklist.add(checkRow("SMS permissions (send, receive, phone state)", sms, if (sms) null else "Grant") {
             requestRuntimePermissions()
         })
         val notif = telemetry.permissions().notifications
         val notifHint = if (Push.SUPPORTED) getString(R.string.hint_notifications_wake) else null
         checklist.add(checkRow("Notifications", notif, if (notif) null else "Allow", notifHint) {
-            if (!granted(Manifest.permission.POST_NOTIFICATIONS)) {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_PERMS)
+            if (!RuntimePermissions.notificationsGranted(Build.VERSION.SDK_INT, ::granted)) {
+                requestPermissions(arrayOf(RuntimePermissions.NOTIFICATIONS), REQ_PERMS)
             } else {
                 startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
             }
@@ -298,7 +300,7 @@ class MainActivity : Activity() {
         toggle.setOnCheckedChangeListener(null)
         toggle.isChecked = true
         toggle.setOnCheckedChangeListener { _, on -> if (on) enableGateway() else disableGateway() }
-        if (RUNTIME_PERMISSIONS.all(::granted)) {
+        if (RuntimePermissions.forSdk(Build.VERSION.SDK_INT).all(::granted)) {
             startGateway()
         } else {
             AlertDialog.Builder(this)
@@ -314,7 +316,7 @@ class MainActivity : Activity() {
     }
 
     private fun requestRuntimePermissions() {
-        requestPermissions(RUNTIME_PERMISSIONS, REQ_PERMS)
+        requestPermissions(RuntimePermissions.forSdk(Build.VERSION.SDK_INT), REQ_PERMS)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -382,11 +384,5 @@ class MainActivity : Activity() {
     companion object {
         const val EXTRA_FIRST_RUN = "first_run"
         private const val REQ_PERMS = 1
-        private val SMS_PERMISSIONS = arrayOf(
-            Manifest.permission.SEND_SMS,
-            Manifest.permission.RECEIVE_SMS,
-            Manifest.permission.READ_PHONE_STATE,
-        )
-        private val RUNTIME_PERMISSIONS = SMS_PERMISSIONS + Manifest.permission.POST_NOTIFICATIONS
     }
 }

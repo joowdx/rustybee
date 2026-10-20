@@ -60,6 +60,12 @@ class ManifestTest {
     }
 
     @Test
+    fun ac_011_13_wifi_state_only_on_android_11() {
+        val p = elements("uses-permission").single { it.getAttributeNS(ns, "name") == "android.permission.ACCESS_WIFI_STATE" }
+        assertEquals("30", p.getAttributeNS(ns, "maxSdkVersion"))
+    }
+
+    @Test
     fun camera_is_optional() {
         val camera = elements("uses-feature").single { it.getAttributeNS(ns, "name") == "android.hardware.camera.any" }
         assertEquals("false", camera.getAttributeNS(ns, "required"))

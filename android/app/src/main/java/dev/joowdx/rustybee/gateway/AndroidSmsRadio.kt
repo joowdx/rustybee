@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.PowerManager
 import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
@@ -31,10 +32,16 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
     }
 
     private fun manager(sim: Int?): SmsManager {
-        val base = context.getSystemService(SmsManager::class.java)
         // With "Ask every time" the plain SmsManager has no subscription to send on (spec 012 §2).
         val id = sim ?: SimChoice.fallback(SubscriptionManager.getDefaultSmsSubscriptionId(), activeSubs())
-        return if (id != null) base.createForSubscriptionId(id) else base
+        // SmsManager is a system service only from API 31; Android 11 has the older static
+        // getters (spec 012).
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            @Suppress("DEPRECATION")
+            return if (id == null) SmsManager.getDefault() else SmsManager.getSmsManagerForSubscriptionId(id)
+        }
+        val base = context.getSystemService(SmsManager::class.java)
+        return if (id == null) base else base.createForSubscriptionId(id)
     }
 
     override fun divide(body: String, sim: Int?): List<String> = manager(sim).divideMessage(body).orEmpty()
@@ -46,7 +53,8 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
         parts.indices.forEach { i ->
             sent += pending(SmsStatusReceiver.ACTION_SENT, msgId, i, PendingIntent.FLAG_IMMUTABLE)
             // Mutable so the radio can fill in the `pdu`/`format` extras; the intent is explicit.
-            delivered += pending(SmsStatusReceiver.ACTION_DELIVERED, msgId, i, PendingIntent.FLAG_MUTABLE)
+            // Android 11 has no flag: PendingIntents are mutable there by default.
+            delivered += pending(SmsStatusReceiver.ACTION_DELIVERED, msgId, i, MUTABLE)
         }
         val wl = context.getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "rustybee:send")
@@ -74,5 +82,9 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
             intent,
             mutability or PendingIntent.FLAG_ONE_SHOT,
         )
+    }
+
+    private companion object {
+        val MUTABLE = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
     }
 }

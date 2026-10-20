@@ -1,5 +1,7 @@
 package dev.joowdx.rustybee.ui
 
+import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
@@ -32,8 +34,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -44,13 +48,17 @@ import java.util.concurrent.TimeUnit
 class SetupActivity : Activity() {
     private val scope: CoroutineScope = MainScope()
     private var pairing: Job? = null
+    /** The pairing request in flight: a blocking call, so cancelling [pairing] alone would wait for it. */
+    @Volatile
+    private var pairCall: Call? = null
 
     private lateinit var link: EditText
     private lateinit var insecure: CheckBox
     private lateinit var error: TextView
     private lateinit var pairButton: Button
 
-    private val cancelPairing = OnBackInvokedCallback { pairing?.cancel() }
+    // Back cancels a running pairing. Touched only on API 33+: the callback type is missing on Android 11.
+    private val cancelPairing by lazy { OnBackInvokedCallback { cancelRunningPairing() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -164,7 +172,7 @@ class SetupActivity : Activity() {
         if (pairing?.isActive == true) return
         pairButton.isEnabled = false
         pairButton.text = "Pairing…"
-        onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, cancelPairing)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) interceptBack(true)
         pairing = scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { request(base, code) }
@@ -201,12 +209,42 @@ class SetupActivity : Activity() {
             } catch (e: PairingException) {
                 showError(e.message)
             } catch (e: java.io.IOException) {
-                showError("Could not reach the server: ${e.message ?: e.javaClass.simpleName}")
+                // Back cancels the call too (AC-011-14); that ends here and is not an error.
+                if (isActive) showError("Could not reach the server: ${e.message ?: e.javaClass.simpleName}")
             } finally {
                 pairButton.isEnabled = true
                 pairButton.text = "Pair"
-                onBackInvokedDispatcher.unregisterOnBackInvokedCallback(cancelPairing)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) interceptBack(false)
             }
+        }
+    }
+
+    private fun cancelRunningPairing() {
+        pairing?.cancel()
+        pairCall?.cancel()
+    }
+
+    @TargetApi(Build.VERSION_CODES.TIRAMISU)
+    private fun interceptBack(on: Boolean) {
+        if (on) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, cancelPairing)
+        } else {
+            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(cancelPairing)
+        }
+    }
+
+    /**
+     * Back arrives here whenever the dispatcher callback isn't in effect: below API 33, and on
+     * API 33–35, where the app doesn't opt in to it (spec 011). Either way it cancels a pairing.
+     */
+    @SuppressLint("GestureBackNavigation")
+    @Deprecated("Replaced by OnBackInvokedDispatcher from API 33")
+    override fun onBackPressed() {
+        if (pairing?.isActive == true) {
+            cancelRunningPairing()
+        } else {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
         }
     }
 
@@ -233,7 +271,17 @@ class SetupActivity : Activity() {
             .url("$base/api/device/pair")
             .post(ProtocolJson.encodeToString(PairRequest.serializer(), body).toRequestBody("application/json".toMediaType()))
             .build()
-        client.newCall(req).execute().use { resp ->
+        val call = client.newCall(req).also { pairCall = it }
+        if (pairing?.isCancelled == true) call.cancel()
+        try {
+            return readPairResponse(call)
+        } finally {
+            pairCall = null
+        }
+    }
+
+    private fun readPairResponse(call: Call): PairResponse {
+        call.execute().use { resp ->
             val text = resp.body.string()
             if (resp.isSuccessful) {
                 return runCatching { ProtocolJson.decodeFromString(PairResponse.serializer(), text) }

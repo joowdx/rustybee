@@ -65,7 +65,7 @@ There is no message broker and no separate database server. The server is a sing
 | | Requirement |
 |---|---|
 | **Server** | Any machine that runs Docker, or Linux with systemd. `linux/amd64` and `linux/arm64` images are published. A few MB of disk and about 30 MB of RAM. |
-| **Phone** | Android 15 or newer with an active SIM. A spare phone that stays plugged in works best. |
+| **Phone** | Android 11 or newer with an active SIM. A spare phone that stays plugged in works best. |
 | **Network** | The phone must reach the server. On your home Wi-Fi a LAN address is enough. To send while the phone is on mobile data, the server needs a public HTTPS URL (see [Exposing it to the internet](#exposing-it-to-the-internet)). |
 | **Optional** | A domain and a reverse proxy or Cloudflare Tunnel for HTTPS. Cloudflare Turnstile keys if you want bot protection on the login page. A Firebase project if you want the GMS build's push wake-ups. |
 

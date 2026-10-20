@@ -2,7 +2,7 @@
 
 A personal, single-user SMS gateway made of three parts:
 - `server/`: one Rust binary with axum, SQLite (rusqlite), and askama + htmx for the web UI.
-- `android/`: a native Kotlin app on minSdk/targetSdk 36, with flavors `foss` and `gms`.
+- `android/`: a native Kotlin app on minSdk 30 and targetSdk 36, with flavors `foss` and `gms`.
 - `protocol/`: the contract between the two, with golden fixtures that both test suites read.
 
 ## Spec-driven development (soft gate)

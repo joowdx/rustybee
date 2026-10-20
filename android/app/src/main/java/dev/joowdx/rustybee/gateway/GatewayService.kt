@@ -2,6 +2,7 @@ package dev.joowdx.rustybee.gateway
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.app.NotificationManager
 import android.app.Service
 import android.content.BroadcastReceiver
@@ -15,12 +16,11 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
-import android.telephony.ServiceState
 import android.telephony.SignalStrength
 import android.telephony.SubscriptionManager
-import android.telephony.TelephonyCallback
 import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
 import dev.joowdx.rustybee.BuildConfig
@@ -93,15 +93,13 @@ class GatewayService : Service() {
     /** When [radioJob] fires, and until when newly started listeners hold reports back. */
     private var radioDueAt = 0L
     private var settleUntil = 0L
-    /** Whether [wifiCallback] asked for location info. */
-    private var wifiWithName = false
     /** Volatile: callbacks compare themselves to these to drop stale events. */
     @Volatile
-    private var wifiCallback: ConnectivityManager.NetworkCallback? = null
+    private var wifiCallback: WifiCallback? = null
     @Volatile
-    private var cellCallback: TelephonyCallback? = null
+    private var cellCallback: TelephonyWatch? = null
     @Volatile
-    private var displayCallback: TelephonyCallback? = null
+    private var displayCallback: TelephonyWatch? = null
     @Volatile
     private var stopping = false
     private var socketClosed = false
@@ -173,7 +171,7 @@ class GatewayService : Service() {
     }
 
     /** One radio listener per active subscription, so a SIM turned off is seen whichever it is. */
-    private val simWatch = mutableMapOf<Int, TelephonyCallback>()
+    private val simWatch = mutableMapOf<Int, TelephonyWatch>()
 
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -212,22 +210,20 @@ class GatewayService : Service() {
         runCatching {
             getSystemService(SubscriptionManager::class.java).addOnSubscriptionsChangedListener(mainExecutor, subscriptionsListener)
         }.onFailure { graph.log("SIM listener failed: $it", "E") }
-        registerReceiver(
+        registerPrivateReceiver(
             simReceiver,
             IntentFilter().apply {
                 addAction(ACTION_SIM_STATE_CHANGED)
                 addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED)
             },
-            RECEIVER_NOT_EXPORTED,
         )
         watchSims()
-        registerReceiver(
+        registerPrivateReceiver(
             powerReceiver,
             IntentFilter().apply {
                 addAction(Intent.ACTION_POWER_CONNECTED)
                 addAction(Intent.ACTION_POWER_DISCONNECTED)
             },
-            RECEIVER_NOT_EXPORTED,
         )
         scope.launch {
             maintenance()
@@ -243,11 +239,16 @@ class GatewayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
             val state = stateFlow.value
-            startForeground(
-                Notifications.ID_GATEWAY,
-                Notifications.gateway(this, state),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
-            )
+            // Android 11 has no remoteMessaging type and needs none (spec 011).
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    Notifications.ID_GATEWAY,
+                    Notifications.gateway(this, state),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
+                )
+            } else {
+                startForeground(Notifications.ID_GATEWAY, Notifications.gateway(this, state))
+            }
             notified = Notifications.content(state)
         } catch (e: Exception) {
             // The start window closed before promotion, e.g. a downgraded wake; the user restarts from the notification.
@@ -588,6 +589,15 @@ class GatewayService : Service() {
         if (welcomed && now != reportedSims) sendHealth(sims = now)
     }
 
+    /** Both receivers take system broadcasts only; the not-exported flag exists from API 33. */
+    private fun registerPrivateReceiver(receiver: BroadcastReceiver, filter: IntentFilter) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(receiver, filter)
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private fun watchSims() {
         if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) return
@@ -597,20 +607,15 @@ class GatewayService : Service() {
         unwatchSims(simWatch.keys - subs)
         val tm = getSystemService(TelephonyManager::class.java)
         for (sub in subs - simWatch.keys) {
-            val cb = object : TelephonyCallback(), TelephonyCallback.ServiceStateListener {
-                override fun onServiceStateChanged(serviceState: ServiceState) {
-                    events.trySend(GatewayEvent.SimsChanged)
-                }
-            }
-            runCatching { tm.createForSubscriptionId(sub).registerTelephonyCallback(mainExecutor, cb) }
+            val cb = TelephonyWatch(TelephonyWatch.Watch.SERVICE_STATE) { _, _ -> events.trySend(GatewayEvent.SimsChanged) }
+            runCatching { cb.start(tm.createForSubscriptionId(sub), mainExecutor) }
                 .onSuccess { simWatch[sub] = cb }
                 .onFailure { graph.log("SIM radio listener failed: $it", "E") }
         }
     }
 
     private fun unwatchSims(subs: Set<Int>) {
-        val tm = getSystemService(TelephonyManager::class.java)
-        for (sub in subs) simWatch.remove(sub)?.let { runCatching { tm.unregisterTelephonyCallback(it) } }
+        for (sub in subs) simWatch.remove(sub)?.stop()
     }
 
     private fun sendHealth(fcmToken: String? = null, fresh: Boolean = false, sims: List<SimInfo>? = telemetry.readableSims()) {
@@ -680,30 +685,17 @@ class GatewayService : Service() {
         val sw = graph.prefs.radioSwitches
         // Location info (the Wi-Fi name) is asked for only while the name is reported, so the signal
         // alone never counts as a location access.
-        if (wifiCallback != null && (!sw.wifi || wifiWithName != sw.wifiName)) unwatchWifi()
+        if (wifiCallback != null && (!sw.wifi || wifiCallback?.withName != sw.wifiName)) unwatchWifi()
         if (sw.wifi && wifiCallback == null) {
             // Location info is only included with this flag, and only shown with the location permissions.
-            val flags = if (sw.wifiName) ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO else 0
-            val cb = object : ConnectivityManager.NetworkCallback(flags) {
-                // Follow one Wi-Fi network at a time, so a second one (dual-STA) can't overwrite or clear it.
-                // A callback already queued from a replaced listener is ignored.
-                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                    if (wifiCallback !== this) return
-                    val cur = wifi
-                    if (cur != null && cur.first != network) return
-                    wifi = network to telemetry.wifiReading(caps)
-                    events.trySend(GatewayEvent.RadiosChanged)
-                }
-
-                override fun onLost(network: Network) {
-                    if (wifiCallback !== this || wifi?.first != network) return
-                    wifi = null
-                    events.trySend(GatewayEvent.RadiosChanged)
-                }
+            // Android 11 has no flag: there the name comes from WifiManager (Telemetry.wifiReading).
+            val cb = if (sw.wifiName && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                WifiCallback(withName = true, ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO)
+            } else {
+                WifiCallback(sw.wifiName)
             }
             val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
             wifiCallback = cb
-            wifiWithName = sw.wifiName
             settle()
             runCatching { getSystemService(ConnectivityManager::class.java).registerNetworkCallback(request, cb) }
                 .onFailure {
@@ -712,37 +704,24 @@ class GatewayService : Service() {
                 }
         }
         // Signal ticks come every few seconds; listen for them only while the bars are reported.
-        if (cellCallback != null && (!sw.cellular || (cellCallback is TelephonyCallback.SignalStrengthsListener) != sw.cellularSignal)) {
+        if (cellCallback != null && (!sw.cellular || (cellCallback?.watch == TelephonyWatch.Watch.SERVICE_STATE_AND_SIGNAL) != sw.cellularSignal)) {
             unwatchCellular()
         }
         if (sw.cellular && cellCallback == null) {
             // Service state changes carry carrier changes; signal changes carry the bars. A callback
             // already queued from a replaced listener (e.g. the old data SIM) is ignored.
-            val cb = if (sw.cellularSignal) {
-                object : TelephonyCallback(), TelephonyCallback.SignalStrengthsListener, TelephonyCallback.ServiceStateListener {
-                    override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
-                        if (cellCallback !== this) return
-                        cellSignal = signalStrength
-                        events.trySend(GatewayEvent.CellularChanged)
-                    }
-
-                    override fun onServiceStateChanged(serviceState: ServiceState) {
-                        if (cellCallback === this) events.trySend(GatewayEvent.CellularChanged)
-                    }
-                }
-            } else {
-                object : TelephonyCallback(), TelephonyCallback.ServiceStateListener {
-                    override fun onServiceStateChanged(serviceState: ServiceState) {
-                        if (cellCallback === this) events.trySend(GatewayEvent.CellularChanged)
-                    }
-                }
+            val watch = if (sw.cellularSignal) TelephonyWatch.Watch.SERVICE_STATE_AND_SIGNAL else TelephonyWatch.Watch.SERVICE_STATE
+            val cb = TelephonyWatch(watch) { watch, e ->
+                if (cellCallback !== watch) return@TelephonyWatch
+                if (e is TelephonyWatch.Event.Signal) cellSignal = e.strength
+                events.trySend(GatewayEvent.CellularChanged)
             }
             val sub = SubscriptionManager.getDefaultDataSubscriptionId()
             // Set before registering: the first callback may arrive before onSuccess runs.
             cellCallback = cb
             cellSub = sub
             settle()
-            runCatching { telemetry.dataTelephony().registerTelephonyCallback(mainExecutor, cb) }
+            runCatching { cb.start(telemetry.dataTelephony(), mainExecutor) }
                 .onFailure {
                     cellCallback = null
                     cellSub = null
@@ -753,26 +732,52 @@ class GatewayService : Service() {
         if (sw.cellularSignal && cellCallback != null && displayCallback == null &&
             telemetry.granted(Manifest.permission.READ_PHONE_STATE)
         ) {
-            val cb = object : TelephonyCallback(), TelephonyCallback.DisplayInfoListener, TelephonyCallback.UserMobileDataStateListener {
-                override fun onDisplayInfoChanged(telephonyDisplayInfo: TelephonyDisplayInfo) {
-                    if (displayCallback !== this) return
-                    cellDisplay = telephonyDisplayInfo
-                    events.trySend(GatewayEvent.CellularChanged)
-                }
-
-                override fun onUserMobileDataStateChanged(enabled: Boolean) {
-                    if (displayCallback === this) events.trySend(GatewayEvent.CellularChanged)
-                }
+            val cb = TelephonyWatch(TelephonyWatch.Watch.DISPLAY_INFO_AND_MOBILE_DATA) { watch, e ->
+                if (displayCallback !== watch) return@TelephonyWatch
+                if (e is TelephonyWatch.Event.Display) cellDisplay = e.info
+                events.trySend(GatewayEvent.CellularChanged)
             }
             displayCallback = cb
             settle()
-            runCatching { telemetry.dataTelephony().registerTelephonyCallback(mainExecutor, cb) }
+            runCatching { cb.start(telemetry.dataTelephony(), mainExecutor) }
                 .onFailure {
                     displayCallback = null
                     graph.log("display info listener failed: $it", "E")
                 }
         } else if (!sw.cellularSignal) {
             unwatchDisplay()
+        }
+    }
+
+    /**
+     * Follows one Wi-Fi network at a time, so a second one (dual-STA) can't overwrite or clear it.
+     * A callback already queued from a replaced listener is ignored.
+     */
+    private inner class WifiCallback : ConnectivityManager.NetworkCallback {
+        /** Whether this callback reports the network name (and, from API 31, asked for location info). */
+        val withName: Boolean
+
+        constructor(withName: Boolean) : super() {
+            this.withName = withName
+        }
+
+        @TargetApi(Build.VERSION_CODES.S)
+        constructor(withName: Boolean, flags: Int) : super(flags) {
+            this.withName = withName
+        }
+
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            if (wifiCallback !== this) return
+            val cur = wifi
+            if (cur != null && cur.first != network) return
+            wifi = network to telemetry.wifiReading(caps, withName)
+            events.trySend(GatewayEvent.RadiosChanged)
+        }
+
+        override fun onLost(network: Network) {
+            if (wifiCallback !== this || wifi?.first != network) return
+            wifi = null
+            events.trySend(GatewayEvent.RadiosChanged)
         }
     }
 
@@ -788,7 +793,7 @@ class GatewayService : Service() {
     }
 
     private fun unwatchCellular() {
-        cellCallback?.let { cb -> runCatching { getSystemService(TelephonyManager::class.java).unregisterTelephonyCallback(cb) } }
+        cellCallback?.stop()
         cellCallback = null
         cellSub = null
         cellSignal = null
@@ -796,7 +801,7 @@ class GatewayService : Service() {
     }
 
     private fun unwatchDisplay() {
-        displayCallback?.let { cb -> runCatching { getSystemService(TelephonyManager::class.java).unregisterTelephonyCallback(cb) } }
+        displayCallback?.stop()
         displayCallback = null
         cellDisplay = null
     }
