@@ -12,7 +12,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
-import android.telephony.SubscriptionManager
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.RadioButton
@@ -254,9 +253,9 @@ class MainActivity : Activity() {
             sims.add(text("Grant phone state permission to list SIMs."))
             return
         }
-        val list = getSystemService(SubscriptionManager::class.java)?.activeSubscriptionInfoList.orEmpty()
+        val list = Telemetry.usableSubscriptions(this)
         if (list.isEmpty()) {
-            sims.add(checkRow("No active SIM", false, null, "Without a SIM this phone cannot send.") {})
+            sims.add(checkRow("No active SIM", false, null, "No SIM is inserted and turned on, so this phone cannot send.") {})
             return
         }
         // AC-013-09: the preferred SIM is picked here or in the web UI; the server's config decides.
