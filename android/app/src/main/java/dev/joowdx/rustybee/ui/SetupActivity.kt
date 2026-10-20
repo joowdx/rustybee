@@ -1,5 +1,7 @@
 package dev.joowdx.rustybee.ui
 
+import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
@@ -50,7 +52,8 @@ class SetupActivity : Activity() {
     private lateinit var error: TextView
     private lateinit var pairButton: Button
 
-    private val cancelPairing = OnBackInvokedCallback { pairing?.cancel() }
+    // Back cancels a running pairing. Created only on API 33+: the callback type is missing on Android 11.
+    private var cancelPairing: Any? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -164,7 +167,7 @@ class SetupActivity : Activity() {
         if (pairing?.isActive == true) return
         pairButton.isEnabled = false
         pairButton.text = "Pairing…"
-        onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, cancelPairing)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) interceptBack(true)
         pairing = scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { request(base, code) }
@@ -205,8 +208,31 @@ class SetupActivity : Activity() {
             } finally {
                 pairButton.isEnabled = true
                 pairButton.text = "Pair"
-                onBackInvokedDispatcher.unregisterOnBackInvokedCallback(cancelPairing)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) interceptBack(false)
             }
+        }
+    }
+
+    @TargetApi(Build.VERSION_CODES.TIRAMISU)
+    private fun interceptBack(on: Boolean) {
+        val cb = (cancelPairing as? OnBackInvokedCallback) ?: OnBackInvokedCallback { pairing?.cancel() }.also { cancelPairing = it }
+        if (on) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, cb)
+        } else {
+            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(cb)
+        }
+    }
+
+    /** Below API 33 back arrives here (spec 011); from 33 [interceptBack] handles it instead. */
+    @SuppressLint("GestureBackNavigation")
+    @Deprecated("Replaced by OnBackInvokedDispatcher from API 33")
+    override fun onBackPressed() {
+        val p = pairing
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && p?.isActive == true) {
+            p.cancel()
+        } else {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
         }
     }
 

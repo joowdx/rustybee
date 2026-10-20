@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.PowerManager
 import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
@@ -34,7 +35,10 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
         val base = context.getSystemService(SmsManager::class.java)
         // With "Ask every time" the plain SmsManager has no subscription to send on (spec 012 §2).
         val id = sim ?: SimChoice.fallback(SubscriptionManager.getDefaultSmsSubscriptionId(), activeSubs())
-        return if (id != null) base.createForSubscriptionId(id) else base
+        if (id == null) return base
+        // Android 11 has the per-subscription manager under its older name (spec 012).
+        @Suppress("DEPRECATION")
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) base.createForSubscriptionId(id) else SmsManager.getSmsManagerForSubscriptionId(id)
     }
 
     override fun divide(body: String, sim: Int?): List<String> = manager(sim).divideMessage(body).orEmpty()

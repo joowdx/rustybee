@@ -2,6 +2,7 @@ package dev.joowdx.rustybee.gateway
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.app.ActivityManager
 import android.app.ApplicationStartInfo
 import android.app.NotificationManager
@@ -52,7 +53,7 @@ class Telemetry(private val context: Context) {
         return Permissions(
             sendSms = granted(Manifest.permission.SEND_SMS),
             receiveSms = granted(Manifest.permission.RECEIVE_SMS),
-            notifications = granted(Manifest.permission.POST_NOTIFICATIONS) &&
+            notifications = RuntimePermissions.notificationsGranted(Build.VERSION.SDK_INT) { granted(it) } &&
                 channelOpen &&
                 nm.areNotificationsEnabled(),
             batteryUnrestricted = batteryUnrestricted(),
@@ -160,9 +161,12 @@ class Telemetry(private val context: Context) {
 
     /** A connected Wi-Fi network's name and signal, from capabilities that carry location info. */
     fun wifiReading(caps: NetworkCapabilities): RadioReading {
-        val info = caps.transportInfo as? WifiInfo
-        val rssi = (info?.rssi ?: caps.signalStrength).takeIf { it in -127..-1 }
         val wm = context.getSystemService(WifiManager::class.java)
+        // Android 11 carries no WifiInfo in the capabilities; WifiManager has the same reading there.
+        @Suppress("DEPRECATION")
+        val info = caps.transportInfo as? WifiInfo
+            ?: if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) runCatching { wm.connectionInfo }.getOrNull() else null
+        val rssi = (info?.rssi ?: caps.signalStrength).takeIf { it in -127..-1 }
         return RadioReading(
             name = RadioReport.ssid(info?.ssid),
             level = rssi?.let { RadioReport.bars(wm.calculateSignalLevel(it), wm.maxSignalLevel) },
@@ -193,8 +197,12 @@ class Telemetry(private val context: Context) {
             return sm.activeSubscriptionInfoList.orEmpty().filter { info ->
                 val simState = runCatching { tm.getSimState(info.simSlotIndex) }.getOrDefault(TelephonyManager.SIM_STATE_READY)
                 val serviceState = runCatching {
-                    tm.createForSubscriptionId(info.subscriptionId)
-                        .getServiceState(TelephonyManager.INCLUDE_LOCATION_DATA_NONE)?.state
+                    val subTm = tm.createForSubscriptionId(info.subscriptionId)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        subTm.getServiceState(TelephonyManager.INCLUDE_LOCATION_DATA_NONE)?.state
+                    } else {
+                        subTm.serviceState?.state
+                    }
                 }.getOrNull()
                 simOn(simState, serviceState, airplane)
             }
@@ -231,7 +239,21 @@ class Telemetry(private val context: Context) {
 
         private fun readLifecycle(context: Context): Lifecycle {
             val am = context.getSystemService(ActivityManager::class.java)
-            val start = am.getHistoricalProcessStartReasons(1).firstOrNull()
+            // Start info exists from API 35; below that the hello carries the exit only (spec 011).
+            val start = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) readStart(am) else null
+            val exit = am.getHistoricalProcessExitReasons(context.packageName, 0, 1).firstOrNull()?.let { info ->
+                LifecycleExit(
+                    reason = LifecycleReason.exitReason(info.reason),
+                    at = info.timestamp,
+                    description = LifecycleReason.description(info.description),
+                )
+            }
+            return Lifecycle(start = start, exit = exit)
+        }
+
+        @TargetApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+        private fun readStart(am: ActivityManager): LifecycleStart? =
+            am.getHistoricalProcessStartReasons(1).firstOrNull()
                 ?.takeIf { it.pid == Process.myPid() }
                 ?.let { info ->
                     val launchNs = info.startupTimestamps[ApplicationStartInfo.START_TIMESTAMP_LAUNCH]
@@ -242,15 +264,6 @@ class Telemetry(private val context: Context) {
                         wasForceStopped = runCatching { info.wasForceStopped() }.getOrDefault(false),
                     )
                 }
-            val exit = am.getHistoricalProcessExitReasons(context.packageName, 0, 1).firstOrNull()?.let { info ->
-                LifecycleExit(
-                    reason = LifecycleReason.exitReason(info.reason),
-                    at = info.timestamp,
-                    description = LifecycleReason.description(info.description),
-                )
-            }
-            return Lifecycle(start = start, exit = exit)
-        }
     }
 
     fun deviceName(): String =

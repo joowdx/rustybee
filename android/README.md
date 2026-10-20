@@ -1,7 +1,7 @@
 # rustybee Android app
 
 Native Kotlin SMS gateway client for the rustybee server. Platform Views, no AppCompat, Material,
-Compose, Room, WorkManager or DI. Android 16 (API 36) only. Specs: `docs/specs/011`, `012`, `013`.
+Compose, Room, WorkManager or DI. Android 11 (API 30) or newer; targets API 36. Specs: `docs/specs/011`, `012`, `013`.
 
 ## Build
 

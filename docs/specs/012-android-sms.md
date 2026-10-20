@@ -1,14 +1,14 @@
 # 012 — Android SMS send and receive
 
 Status: implemented
-Updated: 2026-10-17
+Updated: 2026-10-20
 
 ## Design
 
 ### Send (`Sender`)
 1. When a `send` frame arrives, apply the dedupe rules from spec 002 using the `sent` table, then ack it.
 2. Pick the `SmsManager` with `context.getSystemService(SmsManager::class.java)`:
-   - `.createForSubscriptionId(sim)` when `sim` is not null and is an active subscription;
+   - `.createForSubscriptionId(sim)` when `sim` is not null and is an active subscription (below API 31, `SmsManager.getSmsManagerForSubscriptionId(sim)`);
    - otherwise use `config.sim` from the server if set;
    - otherwise the system default SMS subscription. When there is none (`SubscriptionManager.getDefaultSmsSubscriptionId()` is `INVALID_SUBSCRIPTION_ID`, i.e. "Ask every time" on dual-SIM), use the single active subscription, or else the active one in the lowest slot; with no active subscription visible, fall back to the plain `SmsManager`. The pure `SimChoice` makes this choice.
    - If the requested `sim` is not active, report `failed`/`sim_unavailable`. Without `READ_PHONE_STATE` the active list can't be read, so a requested `sim` reports `failed`/`permission_denied` instead, and nothing is sent; `health.permissions.read_phone_state` shows the cause (spec 002).

@@ -1,14 +1,14 @@
 # 011 — Android architecture
 
 Status: implemented
-Updated: 2026-10-17
+Updated: 2026-10-20
 
 ## Design
 
 ### Build
-- **Project:** a single `:app` module with `applicationId dev.joowdx.rustybee`, `namespace dev.joowdx.rustybee`, `compileSdk` and `targetSdk` 36, and `minSdk` 35 (Android 15).
-  - Nothing in the app needs API 36. The floor is API 35 for `ApplicationStartInfo` (below); before that it would be API 34 for the `remoteMessaging` FGS type.
-  - An API 36 call added later needs an `SDK_INT` check, which lint enforces.
+- **Project:** a single `:app` module with `applicationId dev.joowdx.rustybee`, `namespace dev.joowdx.rustybee`, `compileSdk` and `targetSdk` 36, and `minSdk` 30 (Android 11).
+  - Every call above API 30 sits behind an `SDK_INT` check with the older equivalent below it, which lint (`NewApi`, `abortOnError`) enforces. Newer phones keep every feature; only the process start report is missing below API 35.
+  - The gates: telephony listeners use `TelephonyCallback` from API 31 and `PhoneStateListener` below (`TelephonyWatch`); the FGS is started with the `remoteMessaging` type from API 34 and without a type below; receivers pass `RECEIVER_NOT_EXPORTED` from API 33; notifications need no runtime permission below API 33 (`RuntimePermissions`); back cancels a pairing through `OnBackInvokedDispatcher` from API 33 and `onBackPressed` below. Spec 012 and 015 list their own.
   - Android 15 does not count jobs that run while an FGS is active against the job quota the way Android 16 does. Nothing here relies on either behaviour, but both versions are tested (below).
 - **Toolchain:** Kotlin 2.x with JVM target 17, the current stable AGP, and a version catalog in `gradle/libs.versions.toml`.
 - **Flavors:** dimension `dist` with `foss` (the default) and `gms`. Only `gms` applies the `com.google.gms.google-services` plugin, and only if `src/gms/google-services.json` exists; otherwise the gms build fails with a clear message.
@@ -86,7 +86,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 
 ### Process lifecycle report
 - `Telemetry` adds `lifecycle` (spec 002) to every `hello`, in both flavors:
-  - `start`: the first entry of `ActivityManager.getHistoricalProcessStartReasons(1)`, if it belongs to the current process (its `pid` matches); otherwise `start` is omitted. Uses `getReason()`, `getStartupTimestamps()[START_TIMESTAMP_LAUNCH]` and `wasForceStopped()`.
+  - `start` (API 35+; omitted below): the first entry of `ActivityManager.getHistoricalProcessStartReasons(1)`, if it belongs to the current process (its `pid` matches); otherwise `start` is omitted. Uses `getReason()`, `getStartupTimestamps()[START_TIMESTAMP_LAUNCH]` and `wasForceStopped()`.
   - `exit`: the first entry of `ActivityManager.getHistoricalProcessExitReasons(packageName, 0, 1)`, or `null`. Uses `getReason()`, `getTimestamp()` and `getDescription()`.
   - Both are read once per process, when `GatewayService` is created, and reused for every reconnect in that process.
 - The reason ints are mapped to the strings of spec 002 in a pure function, so the mapping is unit-tested on the JVM.
@@ -109,6 +109,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 10. AC-011-10 Killing the app process (`adb shell am kill`) with the gateway enabled and default battery settings: on gms the gateway reconnects with `hello.lifecycle.exit.reason` set and `start.reason="push"`; on foss the watchdog posts "Gateway stopped — tap to restart", and tapping it reconnects with `start.reason="start_activity"`. Manual check on an API 35 and an API 36+ emulator.
 11. AC-011-11 A stored token that can't be decrypted because its Keystore key is lost counts as not paired: the pairing is cleared, and Setup shows why. Manual check: restore the app data onto another phone.
 12. AC-011-12 `http://` and `ws://` are accepted only for a LAN host (loopback, RFC 1918, link-local, IPv6 ULA, `localhost`, `*.local`). Pairing with a cleartext public host is refused with a message, and the service refuses to connect to one.
+13. AC-011-13 On API 30–34 the app pairs, sends and receives, and reports network details; its `hello.lifecycle` has `exit` and no `start`. Below API 33 the checklist asks for no notification permission. Manual check on an API 30 emulator.
 
 ## Test plan
 | AC | Test |
@@ -124,6 +125,7 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 | 10 | Manual check; the gms half also covers AC-009-05 |
 | 11 | Manual check; the Keystore can't run on the JVM |
 | 12 | `CleartextTest` |
+| 13 | `RuntimePermissionsTest` (the permission set by API level); the rest is a manual check on an API 30 emulator |
 
 ## Assumptions
 - Robolectric is not used, to keep the test toolchain light. Code that needs the Android framework is kept thin.
@@ -138,4 +140,5 @@ CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, lev
 ## Open questions
 - AC-011-11 came from the 2026-10-17 review.
 - AC-011-12 (LAN-only cleartext, no certificate pinning) came from the 2026-10-17 review.
+- AC-011-13 (minSdk 30, for Android 11 phones) was asked for on 2026-10-20 and planned in chat; the gates above keep newer phones unchanged.
 - Running the prunes and `failLost` on the health tick, not only at service start (AC-011-08), came from the 2026-10-17 review.

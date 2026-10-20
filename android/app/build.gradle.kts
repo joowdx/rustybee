@@ -37,7 +37,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.joowdx.rustybee"
-        minSdk = 35
+        minSdk = 30
         targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersion
