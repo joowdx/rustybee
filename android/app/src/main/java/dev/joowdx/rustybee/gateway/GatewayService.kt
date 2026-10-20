@@ -110,6 +110,8 @@ class GatewayService : Service() {
     private var pendingReceiveEnabled = false
     /** Frame id of the `set_sim` in flight. */
     private var pendingSim: String? = null
+    /** A `set_sim` whose reply was lost with the connection; the next config says whether it was stored. */
+    private var unconfirmedSim: SetSim? = null
     /** The SIM list as last sent on this connection; the listener also fires without a change. */
     private var reportedSims: List<SimInfo>? = null
     /** The SIM list as last seen by the listener, to redraw an open main screen. */
@@ -179,6 +181,7 @@ class GatewayService : Service() {
             onConfig = {
                 val simChanged = it.sim != graph.prefs.config.sim
                 graph.prefs.config = it
+                confirmSim(it.sim)
                 graph.log("config updated")
                 restoreForwardingOff()
                 setState { s -> s.copy(filtersRev = it.filtersRev, simRev = s.simRev + simChanged.compareTo(false)) }
@@ -401,6 +404,7 @@ class GatewayService : Service() {
     private fun onWelcome(w: Welcome) {
         val prefs = graph.prefs
         prefs.config = w.config
+        confirmSim(w.config.sim)
         prefs.deviceId = w.deviceId
         prefs.lastConnectedAt = System.currentTimeMillis()
         if (w.config.pingS > 0 && w.config.pingS != connection.pingSeconds) {
@@ -453,6 +457,17 @@ class GatewayService : Service() {
         sendForwarding(frame, Ulid.next())
     }
 
+    /**
+     * The server may have stored a `set_sim` whose reply was lost. Once a config shows the requested
+     * SIM, the "connection lost" error is wrong and is cleared; a different SIM keeps it.
+     */
+    private fun confirmSim(configSim: Int?) {
+        val asked = unconfirmedSim ?: return
+        if (pendingSim != null) return
+        unconfirmedSim = null
+        if (asked.sim == configSim) setState { it.copy(simError = null, simRev = it.simRev + 1) }
+    }
+
     /** Spec 002 `set_sim`: the server answers with an ack and a `config` carrying the new SIM, applied by onConfig. */
     private fun saveSim(sim: Int?) {
         if (!welcomed) {
@@ -465,6 +480,7 @@ class GatewayService : Service() {
             return
         }
         pendingSim = id
+        unconfirmedSim = SetSim(sim)
         setState { it.copy(simError = null) }
     }
 
@@ -474,6 +490,7 @@ class GatewayService : Service() {
     private fun onReply(ref: String, nack: Nack?) {
         if (ref == pendingSim) {
             pendingSim = null
+            unconfirmedSim = null
             if (nack != null) graph.log("preferred SIM not saved: ${nack.code}", "E")
             // Always redraw: a nack with the same text as the last one must still reset the choice.
             setState { it.copy(simError = nack?.let { n -> n.message ?: n.code }, simRev = it.simRev + 1) }
