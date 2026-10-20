@@ -112,6 +112,8 @@ class GatewayService : Service() {
     private var pendingSim: String? = null
     /** The SIM list as last sent on this connection; the listener also fires without a change. */
     private var reportedSims: List<SimInfo>? = null
+    /** The SIM list as last seen by the listener, to redraw an open main screen. */
+    private var seenSims: List<SimInfo>? = null
     /** What the posted gateway notification shows, so unchanged state is not re-posted. */
     @Volatile
     private var notified: Notifications.GatewayContent? = null
@@ -175,10 +177,11 @@ class GatewayService : Service() {
             sender = graph.sender,
             onWelcome = ::onWelcome,
             onConfig = {
+                val simChanged = it.sim != graph.prefs.config.sim
                 graph.prefs.config = it
                 graph.log("config updated")
                 restoreForwardingOff()
-                setState { s -> s.copy(filtersRev = it.filtersRev) }
+                setState { s -> s.copy(filtersRev = it.filtersRev, simRev = s.simRev + simChanged.compareTo(false)) }
             },
             onReply = ::onReply,
             log = { graph.log(it) },
@@ -322,11 +325,7 @@ class GatewayService : Service() {
             is GatewayEvent.FcmToken -> if (ev.token != announcedToken) sendHealth(ev.token)
             is GatewayEvent.SaveForwarding -> saveForwarding(ev.receiveEnabled, ev.filters, ev.baseRev)
             is GatewayEvent.SaveSim -> saveSim(ev.sim)
-            GatewayEvent.SimsChanged -> if (welcomed && telemetry.granted(Manifest.permission.READ_PHONE_STATE) &&
-                telemetry.sims() != reportedSims
-            ) {
-                sendHealth()
-            }
+            GatewayEvent.SimsChanged -> onSimsChanged()
             is GatewayEvent.Opened -> if (ev.gen == connection.generation) onOpened()
             is GatewayEvent.Message -> if (ev.gen == connection.generation) {
                 handler.handle(ev.text) { connection.send(it) }
@@ -475,10 +474,9 @@ class GatewayService : Service() {
     private fun onReply(ref: String, nack: Nack?) {
         if (ref == pendingSim) {
             pendingSim = null
-            if (nack != null) {
-                graph.log("preferred SIM not saved: ${nack.code}", "E")
-                setState { it.copy(simError = nack.message ?: nack.code) }
-            }
+            if (nack != null) graph.log("preferred SIM not saved: ${nack.code}", "E")
+            // Always redraw: a nack with the same text as the last one must still reset the choice.
+            setState { it.copy(simError = nack?.let { n -> n.message ?: n.code }, simRev = it.simRev + 1) }
             return
         }
         if (ref != pendingForwarding) return
@@ -500,7 +498,7 @@ class GatewayService : Service() {
         }
         if (pendingSim != null) {
             pendingSim = null
-            setState { it.copy(simError = "Connection lost before the server answered") }
+            setState { it.copy(simError = "Connection lost before the server answered", simRev = it.simRev + 1) }
         }
         graph.uplink.detach()
         healthJob?.cancel()
@@ -539,12 +537,22 @@ class GatewayService : Service() {
     }
 
     /** [fresh]: the cellular reading was just taken, so it is not read again. */
-    private fun sendHealth(fcmToken: String? = null, fresh: Boolean = false) {
+    /** The listener also fires without a change, so only a different list redraws or reports. */
+    private fun onSimsChanged() {
+        val now = telemetry.readableSims() ?: return
+        if (now != seenSims) {
+            seenSims = now
+            setState { it.copy(simRev = it.simRev + 1) }
+        }
+        if (welcomed && now != reportedSims) sendHealth(sims = now)
+    }
+
+    private fun sendHealth(fcmToken: String? = null, fresh: Boolean = false, sims: List<SimInfo>? = telemetry.readableSims()) {
         // Before `welcome` the hello (built from prefs) carries the token, and a health must not precede it.
         if (!welcomed) return
         val token = fcmToken?.takeIf { it != announcedToken }
         if (!fresh) readCellular()
-        val health = telemetry.health(graph.uplink.size(), token, network(), currentRadios())
+        val health = telemetry.health(graph.uplink.size(), token, network(), currentRadios(), sims)
         lastPermissions = health.permissions
         if (connection.send(Frames.encode(FrameType.HEALTH, Health.serializer(), health))) {
             reportedRadios = health.radios
@@ -744,7 +752,6 @@ class GatewayService : Service() {
                 sendsToday = graph.prefs.today("sends"),
                 receivesToday = graph.prefs.today("receives"),
                 filtersRev = graph.prefs.config.filtersRev,
-                sim = graph.prefs.config.sim,
             )
         }
         val state = stateFlow.value

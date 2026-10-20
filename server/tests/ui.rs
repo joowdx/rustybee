@@ -849,7 +849,7 @@ async fn ac_010_11_no_sim_indicator() {
                 .unwrap();
         }
     };
-    let granted = r#"{"network":"wifi","permissions":{"read_phone_state":true},"radios":{"cellular":{"name":"Example Mobile","level":2}}}"#;
+    let granted = r#"{"network":"wifi","sims_read":true,"permissions":{"read_phone_state":true},"radios":{"cellular":{"name":"Example Mobile","level":2}}}"#;
     // No SIM while the phone can read them: a red "No SIM" in place of the cellular chip, and a warning.
     set("[]", granted).await;
     for path in ["/", "/devices"] {
@@ -864,7 +864,7 @@ async fn ac_010_11_no_sim_indicator() {
             "{path}"
         );
     }
-    // With a SIM, or when the phone can't read its SIMs, no indicator.
+    // With a SIM, or when the list was read without the permission (even if granted since), no indicator.
     for (sims, telemetry) in [
         (
             r#"[{"subscription_id":1,"slot":0,"carrier":"Example Mobile","number":null}]"#,
@@ -872,7 +872,7 @@ async fn ac_010_11_no_sim_indicator() {
         ),
         (
             "[]",
-            r#"{"network":"wifi","permissions":{"read_phone_state":false}}"#,
+            r#"{"network":"wifi","sims_read":false,"permissions":{"read_phone_state":true}}"#,
         ),
         ("[]", r#"{"network":"wifi"}"#),
     ] {
@@ -882,6 +882,54 @@ async fn ac_010_11_no_sim_indicator() {
             assert!(!page.contains("No SIM"), "{path} {telemetry}");
         }
     }
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_002_22_web_save_keeps_phone_sim() {
+    let s = server().await;
+    let (pid, token) = s.pair("Phone").await;
+    let mut d = Device::connect(&s, &token).await;
+    let ui = Ui::new(&s).await;
+    // The web form is loaded with the phone's default.
+    let (_, page) = ui.get("/devices").await;
+    assert!(page.contains(r#"name="sim_base" value="""#));
+    // Then the phone picks SIM 1.
+    d.send(&frame("set_sim", serde_json::json!({"sim": 1})))
+        .await;
+    d.recv_type("ack").await;
+    assert_eq!(d.recv_type("config").await["data"]["sim"], 1);
+    // A stale save that leaves the select alone keeps the phone's pick.
+    let base = [
+        ("name", "Renamed"),
+        ("filters_rev", "0"),
+        ("enabled", "on"),
+        ("send_delay_ms", "0"),
+        ("receive_enabled", "on"),
+        ("filter_mode", "off"),
+        ("sim_base", ""),
+        ("sim", ""),
+    ];
+    ui.post(&format!("/devices/{pid}"), &base).await;
+    let cfg = d.recv_type("config").await;
+    assert_eq!(cfg["data"]["name"], "Renamed");
+    assert_eq!(cfg["data"]["sim"], 1);
+    // Changing the select saves it.
+    let mut changed = base;
+    changed[6] = ("sim_base", "1");
+    ui.post(&format!("/devices/{pid}"), &changed).await;
+    assert!(d.recv_type("config").await["data"]["sim"].is_null());
+    // A preferred SIM the phone no longer reports stays selected, so a save keeps it.
+    d.send(&frame("set_sim", serde_json::json!({"sim": 1})))
+        .await;
+    d.recv_type("ack").await;
+    d.recv_type("config").await;
+    d.send(&frame("health", serde_json::json!({"sims": []})))
+        .await;
+    d.recv_type("ack").await;
+    let (_, page) = ui.get("/devices").await;
+    assert!(page.contains(r#"<option value="1" selected>SIM 1 (not in the phone)</option>"#));
+    assert!(page.contains(r#"name="sim_base" value="1""#));
     s.stop().await;
 }
 

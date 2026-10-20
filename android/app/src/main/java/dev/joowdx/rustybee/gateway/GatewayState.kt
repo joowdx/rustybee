@@ -11,8 +11,8 @@ data class GatewayState(
     /** The `filters_rev` of the config the phone holds. */
     val filtersRev: Long = 0,
     val forwardingSave: ForwardingSave = ForwardingSave.Idle,
-    /** The preferred SIM (`config.sim`) the phone holds; null is the phone's default. */
-    val sim: Int? = null,
+    /** Bumped when the SIMs section must redraw: the config's SIM, a `set_sim` reply, or the SIM list changed. */
+    val simRev: Int = 0,
     /** Why the last preferred SIM change from the phone failed, or null. */
     val simError: String? = null,
 )

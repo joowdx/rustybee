@@ -65,7 +65,7 @@ class ProtocolFixturesTest {
     fun ac_002_20_set_sim_frame() {
         val env = ProtocolJson.decodeFromString(Envelope.serializer(), Fixtures.read("set_sim.json"))
         assertEquals(FrameType.SET_SIM, env.type)
-        assertEquals(SetSim(2), ProtocolJson.decodeFromJsonElement(SetSim.serializer(), env.data))
+        assertEquals(SetSim(1), ProtocolJson.decodeFromJsonElement(SetSim.serializer(), env.data))
         // "Phone default" is a null sim, omitted on output like every null optional.
         val frame = Frames.encode(FrameType.SET_SIM, SetSim.serializer(), SetSim(null), "01JA0000000000000000000014")
         assertEquals("{\"v\":1,\"id\":\"01JA0000000000000000000014\",\"type\":\"set_sim\",\"data\":{}}", frame)

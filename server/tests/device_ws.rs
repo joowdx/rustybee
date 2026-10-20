@@ -689,11 +689,18 @@ async fn ac_002_20_set_sim_stores_and_pushes_config() {
     let (pid, token) = s.pair("A").await;
     let id = internal_id(&s, &pid).await;
     let mut d = Device::connect(&s, &token).await;
-    let f = frame("set_sim", json!({"sim": 2}));
+    // A SIM the phone doesn't report is refused, and the current config comes back.
+    let bad = frame("set_sim", json!({"sim": 2}));
+    d.send(&bad).await;
+    assert_eq!(d.recv_type("nack").await["data"]["code"], "invalid");
+    assert!(d.recv_type("config").await["data"]["sim"].is_null());
+    assert_eq!(wake_row(&s, id).await.sim, None);
+
+    let f = frame("set_sim", json!({"sim": 1}));
     d.send(&f).await;
     assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
-    assert_eq!(d.recv_type("config").await["data"]["sim"], 2);
-    assert_eq!(wake_row(&s, id).await.sim, Some(2));
+    assert_eq!(d.recv_type("config").await["data"]["sim"], 1);
+    assert_eq!(wake_row(&s, id).await.sim, Some(1));
 
     // A replay is acked again with the current config, not reapplied over a later edit.
     let back = frame("set_sim", json!({"sim": null}));

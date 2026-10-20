@@ -166,7 +166,7 @@ class MainActivity : Activity() {
         val prev = lastState
         lastState = state
         // The SIM choice follows the config and needs a live connection.
-        if (state.sim != prev.sim || state.simError != prev.simError || state.connection != prev.connection) refreshSims()
+        if (state.simRev != prev.simRev || state.simError != prev.simError || state.connection != prev.connection) refreshSims()
         val (label, color) = when {
             !graph.prefs.gatewayEnabled -> "Stopped" to 0xFF9CA3AF
             state.connection == ConnectionState.CONNECTED -> "Connected" to 0xFF16A34A

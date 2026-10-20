@@ -204,14 +204,19 @@ impl DeviceRow {
         out
     }
 
-    /// The device can read its SIMs and has none in service, so it cannot send or receive.
+    /// The SIM list was read with `READ_PHONE_STATE` and is empty, so the phone cannot send or
+    /// receive. A list from a `hello` sent before the permission was granted says nothing.
     pub fn no_sim(&self) -> bool {
-        let readable = self
-            .telemetry
-            .pointer("/permissions/read_phone_state")
-            .and_then(Value::as_bool)
-            == Some(true);
-        readable && self.sims.as_array().is_some_and(Vec::is_empty)
+        self.telemetry.get("sims_read").and_then(Value::as_bool) == Some(true)
+            && self.sims.as_array().is_some_and(Vec::is_empty)
+    }
+
+    /// Whether the device reports the SIM `id` as active.
+    pub fn has_sim(&self, id: i64) -> bool {
+        self.sims.as_array().is_some_and(|l| {
+            l.iter()
+                .any(|s| s.get("subscription_id").and_then(Value::as_i64) == Some(id))
+        })
     }
 
     /// Names of permissions the device reports as missing.
@@ -321,6 +326,9 @@ pub fn apply_hello(c: &Connection, id: i64, h: &Hello, now: i64) -> rusqlite::Re
         "permissions": h.permissions,
         "outbox": h.outbox,
     });
+    // The SIM list below means "no SIM" only when it was read with the permission it needs.
+    telemetry["sims_read"] =
+        json!(h.permissions.as_ref().and_then(|p| p.read_phone_state) == Some(true));
     // A hello without `radios` clears them (spec 015).
     if let Some(r) = &h.radios {
         telemetry["radios"] = json!(r.cleaned());
@@ -377,6 +385,10 @@ pub fn apply_health(c: &Connection, id: i64, h: &Health, now: i64) -> rusqlite::
     // Replaced, `{}` included; absent (an older app) keeps it (spec 015).
     if let Some(r) = &h.radios {
         obj.insert("radios".into(), json!(r.cleaned()));
+    }
+    // Only an app that could read its SIMs sends them (spec 002).
+    if h.sims.is_some() {
+        obj.insert("sims_read".into(), json!(true));
     }
     let telemetry = t.to_string();
     if let Some(sims) = &h.sims {
@@ -460,7 +472,8 @@ pub struct Settings {
     pub enabled: bool,
     pub send_delay_ms: i64,
     pub receive_enabled: bool,
-    pub sim: Option<i64>,
+    /// `None` keeps the stored SIM; `Some(None)` is the phone's default.
+    pub sim: Option<Option<i64>>,
     pub filters: Filters,
     /// The `filters_rev` the web form was loaded with.
     pub base_rev: i64,
@@ -483,7 +496,8 @@ pub fn update_settings(c: &Connection, id: i64, s: &Settings) -> rusqlite::Resul
     ))?
     .unwrap_or(false);
     c.execute(
-        "UPDATE devices SET name=?2, enabled=?3, send_delay_ms=?4, sim=?6,
+        "UPDATE devices SET name=?2, enabled=?3, send_delay_ms=?4,
+           sim=CASE WHEN ?9 THEN ?6 ELSE sim END,
            receive_enabled=(receive_enabled AND ?5),
            filters_rev=filters_rev + ((receive_enabled AND ?5) IS NOT receive_enabled
              OR (receive_enabled AND ?5 AND filters_rev=?8 AND filters_json IS NOT ?7)),
@@ -496,9 +510,10 @@ pub fn update_settings(c: &Connection, id: i64, s: &Settings) -> rusqlite::Resul
             s.enabled,
             crate::domain::pacing::clamp_delay_ms(s.send_delay_ms),
             s.receive_enabled,
-            s.sim,
+            s.sim.flatten(),
             filters,
-            s.base_rev
+            s.base_rev,
+            s.sim.is_some()
         ],
     )?;
     Ok(conflict)

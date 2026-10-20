@@ -100,7 +100,16 @@ class Telemetry(private val context: Context) {
         radios = radios,
     )
 
-    fun health(outbox: Int, fcmToken: String? = null, network: String = network(), radios: Radios? = null): Health =
+    /** The active SIMs, or null without READ_PHONE_STATE (then the list would read as empty, not "no SIM"). */
+    fun readableSims(): List<SimInfo>? = if (granted(Manifest.permission.READ_PHONE_STATE)) sims() else null
+
+    fun health(
+        outbox: Int,
+        fcmToken: String? = null,
+        network: String = network(),
+        radios: Radios? = null,
+        sims: List<SimInfo>? = readableSims(),
+    ): Health =
         Health(
             battery = battery(),
             network = network,
@@ -108,7 +117,7 @@ class Telemetry(private val context: Context) {
             outbox = outbox,
             fcmToken = fcmToken,
             radios = radios,
-            sims = if (granted(Manifest.permission.READ_PHONE_STATE)) sims() else null,
+            sims = sims,
         )
 
     /** The data SIM's TelephonyManager, or the default one without a data SIM. */

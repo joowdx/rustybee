@@ -42,6 +42,9 @@ struct DeviceView {
     send_delay_ms: i64,
     receive_enabled: bool,
     filters_rev: i64,
+    /// The preferred SIM the form was loaded with, so a save that leaves the select alone keeps
+    /// a SIM picked on the phone meanwhile (spec 002).
+    sim_base: String,
     sims: Vec<Opt>,
     filter_mode: String,
     rules: Vec<RuleView>,
@@ -94,7 +97,19 @@ fn device_view(now: i64, d: &DeviceRow) -> DeviceView {
         send_delay_ms: d.send_delay_ms,
         receive_enabled: d.receive_enabled,
         filters_rev: d.filters_rev,
-        sims: sims_of(d, d.sim, false),
+        sim_base: d.sim.map(|s| s.to_string()).unwrap_or_default(),
+        sims: {
+            let mut o = sims_of(d, d.sim, false);
+            // A preferred SIM the phone no longer reports stays selectable, so a save keeps it.
+            if let Some(id) = d.sim.filter(|_| !o.iter().any(|x| x.selected)) {
+                o.push(Opt {
+                    value: id.to_string(),
+                    label: format!("SIM {id} (not in the phone)"),
+                    selected: true,
+                });
+            }
+            o
+        },
         filter_mode: match d.filters.mode {
             Mode::Off => "off",
             Mode::Allow => "allow",
@@ -202,6 +217,10 @@ impl DeviceForm {
         self.0.iter().find(|(k, _)| k == key).map_or("", |(_, v)| v)
     }
 
+    fn has(&self, key: &str) -> bool {
+        self.0.iter().any(|(k, _)| k == key)
+    }
+
     fn on(&self, key: &str) -> bool {
         !matches!(self.get(key), "" | "off")
     }
@@ -273,7 +292,7 @@ pub async fn save_device(
         send_delay_ms: delay,
         // Only ever turns forwarding off; see `update_settings`.
         receive_enabled: f.on("receive_enabled"),
-        sim: f.get("sim").trim().parse().ok(),
+        sim: sim_edit(f.get("sim"), f.has("sim_base").then(|| f.get("sim_base"))),
         filters: Filters { mode, rules },
         // A form without a rev cannot show it saw the current filters.
         base_rev: f.get("filters_rev").trim().parse().unwrap_or(-1),
@@ -975,6 +994,17 @@ pub async fn revoke_session(
         return Ok(see_other("/login"));
     }
     Ok(see_other("/settings?ok=session"))
+}
+
+/// The SIM a device form saves: `None` keeps the stored one when the select still shows what the
+/// form was loaded with, so a stale page never undoes a pick made on the phone. A form without
+/// `sim_base` always saves its select.
+fn sim_edit(sim: &str, base: Option<&str>) -> Option<Option<i64>> {
+    let parse = |v: &str| v.trim().parse::<i64>().ok();
+    match base {
+        Some(b) if parse(b) == parse(sim) => None,
+        _ => Some(parse(sim)),
+    }
 }
 
 #[cfg(test)]
