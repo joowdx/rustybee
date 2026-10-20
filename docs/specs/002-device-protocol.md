@@ -1,7 +1,7 @@
 # 002 — Device protocol
 
 Status: implemented
-Updated: 2026-10-17
+Updated: 2026-10-20
 
 ## Context
 This is the contract between the server and the Android app. It replaces MQTT and FCM-as-transport. Golden examples live in `protocol/fixtures/`, and both test suites parse every fixture.
@@ -67,8 +67,9 @@ Every text frame is one JSON object:
 | `hello` | `{app_version, app_build, os_version, manufacturer, model, sims:[{subscription_id, slot, carrier, number}], battery:{level, charging}, network, fcm_token, permissions:{send_sms, receive_sms, notifications, battery_unrestricted, read_phone_state?}, outbox, lifecycle, radios?}` (`radios` per spec 015) | first frame after every connect |
 | `status` | `{msg_id, state:"sent"\|"delivered"\|"failed", at, parts, error:{code,message}\|null}` | each change of a message's outcome |
 | `inbound` | `{uid, from, body, sim, received_at}` | each received SMS, while forwarding is on, that passes the filters |
-| `health` | `{battery, network, permissions, outbox, fcm_token?, radios?}` (`radios` per spec 015) | every 15 min while connected, on a change of charging state, permissions or network type, and at once when FCM issues a new token |
+| `health` | `{battery, network, permissions, outbox, fcm_token?, radios?, sims?}` (`radios` per spec 015) | every 15 min while connected, on a change of charging state, permissions, network type or the active SIMs, and at once when FCM issues a new token |
 | `set_forwarding` | `{base_rev, receive_enabled, filters}` | the user saves the Forwarding screen on the phone, or the phone restores its own "off" (below) |
+| `set_sim` | `{sim}` | the user picks the preferred SIM on the phone; `sim` is a subscription id, or `null` for the phone's default SMS SIM |
 
 - `status.parts` must be at least 1 when present. A `status` with `parts` below 1 is nacked `bad_frame` and changes nothing.
 - The server clamps `status.at` to the range from the message's `dispatched_at` to its own clock (just its own clock if the message has no `dispatched_at`), so a wrong phone clock never stores an outcome before dispatch or in the future.
@@ -85,6 +86,9 @@ Every text frame is one JSON object:
 - `permissions.read_phone_state` is optional: newer apps send whether `READ_PHONE_STATE` is granted, older apps omit it. Without it the app can't list SIMs, so `sims` is empty and a `send` with `sim` fails `permission_denied` (spec 012). When omitted the server stores and re-encodes nothing for it; when `false` the web UI lists it with the other missing permissions.
 - `permissions.notifications` is true only when `POST_NOTIFICATIONS` is granted **and** the gateway notification channel is not blocked. FCM wakes depend on both (spec 009).
 - `health.fcm_token` is sent only when the token changed; when present, the server replaces the stored token.
+- `health.sims` has the shape of `hello.sims` and is sent while the app can read the SIMs (`READ_PHONE_STATE`). When present the server replaces the stored list, `[]` included; absent (no permission, or an older app) keeps it.
+- The preferred SIM (`config.sim`) is one setting edited from the web or the phone; the last edit wins. `set_sim` stores it and is answered with an `ack` and then a `config` carrying it. A `sim` the device's stored SIM list doesn't hold is nacked `invalid`, followed by the current `config`, and nothing is stored. A replayed `set_sim` (same `id`) is acked again with the current `config` and not reapplied. Editing on the phone needs a live connection.
+- The web device form carries the SIM it was loaded with as `sim_base`. When the submitted SIM equals `sim_base` the stored SIM is kept, so saving other fields from a stale page never undoes a pick made on the phone. A form without `sim_base` saves its SIM. A stored SIM the phone no longer reports stays in the select, marked "not in the phone", so a save keeps it.
 - `network` is one of `wifi`, `cellular`, `ethernet`, `other`, `none`. `battery.level` is 0–100. `battery.charging` is true while the phone is on external power, including when charging is paused at a charge limit or because the battery is full.
 - `inbound.uid` is the lowercase hex of the first 16 bytes of `SHA-256(from + "\n" + received_at + "\n" + body + "\n" + (sim ?: ""))`.
 - `status.error.code` is one of:
@@ -158,6 +162,9 @@ Every text frame is one JSON object:
 17. AC-002-17 An app close with 4010 sets `gateway_off_at` and the app does not reconnect. A `health` with `fcm_token` replaces the stored token; one without leaves it unchanged.
 18. AC-002-18 An HTTP 401 at the upgrade is not retried: the app wipes its credentials, stops, posts an alert and shows setup with the reason, as for 4003. Other upgrade failures are retried with the backoff.
 19. AC-002-19 When the default network's transport changes while connected (cellular to wifi or back, including under a VPN where the socket survives), the app sends a `health` whose `network` is the new type. After `welcome` it also sends one if the transport changed since its `hello` was built. An unchanged transport sends nothing.
+20. AC-002-20 `set_sim` stores `sim` (`null` included) and is acked, followed by a `config` with the stored `sim`; a replay is acked with the current `config` and does not undo a later edit. A `sim` not in the device's SIM list is nacked `invalid` with the current `config`, and nothing is stored.
+21. AC-002-21 A `health` with `sims` replaces the stored SIM list, `[]` included; one without keeps it. The app sends a `health` with `sims` when the active SIM list changes while connected.
+22. AC-002-22 A web save whose SIM equals its `sim_base` keeps a SIM the phone picked since the form loaded; a changed SIM is saved. A stored SIM the phone no longer reports stays selected in the form.
 
 ## Test plan
 | AC | Test |
@@ -176,6 +183,9 @@ Every text frame is one JSON object:
 | 16 | `server/tests/device_ws.rs::ac_002_16_hello_lifecycle_clears_wake_state`; app `ProtocolFixturesTest` |
 | 07, 17 (app side), 18, 19 | app `GatewayPolicyTest` (`ac_002_07_*`, `ac_002_17_*`, `ac_002_18_*`, `ac_002_19_*`) |
 | 17 | `server/tests/device_ws.rs::ac_002_17_gateway_off_close_and_token_update` |
+| 20 | `server/tests/device_ws.rs::ac_002_20_set_sim_stores_and_pushes_config` |
+| 21 | `server/tests/device_ws.rs::ac_002_21_health_sims_replace_or_keep` |
+| 22 | `server/tests/ui.rs::ac_002_22_web_save_keeps_phone_sim` |
 
 ## Assumptions
 - Ping frames come from the app only. The server never sends pings, which saves server-initiated wakeups on the phone.
@@ -186,3 +196,4 @@ Every text frame is one JSON object:
 - `permissions.read_phone_state` came from the 2026-10-17 review; the server only stores and shows it.
 - AC-002-18 (401 at the upgrade handled like 4003) came from the 2026-10-17 review.
 - AC-002-19 (health on a network type change) came from a field report: after cellular to wifi the web UI kept showing `cellular` while the device stayed connected.
+- AC-002-20 to AC-002-22 (preferred SIM from the phone, SIMs in `health`, and the code review fixes) were built on a direct request on 2026-10-20 without a separate spec review.

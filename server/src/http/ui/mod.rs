@@ -353,6 +353,9 @@ fn permission_warnings(d: &DeviceRow) -> Vec<String> {
         .into_iter()
         .map(|p| format!("Missing permission: {p}"))
         .collect();
+    if d.no_sim() {
+        warnings.insert(0, "No SIM: this phone cannot send or receive SMS".into());
+    }
     // gms phones are the ones that carry an FCM token. The specific sentence
     // replaces the generic missing-permission line for notifications.
     if d.fcm_token.is_some() && notifications_off(d) {

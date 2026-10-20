@@ -15,6 +15,8 @@ import android.provider.Settings
 import android.telephony.SubscriptionManager
 import android.view.View
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.Switch
 import android.widget.TextView
 import dev.joowdx.rustybee.R
@@ -46,17 +48,20 @@ class MainActivity : Activity() {
     private lateinit var checklist: LinearLayout
     private lateinit var sims: LinearLayout
 
+    private var binder: GatewayService.LocalBinder? = null
     private var bound = false
     private var lastState = GatewayState()
 
     private val connectionCallback = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
-            val flow = (service as GatewayService.LocalBinder).state
+            val b = service as GatewayService.LocalBinder
+            binder = b
             collect?.cancel()
-            collect = scope.launch { flow.collect { render(it) } }
+            collect = scope.launch { b.state.collect { render(it) } }
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
+            binder = null
             collect?.cancel()
             render(GatewayState())
         }
@@ -101,6 +106,7 @@ class MainActivity : Activity() {
         collect?.cancel()
         if (bound) unbindService(connectionCallback)
         bound = false
+        binder = null
         super.onStop()
     }
 
@@ -157,7 +163,10 @@ class MainActivity : Activity() {
     private fun render(state: GatewayState) {
         // The server dropped the device (4003 or 401) while this screen was open: show Setup and its notice.
         if (state.connection == ConnectionState.STOPPED && !graph.prefs.paired) return openSetup()
+        val prev = lastState
         lastState = state
+        // The SIM choice follows the config and needs a live connection.
+        if (state.simRev != prev.simRev || state.simError != prev.simError || state.connection != prev.connection) refreshSims()
         val (label, color) = when {
             !graph.prefs.gatewayEnabled -> "Stopped" to 0xFF9CA3AF
             state.connection == ConnectionState.CONNECTED -> "Connected" to 0xFF16A34A
@@ -246,11 +255,41 @@ class MainActivity : Activity() {
             return
         }
         val list = getSystemService(SubscriptionManager::class.java)?.activeSubscriptionInfoList.orEmpty()
-        if (list.isEmpty()) sims.add(text("No active SIM"))
-        list.forEach {
-            sims.add(text("Slot ${it.simSlotIndex + 1}: ${it.carrierName ?: it.displayName} (id ${it.subscriptionId})"))
+        if (list.isEmpty()) {
+            sims.add(checkRow("No active SIM", false, null, "Without a SIM this phone cannot send.") {})
+            return
         }
-        sims.add(text("The preferred SIM is set in the web UI.", 13f).apply { alpha = 0.7f })
+        // AC-013-09: the preferred SIM is picked here or in the web UI; the server's config decides.
+        val online = binder != null && lastState.connection == ConnectionState.CONNECTED
+        val preferred = graph.prefs.config.sim
+        sims.add(text("Preferred SIM", 13f).apply { alpha = 0.7f })
+        val ids = mutableMapOf<Int, Int?>()
+        val group = RadioGroup(this)
+        fun option(label: String, sim: Int?) {
+            val button = RadioButton(this).apply {
+                id = View.generateViewId()
+                text = label
+                isEnabled = online
+            }
+            ids[button.id] = sim
+            group.addView(button)
+            if (sim == preferred) group.check(button.id)
+        }
+        option("Phone default", null)
+        list.forEach {
+            option("Slot ${it.simSlotIndex + 1}: ${it.carrierName ?: it.displayName} (id ${it.subscriptionId})", it.subscriptionId)
+        }
+        group.setOnCheckedChangeListener { _, id -> if (id in ids) binder?.saveSim(ids[id]) }
+        sims.add(group)
+        if (preferred != null && list.none { it.subscriptionId == preferred }) {
+            sims.add(text("Preferred SIM (id $preferred) is not in this phone."))
+        }
+        val note = when {
+            !online -> "Connect to change the preferred SIM."
+            lastState.simError != null -> "Not saved: ${lastState.simError}"
+            else -> null
+        }
+        if (note != null) sims.add(text(note, 13f).apply { alpha = 0.7f })
     }
 
     // --- actions

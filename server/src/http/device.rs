@@ -420,6 +420,36 @@ impl Conn {
                     ],
                 })
             }
+            Frame::SetSim(s) => {
+                let fid = id.clone();
+                let dev = app
+                    .store
+                    .write(move |c| {
+                        let Some(dev) = devices::by_id(c, device_id)? else {
+                            return Ok(None);
+                        };
+                        // Only a SIM the phone reports, or its default, can be preferred.
+                        if s.sim.is_some_and(|sim| !dev.has_sim(sim)) {
+                            return Ok(Some((false, dev)));
+                        }
+                        // A replay of a pick already applied is acked again, not reapplied.
+                        if first_sight(c, device_id, &fid, now)? {
+                            devices::set_sim(c, device_id, s.sim)?;
+                        }
+                        Ok(devices::by_id(c, device_id)?.map(|d| (true, d)))
+                    })
+                    .await?;
+                let Some((stored, dev)) = dev else {
+                    return Ok(vec![]);
+                };
+                let config = Envelope::new("config", dev.config(app.cfg.ping_s)).to_text();
+                app.publish(UiEvent::Device(dev.public_id));
+                Ok(if stored {
+                    vec![ack(&id), config]
+                } else {
+                    vec![nack(&id, "invalid", "not a SIM this phone reports"), config]
+                })
+            }
             Frame::Welcome(_) | Frame::Config(_) | Frame::Send(_) => Ok(vec![nack(
                 &id,
                 "unsupported",

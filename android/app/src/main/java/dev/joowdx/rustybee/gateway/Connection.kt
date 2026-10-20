@@ -101,4 +101,8 @@ sealed interface GatewayEvent {
     data object HealthTick : GatewayEvent
     data class FcmToken(val token: String) : GatewayEvent
     data class SaveForwarding(val receiveEnabled: Boolean, val filters: Filters, val baseRev: Long) : GatewayEvent
+    /** The preferred SIM picked on the phone; null is the phone's default SMS SIM. */
+    data class SaveSim(val sim: Int?) : GatewayEvent
+    /** The active SIM list may have changed (the listener also fires without a change). */
+    data object SimsChanged : GatewayEvent
 }

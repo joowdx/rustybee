@@ -1,7 +1,7 @@
 # 010 — Web UI
 
 Status: implemented
-Updated: 2026-10-17
+Updated: 2026-10-20
 
 ## Design
 
@@ -55,6 +55,8 @@ All pages except `/login` require a session (spec 005).
 9. AC-010-09 A device whose telemetry has `battery.charging` true shows a labelled charging bolt inside its battery icon on `/` and `/devices`; one that is not charging shows none.
 10. AC-010-10 The dashboard refreshes on every burst of `device` and `message` events, ending with a refresh after the burst's last event. Events inside the one-second window are coalesced, never dropped, so a reconnect (close, `hello`, `health`) never leaves a card on an earlier state.
 
+11. AC-010-11 A phone whose SIM list was read with `read_phone_state` granted (a `hello` sent with it, or a `health` carrying `sims`) and is empty shows a red "No SIM" in its card's status bar in place of the cellular indicator, and a warning "No SIM: this phone cannot send or receive SMS", on `/` and `/devices`. A phone with a SIM, or one that can't read its SIMs, shows neither.
+
 ## Test plan
 | AC | Test |
 |---|---|
@@ -65,6 +67,7 @@ All pages except `/login` require a session (spec 005).
 | 08 | `server/tests/ui.rs::ac_010_08_unreachable_and_last_restart` |
 | 09 | `server/tests/ui.rs::ac_010_09_charging_bolt` |
 | 10 | `server/tests/ui.rs::ac_010_10_live_refresh_is_trailing` checks the markup; the coalescing in `app.js` was checked in the browser pane |
+| 11 | `server/tests/ui.rs::ac_010_11_no_sim_indicator` |
 
 ## Assumptions
 - No command palette and no charts.
@@ -74,3 +77,4 @@ All pages except `/login` require a session (spec 005).
 - "Polls until a device pairs" is `GET /devices/paired?n=<count>` every 3 s via htmx; it answers `204`, or `HX-Refresh: true` once the device count grows.
 
 ## Open questions
+- AC-010-11 (no-SIM indicator) was built on a direct request on 2026-10-20 without a separate spec review.

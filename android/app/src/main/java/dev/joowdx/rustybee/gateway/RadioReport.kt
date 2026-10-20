@@ -56,6 +56,9 @@ object RadioReport {
     /** Android's 0..[max] level scaled to 0–4 bars. */
     fun bars(level: Int, max: Int): Int = if (max <= 0) 0 else ((level * 4 + max / 2) / max).coerceIn(0, 4)
 
+    /** The generation is reported only while the default network ([network], as reported) is mobile data. */
+    fun showsTech(network: String?): Boolean = network == "cellular"
+
     /**
      * The cellular generation ("2G" to "5G") as the status bar shows it: [override] is
      * [TelephonyDisplayInfo.getOverrideNetworkType], which marks 5G on an LTE anchor (NSA).

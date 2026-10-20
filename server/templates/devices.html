@@ -62,6 +62,7 @@
     <summary>Settings</summary>
     <form method="post" action="/devices/{{ d.id }}" class="fields">
       <input type="hidden" name="filters_rev" value="{{ d.filters_rev }}">
+      <input type="hidden" name="sim_base" value="{{ d.sim_base }}">
       <div class="f"><label for="n-{{ d.id }}">Name</label><input id="n-{{ d.id }}" name="name" value="{{ d.name }}" required maxlength="64"></div>
       <label class="f sw-row"><span>Send messages<span class="hint">Off keeps the phone paired but skips it when sending</span></span><input class="sw" type="checkbox" name="enabled"{% if d.enabled %} checked{% endif %}></label>
       <div class="f"><label for="dl-{{ d.id }}">Delay between messages<span class="hint">0 sends as fast as the phone allows</span></label><div class="in-unit"><input id="dl-{{ d.id }}" type="number" name="send_delay_ms" min="0" max="3600000" value="{{ d.send_delay_ms }}"><span>ms</span></div></div>
