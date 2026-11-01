@@ -745,3 +745,79 @@ async fn ac_002_21_health_sims_replace_or_keep() {
     assert_eq!(wake_row(&s, id).await.sims, json!([]));
     s.stop().await;
 }
+
+/// Inserts one outbound message for `device_id` already in `state`, with the given times.
+async fn seed_out(s: &Server, device_id: i64, sent_at: Option<i64>, delivered_at: Option<i64>) {
+    s.app()
+        .store
+        .write(move |c| {
+            let n: i64 = c.query_row("SELECT count(*) FROM messages", [], |r| r.get(0))?;
+            c.execute(
+                "INSERT INTO messages(public_id, device_id, direction, peer, body, state,
+                   created_at, sent_at, delivered_at)
+                 VALUES(?1, ?2, 'out', '+15550001111', 'x', 'sent', 0, ?3, ?4)",
+                rusqlite::params![format!("seed{n}"), device_id, sent_at, delivered_at],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn ac_016_02_stats_counts_this_device_since() {
+    let s = server().await;
+    let (pid, token) = s.pair("A").await;
+    let (other_pid, _) = s.pair("B").await;
+    let id = internal_id(&s, &pid).await;
+    let other = internal_id(&s, &other_pid).await;
+    seed_out(&s, id, Some(1_000), None).await;
+    seed_out(&s, id, Some(5_000), Some(6_000)).await; // delivered counts once
+    seed_out(&s, id, None, Some(7_000)).await; // delivered without a sent report
+    seed_out(&s, other, Some(5_000), None).await; // another device
+    let mut d = Device::connect(&s, &token).await;
+    for (n, t) in [(0, 1_500i64), (1, 8_000)] {
+        let inbound = json!({"uid": format!("{n:032x}"), "from": "+15551234567",
+            "body": "hi", "sim": 1, "received_at": t});
+        d.send(&frame("inbound", inbound)).await;
+        d.recv_type("ack").await;
+    }
+
+    let f = frame("stats_req", json!({"since": 2_000}));
+    d.send(&f).await;
+    assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
+    let st = d.recv_type("stats").await["data"].clone();
+    assert_eq!(
+        (
+            st["since"].clone(),
+            st["sent"].clone(),
+            st["received"].clone()
+        ),
+        (json!(2_000), json!(2), json!(1))
+    );
+    assert!(st["at"].as_i64().unwrap() > 0);
+
+    d.send(&frame("stats_req", json!({"since": null}))).await;
+    d.recv_type("ack").await;
+    let st = d.recv_type("stats").await["data"].clone();
+    assert!(st["since"].is_null());
+    assert_eq!(
+        (st["sent"].clone(), st["received"].clone()),
+        (json!(3), json!(2))
+    );
+    s.stop().await;
+}
+
+#[tokio::test]
+async fn ac_016_03_replayed_stats_req_is_answered_again() {
+    let s = server().await;
+    let (_, token) = s.pair("A").await;
+    let mut d = Device::connect(&s, &token).await;
+    let f = frame("stats_req", json!({"since": null}));
+    for _ in 0..2 {
+        d.send(&f).await;
+        assert_eq!(d.recv_type("ack").await["data"]["ref"], f["id"]);
+        assert_eq!(d.recv_type("stats").await["data"]["sent"], 0);
+    }
+    s.stop().await;
+}

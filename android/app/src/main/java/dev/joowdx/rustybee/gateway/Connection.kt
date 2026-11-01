@@ -105,4 +105,6 @@ sealed interface GatewayEvent {
     data class SaveSim(val sim: Int?) : GatewayEvent
     /** The active SIM list may have changed (the listener also fires without a change). */
     data object SimsChanged : GatewayEvent
+    /** The notification's period setting changed, or the current period ended (spec 016). */
+    data object StatsChanged : GatewayEvent
 }

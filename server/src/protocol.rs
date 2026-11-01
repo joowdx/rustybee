@@ -296,6 +296,21 @@ pub struct SetSim {
     pub sim: Option<i64>,
 }
 
+/// A request for this device's counts since `since` (epoch ms), or all time when `None` (spec 016).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StatsReq {
+    pub since: Option<i64>,
+}
+
+/// This device's sent and received counts since `since`, counted at server time `at` (spec 016).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Stats {
+    pub since: Option<i64>,
+    pub sent: i64,
+    pub received: i64,
+    pub at: i64,
+}
+
 /// Forwarding edited on the device, based on the `filters_rev` it last saw.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetForwarding {
@@ -352,6 +367,8 @@ pub enum Frame {
     Nack(Nack),
     SetForwarding(SetForwarding),
     SetSim(SetSim),
+    StatsReq(StatsReq),
+    Stats(Stats),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -377,6 +394,8 @@ impl Frame {
             Frame::Nack(_) => "nack",
             Frame::SetForwarding(_) => "set_forwarding",
             Frame::SetSim(_) => "set_sim",
+            Frame::StatsReq(_) => "stats_req",
+            Frame::Stats(_) => "stats",
         }
     }
 
@@ -393,6 +412,8 @@ impl Frame {
             Frame::Nack(d) => serde_json::to_value(d),
             Frame::SetForwarding(d) => serde_json::to_value(d),
             Frame::SetSim(d) => serde_json::to_value(d),
+            Frame::StatsReq(d) => serde_json::to_value(d),
+            Frame::Stats(d) => serde_json::to_value(d),
         };
         v.unwrap_or(Value::Null)
     }
@@ -435,6 +456,8 @@ pub fn decode(text: &str) -> Result<(String, Frame), DecodeError> {
         "nack" => typed(env.data).map(Frame::Nack),
         "set_forwarding" => typed(env.data).map(Frame::SetForwarding),
         "set_sim" => typed(env.data).map(Frame::SetSim),
+        "stats_req" => typed(env.data).map(Frame::StatsReq),
+        "stats" => typed(env.data).map(Frame::Stats),
         other => return Err(err("unsupported", format!("unknown type {other:?}"))),
     }
     .map_err(|m| err("invalid", m))?;

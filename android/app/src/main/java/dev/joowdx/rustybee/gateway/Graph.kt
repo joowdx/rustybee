@@ -17,7 +17,14 @@ class Graph private constructor(context: Context) {
         radio = AndroidSmsRadio(app, prefs),
         configSim = { prefs.config.sim },
         log = { log(it) },
+        countSent = { countDaily(sent = 1) },
     )
+
+    /** Adds to today's row of the phone's own counts (spec 016). */
+    fun countDaily(sent: Int = 0, received: Int = 0) {
+        runCatching { db.bumpDaily(java.time.LocalDate.now().toEpochDay(), sent, received) }
+            .onFailure { log("count failed: $it", "E") }
+    }
 
     fun log(msg: String, level: String = "I") {
         Log.println(if (level == "E") Log.ERROR else Log.INFO, "rustybee", Redact.text(msg))

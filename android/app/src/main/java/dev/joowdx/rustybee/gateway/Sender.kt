@@ -22,6 +22,8 @@ class Sender(
     private val configSim: () -> Int?,
     private val clock: () -> Long = System::currentTimeMillis,
     private val log: (String) -> Unit = {},
+    /** A message reached `sent` (once per `msg_id`): counted for the notification (spec 016). */
+    private val countSent: () -> Unit = {},
 ) {
     /** Handles one `send` frame. [ack] is invoked once the row is durable, before the radio call. */
     fun onSend(send: Send, ack: () -> Unit) {
@@ -85,12 +87,15 @@ class Sender(
     }
 
     private fun apply(msgId: String, step: (SentRow) -> PartAggregator.Result) {
+        var nowSent = false
         val statuses = sent.atomically {
             val row = sent.get(msgId) ?: return@atomically emptyList()
             val result = step(row)
             if (result.row != row) sent.update(result.row)
+            nowSent = row.state == SentState.ACCEPTED && result.row.state.let { it == SentState.SENT || it == SentState.DELIVERED }
             result.statuses
         }
+        if (nowSent) countSent()
         statuses.forEach {
             log("status ${it.msgId} ${it.state}${it.error?.let { e -> " (${e.code})" } ?: ""}")
             uplink.enqueueStatus(it)

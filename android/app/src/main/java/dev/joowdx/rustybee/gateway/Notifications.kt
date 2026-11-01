@@ -38,18 +38,22 @@ object Notifications {
     )
 
     /** What the gateway notification shows; it is re-posted only when this changes. */
-    data class GatewayContent(val connected: Boolean, val sendsToday: Int)
+    data class GatewayContent(val connected: Boolean, val text: String, val expanded: String?)
 
-    fun content(state: GatewayState) = GatewayContent(state.connection == ConnectionState.CONNECTED, state.sendsToday)
+    fun content(state: GatewayState): GatewayContent {
+        val connected = state.connection == ConnectionState.CONNECTED
+        val (text, expanded) = NotificationText.body(connected, state.period, state.counts, state.outbox, state.lastError)
+        return GatewayContent(connected, text, expanded)
+    }
 
     fun gateway(context: Context, state: GatewayState): Notification {
-        val title = context.getString(
-            if (state.connection == ConnectionState.CONNECTED) R.string.state_connected else R.string.state_reconnecting,
-        )
+        val c = content(state)
+        val title = context.getString(if (c.connected) R.string.state_connected else R.string.state_reconnecting)
         return Notification.Builder(context, CHANNEL_GATEWAY)
             .setSmallIcon(R.drawable.ic_stat_bee)
             .setContentTitle(title)
-            .setContentText(context.getString(R.string.sends_today, state.sendsToday))
+            .setContentText(c.text)
+            .apply { c.expanded?.let { style = Notification.BigTextStyle().bigText(it) } }
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)

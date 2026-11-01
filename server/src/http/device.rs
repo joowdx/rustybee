@@ -5,7 +5,7 @@ use crate::domain::lifecycle::Event;
 use crate::error::ApiError;
 use crate::hub::{self, Outgoing, dispatcher};
 use crate::protocol::{
-    self, Ack, Envelope, Frame, Nack, PairRequest, PairResponse, StatusState, Welcome,
+    self, Ack, Envelope, Frame, Nack, PairRequest, PairResponse, Stats, StatusState, Welcome,
 };
 use crate::store::{self, auth, devices, devices::DeviceRow, messages};
 use crate::util::{random_token, sha256};
@@ -450,11 +450,31 @@ impl Conn {
                     vec![nack(&id, "invalid", "not a SIM this phone reports"), config]
                 })
             }
-            Frame::Welcome(_) | Frame::Config(_) | Frame::Send(_) => Ok(vec![nack(
-                &id,
-                "unsupported",
-                "server-to-device frame type",
-            )]),
+            Frame::StatsReq(r) => {
+                let since = r.since;
+                let (sent, received) = app
+                    .store
+                    .read(move |c| messages::device_counts(c, device_id, since.unwrap_or(i64::MIN)))
+                    .await?;
+                let stats = Envelope::new(
+                    "stats",
+                    Stats {
+                        since,
+                        sent,
+                        received,
+                        at: now,
+                    },
+                )
+                .to_text();
+                Ok(vec![ack(&id), stats])
+            }
+            Frame::Welcome(_) | Frame::Config(_) | Frame::Send(_) | Frame::Stats(_) => {
+                Ok(vec![nack(
+                    &id,
+                    "unsupported",
+                    "server-to-device frame type",
+                )])
+            }
         }
     }
 

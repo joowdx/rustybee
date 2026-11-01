@@ -8,6 +8,7 @@ import dev.joowdx.rustybee.protocol.Nack
 import dev.joowdx.rustybee.protocol.PROTOCOL_VERSION
 import dev.joowdx.rustybee.protocol.ProtocolJson
 import dev.joowdx.rustybee.protocol.Send
+import dev.joowdx.rustybee.protocol.Stats
 import dev.joowdx.rustybee.protocol.Welcome
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -27,6 +28,8 @@ class FrameHandler(
     private val onConfig: (Config) -> Unit,
     /** The server answered one of our frames: [nack] is null for an ack. */
     private val onReply: (ref: String, nack: Nack?) -> Unit = { _, _ -> },
+    /** The server's counts for a `stats_req` (spec 016). */
+    private val onStats: (Stats) -> Unit = {},
     private val clock: () -> Long = System::currentTimeMillis,
     private val log: (String) -> Unit = {},
 ) {
@@ -69,6 +72,11 @@ class FrameHandler(
                 FrameType.CONFIG -> {
                     val c = ProtocolJson.decodeFromJsonElement(Config.serializer(), data)
                     onConfig(c)
+                    reply(Frames.ack(id))
+                }
+                FrameType.STATS -> {
+                    val s = ProtocolJson.decodeFromJsonElement(Stats.serializer(), data)
+                    onStats(s)
                     reply(Frames.ack(id))
                 }
                 FrameType.SEND -> {

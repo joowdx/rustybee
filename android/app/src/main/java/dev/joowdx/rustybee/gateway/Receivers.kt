@@ -46,7 +46,7 @@ class SmsInboundReceiver : BroadcastReceiver() {
                     val receivedAt = pdus.first().timestampMillis
                     val uid = InboundUid.of(from, receivedAt, body, sim)
                     if (graph.uplink.enqueueInbound(Inbound(uid, from, body, sim, receivedAt))) {
-                        prefs.bump("receives")
+                        graph.countDaily(received = 1)
                         graph.log("inbound from ${Redact.phone(from)} queued")
                         queued = true
                     }

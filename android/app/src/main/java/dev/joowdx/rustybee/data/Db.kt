@@ -4,6 +4,8 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import dev.joowdx.rustybee.gateway.Counts
+import dev.joowdx.rustybee.gateway.DailyStore
 import dev.joowdx.rustybee.gateway.OutboxRow
 import dev.joowdx.rustybee.gateway.OutboxStore
 import dev.joowdx.rustybee.gateway.Redact
@@ -12,8 +14,9 @@ import dev.joowdx.rustybee.gateway.SentRow
 import dev.joowdx.rustybee.gateway.SentState
 import dev.joowdx.rustybee.gateway.SentStore
 
-/** `rustybee.db` version 1 (spec 011). */
-class Db(context: Context) : SQLiteOpenHelper(context, "rustybee.db", null, 1), OutboxStore, SentStore, SeenStore {
+/** `rustybee.db` version 2 (spec 011; `daily` from spec 016). */
+class Db(context: Context) :
+    SQLiteOpenHelper(context, "rustybee.db", null, 2), OutboxStore, SentStore, SeenStore, DailyStore {
 
     override fun onConfigure(db: SQLiteDatabase) {
         db.enableWriteAheadLogging()
@@ -33,9 +36,32 @@ class Db(context: Context) : SQLiteOpenHelper(context, "rustybee.db", null, 1), 
         db.execSQL(
             "CREATE TABLE log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, level TEXT NOT NULL, msg TEXT NOT NULL)",
         )
+        createDaily(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) createDaily(db)
+    }
+
+    private fun createDaily(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE daily (day INTEGER PRIMARY KEY, sent INTEGER NOT NULL, received INTEGER NOT NULL)")
+    }
+
+    // --- daily counts (spec 016)
+
+    override fun bumpDaily(day: Long, sent: Int, received: Int) {
+        writableDatabase.execSQL(
+            "INSERT INTO daily(day, sent, received) VALUES(?, ?, ?) " +
+                "ON CONFLICT(day) DO UPDATE SET sent = sent + excluded.sent, received = received + excluded.received",
+            arrayOf<Any>(day, sent, received),
+        )
+    }
+
+    override fun sumDaily(fromDay: Long?): Counts =
+        readableDatabase.rawQuery(
+            "SELECT COALESCE(SUM(sent), 0), COALESCE(SUM(received), 0) FROM daily WHERE day >= ?",
+            arrayOf((fromDay ?: Long.MIN_VALUE).toString()),
+        ).use { c -> if (c.moveToFirst()) Counts(c.getInt(0), c.getInt(1)) else Counts() }
 
     // --- outbox
 
