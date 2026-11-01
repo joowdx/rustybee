@@ -7,8 +7,8 @@ The normative spec is [`docs/specs/002-device-protocol.md`](../docs/specs/002-de
 | File | Direction | Type |
 |---|---|---|
 | `pair_request.json` / `pair_response.json` | HTTP | pairing |
-| `hello.json`, `status_*.json`, `inbound.json`, `health.json`, `set_forwarding.json`, `set_sim.json` | device → server | |
-| `welcome.json`, `config.json`, `send.json` | server → device | |
+| `hello.json`, `status_*.json`, `inbound.json`, `health.json`, `set_forwarding.json`, `set_sim.json`, `stats_req.json` | device → server | |
+| `welcome.json`, `config.json`, `send.json`, `stats.json` | server → device | |
 | `ack.json`, `nack.json` | both | |
 
 `inbound.json`'s `uid` is the spec 002 hash of its own fields, so it doubles as the uid test vector.

@@ -3,8 +3,12 @@ package dev.joowdx.rustybee.data
 import android.content.Context
 import android.content.SharedPreferences
 import dev.joowdx.rustybee.gateway.RadioSwitches
+import dev.joowdx.rustybee.gateway.StatsPeriod
+import dev.joowdx.rustybee.gateway.StatsPeriods
 import dev.joowdx.rustybee.protocol.Config
 import dev.joowdx.rustybee.protocol.ProtocolJson
+import java.time.DayOfWeek
+import java.util.Locale
 
 /** Plain SharedPreferences; only the device token is encrypted (spec 011). */
 class Prefs(context: Context) {
@@ -100,17 +104,16 @@ class Prefs(context: Context) {
             ?: Config()
         set(v) = sp.edit().putString("config", ProtocolJson.encodeToString(Config.serializer(), v)).apply()
 
-    /** Per-day counters ("sends", "receives"), reset when the local date changes. */
-    fun today(counter: String): Int =
-        if (sp.getLong("${counter}_day", -1) == epochDay()) sp.getInt("${counter}_count", 0) else 0
+    /** The period the gateway notification counts (spec 016). */
+    var statsPeriod: StatsPeriod
+        get() = StatsPeriod.of(sp.getString("stats_period", null))
+        set(v) = sp.edit().putString("stats_period", v.key).apply()
 
-    @Synchronized
-    fun bump(counter: String) {
-        val n = today(counter) + 1
-        sp.edit().putLong("${counter}_day", epochDay()).putInt("${counter}_count", n).apply()
-    }
-
-    private fun epochDay(): Long = java.time.LocalDate.now().toEpochDay()
+    /** The day "This week" starts on; the locale's first day of the week until picked. */
+    var weekStart: DayOfWeek
+        get() = sp.getInt("week_start", 0).takeIf { it in 1..7 }?.let(DayOfWeek::of)
+            ?: StatsPeriods.defaultWeekStart(Locale.getDefault())
+        set(v) = sp.edit().putInt("week_start", v.value).apply()
 
     /** Monotonic PendingIntent request codes (spec 012 §4). */
     @Synchronized

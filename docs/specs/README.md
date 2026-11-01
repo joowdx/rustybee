@@ -20,6 +20,7 @@ Spec-driven development with a soft gate: see `CLAUDE.md`. The template is `_tem
 | [013](013-android-ui.md) | Android UI | implemented |
 | [014](014-deploy.md) | Deploy | implemented |
 | [015](015-network-details.md) | Network name and signal strength, opt-in on the phone | implemented |
+| [016](016-notification-stats.md) | Notification stats period, server counts with offline fallback | implemented |
 
 ## Assumptions to review
 

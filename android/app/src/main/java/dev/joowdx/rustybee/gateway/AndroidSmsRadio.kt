@@ -65,7 +65,6 @@ class AndroidSmsRadio(private val context: Context, private val prefs: Prefs) : 
             } else {
                 sm.sendMultipartTextMessage(to, null, ArrayList(parts), sent, delivered)
             }
-            prefs.bump("sends")
         } finally {
             if (wl.isHeld) wl.release()
         }

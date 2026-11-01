@@ -506,6 +506,19 @@ pub fn day_counts(c: &Connection, since: i64) -> rusqlite::Result<DayCounts> {
     )
 }
 
+/// One device's sent and received counts at or after `since` (spec 016). A message delivered
+/// without a `sent` report counts as sent at its delivery time.
+pub fn device_counts(c: &Connection, device_id: i64, since: i64) -> rusqlite::Result<(i64, i64)> {
+    c.query_row(
+        "SELECT
+           (SELECT count(*) FROM messages WHERE device_id=?1 AND direction='out'
+              AND COALESCE(sent_at, delivered_at)>=?2),
+           (SELECT count(*) FROM messages WHERE device_id=?1 AND direction='in' AND received_at>=?2)",
+        params![device_id, since],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+}
+
 /// TTL sweeper (spec 004). Returns the rows that changed.
 pub fn sweep(
     c: &Connection,

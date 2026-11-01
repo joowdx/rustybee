@@ -28,8 +28,10 @@ object FrameType {
     const val NACK = "nack"
     const val SET_FORWARDING = "set_forwarding"
     const val SET_SIM = "set_sim"
+    const val STATS_REQ = "stats_req"
+    const val STATS = "stats"
 
-    val ALL = setOf(HELLO, STATUS, INBOUND, HEALTH, WELCOME, CONFIG, SEND, ACK, NACK, SET_FORWARDING, SET_SIM)
+    val ALL = setOf(HELLO, STATUS, INBOUND, HEALTH, WELCOME, CONFIG, SEND, ACK, NACK, SET_FORWARDING, SET_SIM, STATS_REQ, STATS)
 }
 
 @Serializable
@@ -183,6 +185,13 @@ data class SetForwarding(
 @Serializable
 data class SetSim(val sim: Int?)
 
+/** This device's counts since [since] (epoch ms), or all time when null (spec 016). */
+@Serializable
+data class StatsReq(val since: Long?)
+
+@Serializable
+data class Stats(val since: Long? = null, val sent: Int, val received: Int, val at: Long)
+
 @Serializable
 data class Welcome(
     @SerialName("device_id") val deviceId: String,
@@ -249,6 +258,8 @@ object Frames {
         FrameType.NACK -> Nack.serializer()
         FrameType.SET_FORWARDING -> SetForwarding.serializer()
         FrameType.SET_SIM -> SetSim.serializer()
+        FrameType.STATS_REQ -> StatsReq.serializer()
+        FrameType.STATS -> Stats.serializer()
         else -> null
     }
 }

@@ -1,5 +1,7 @@
 package dev.joowdx.rustybee
 
+import dev.joowdx.rustybee.gateway.Counts
+import dev.joowdx.rustybee.gateway.DailyStore
 import dev.joowdx.rustybee.gateway.OutboxRow
 import dev.joowdx.rustybee.gateway.OutboxStore
 import dev.joowdx.rustybee.gateway.SeenStore
@@ -72,4 +74,15 @@ object Fixtures {
     }
 
     fun read(name: String): String = File(dir, name).readText()
+}
+
+class FakeDaily : DailyStore {
+    val days = sortedMapOf<Long, Counts>()
+
+    override fun bumpDaily(day: Long, sent: Int, received: Int) {
+        days[day] = (days[day] ?: Counts()) + Counts(sent, received)
+    }
+
+    override fun sumDaily(fromDay: Long?): Counts =
+        days.filterKeys { fromDay == null || it >= fromDay }.values.fold(Counts()) { a, b -> a + b }
 }

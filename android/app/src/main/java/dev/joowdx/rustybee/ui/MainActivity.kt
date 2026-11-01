@@ -20,6 +20,7 @@ import android.widget.RadioGroup
 import android.widget.Switch
 import android.widget.TextView
 import dev.joowdx.rustybee.R
+import dev.joowdx.rustybee.gateway.Counts
 import dev.joowdx.rustybee.gateway.ConnectionState
 import dev.joowdx.rustybee.gateway.GatewayService
 import dev.joowdx.rustybee.gateway.GatewayState
@@ -33,6 +34,7 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.text.DateFormat
+import java.time.LocalDate
 import java.util.Date
 
 /** Status, health checklist, SIMs and device actions on one scrolling screen (spec 013). */
@@ -146,6 +148,11 @@ class MainActivity : Activity() {
             horizontal()
                 .add(button("Forwarding") { startActivity(Intent(this, ForwardingActivity::class.java)) })
                 .add(button("Network") { startActivity(Intent(this, NetworkActivity::class.java)) })
+                .add(button("Notification") { startActivity(Intent(this, NotificationActivity::class.java)) }),
+        )
+        // Five buttons don't fit one row on a phone.
+        content.add(
+            horizontal()
                 .add(button("Logs") { startActivity(Intent(this, LogsActivity::class.java)) })
                 .add(button("Unpair") { confirmUnpair() }),
         )
@@ -184,7 +191,8 @@ class MainActivity : Activity() {
             appendLine("Device: ${prefs.config.name.ifEmpty { "-" }}")
             appendLine("Last connected: $last")
             appendLine("Outbox: ${graph.uplink.size()}")
-            append("Today: ${prefs.today("sends")} sent, ${prefs.today("receives")} received")
+            val today = runCatching { graph.db.sumDaily(LocalDate.now().toEpochDay()) }.getOrDefault(Counts())
+            append("Today: ${today.sent} sent, ${today.received} received")
             state.lastError?.let { append("\nLast error: $it") }
         }
     }

@@ -35,10 +35,13 @@ import dev.joowdx.rustybee.protocol.Permissions
 import dev.joowdx.rustybee.protocol.Radios
 import dev.joowdx.rustybee.protocol.SetForwarding
 import dev.joowdx.rustybee.protocol.SetSim
+import dev.joowdx.rustybee.protocol.StatsReq
 import dev.joowdx.rustybee.protocol.SimInfo
 import dev.joowdx.rustybee.protocol.Ulid
 import dev.joowdx.rustybee.protocol.Welcome
 import dev.joowdx.rustybee.push.Push
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -67,6 +70,8 @@ class GatewayService : Service() {
     private lateinit var graph: Graph
     private lateinit var telemetry: Telemetry
     private lateinit var handler: FrameHandler
+    private val stats by lazy { StatsTracker(graph.db) }
+    private var rolloverJob: Job? = null
 
     private var reconnectJob: Job? = null
     private var healthJob: Job? = null
@@ -197,6 +202,10 @@ class GatewayService : Service() {
                 setState { s -> s.copy(filtersRev = it.filtersRev, simRev = s.simRev + simChanged.compareTo(false)) }
             },
             onReply = ::onReply,
+            onStats = {
+                stats.onStats(it.since, it.sent, it.received)
+                publish()
+            },
             log = { graph.log(it) },
         )
         Notifications.ensureChannels(this)
@@ -225,6 +234,7 @@ class GatewayService : Service() {
                 addAction(Intent.ACTION_POWER_DISCONNECTED)
             },
         )
+        scheduleRollover()
         scope.launch {
             maintenance()
             for (ev in events) runCatching { process(ev) }.onFailure { graph.log("event failed: $it", "E") }
@@ -325,6 +335,14 @@ class GatewayService : Service() {
             GatewayEvent.HealthTick -> {
                 maintenance()
                 sendHealth()
+                stats.wanted = true
+                requestStats()
+            }
+            GatewayEvent.StatsChanged -> {
+                scheduleRollover()
+                stats.wanted = true
+                requestStats()
+                publish()
             }
             is GatewayEvent.NetworkType -> {
                 // Capabilities change often on one network; only a transport change re-reads the
@@ -356,6 +374,8 @@ class GatewayService : Service() {
             is GatewayEvent.Opened -> if (ev.gen == connection.generation) onOpened()
             is GatewayEvent.Message -> if (ev.gen == connection.generation) {
                 handler.handle(ev.text) { connection.send(it) }
+                // An ack may have emptied the outbox a request was waiting for.
+                requestStats()
                 publish()
             }
             is GatewayEvent.Closed -> if (ev.gen == connection.generation) onClosed(ev.code, ev.reason, ev.httpStatus)
@@ -454,6 +474,8 @@ class GatewayService : Service() {
         }
         graph.log("welcome; outbox replayed")
         restoreForwardingOff()
+        stats.onWelcome()
+        requestStats()
         publish()
     }
 
@@ -512,6 +534,10 @@ class GatewayService : Service() {
         connection.send(Frames.encode(FrameType.SET_FORWARDING, SetForwarding.serializer(), f, id))
 
     private fun onReply(ref: String, nack: Nack?) {
+        if (nack != null && stats.onNack(ref, nack.code)) {
+            graph.log("stats not available: ${nack.code}")
+            return
+        }
         if (ref == pendingSim) {
             pendingSim = null
             unconfirmedSim = null
@@ -544,6 +570,7 @@ class GatewayService : Service() {
         graph.uplink.detach()
         healthJob?.cancel()
         welcomed = false
+        stats.onClosed()
         backoff.onClosed(SystemClock.elapsedRealtime())
         connection.close()
         graph.log("socket closed ($code $reason)")
@@ -814,14 +841,45 @@ class GatewayService : Service() {
         if (welcomed && telemetry.permissions() != lastPermissions) sendHealth()
     }
 
+    // --- notification stats (spec 016)
+
+    /** The current period's start in epoch ms and as a local epoch day; both null for all time. */
+    private fun statsWindow(): Pair<Long?, Long?> {
+        val zone = ZoneId.systemDefault()
+        val day = StatsPeriods.startDay(graph.prefs.statsPeriod, graph.prefs.weekStart, LocalDate.now(zone))
+        return day?.let { StatsPeriods.millis(it, zone) } to day?.toEpochDay()
+    }
+
+    /** Asks the server for the current period's counts once one is due and the outbox is empty. */
+    private fun requestStats() {
+        if (!stats.ready(welcomed, graph.uplink.size())) return
+        val (since, fromDay) = statsWindow()
+        val id = Ulid.next()
+        if (connection.send(Frames.encode(FrameType.STATS_REQ, StatsReq.serializer(), StatsReq(since), id))) {
+            stats.requested(id, since, fromDay)
+        }
+    }
+
+    /** Wakes the event loop when the current period ends, so the counts start over. */
+    private fun scheduleRollover() {
+        rolloverJob?.cancel()
+        val zone = ZoneId.systemDefault()
+        val next = StatsPeriods.nextStartDay(graph.prefs.statsPeriod, graph.prefs.weekStart, LocalDate.now(zone)) ?: return
+        val wait = StatsPeriods.millis(next, zone) - System.currentTimeMillis()
+        rolloverJob = scope.launch {
+            delay(wait.coerceAtLeast(0) + 1_000)
+            events.send(GatewayEvent.StatsChanged)
+        }
+    }
+
     private fun publish() = setState { it }
 
     private fun setState(f: (GatewayState) -> GatewayState) {
         stateFlow.update {
             f(it).copy(
                 outbox = graph.uplink.size(),
-                sendsToday = graph.prefs.today("sends"),
-                receivesToday = graph.prefs.today("receives"),
+                period = graph.prefs.statsPeriod,
+                counts = statsWindow().let { (since, fromDay) -> stats.shown(since, fromDay) },
                 filtersRev = graph.prefs.config.filtersRev,
             )
         }
@@ -869,6 +927,11 @@ class GatewayService : Service() {
         /** A Network switch changed on the phone (spec 015). */
         fun onRadioSettings() {
             eventsOut?.trySend(GatewayEvent.RadioSettings)
+        }
+
+        /** The notification's period or week start changed on the phone (spec 016). */
+        fun onStatsSettings() {
+            eventsOut?.trySend(GatewayEvent.StatsChanged)
         }
 
         /** If the socket is open, send a health frame carrying [token]. */

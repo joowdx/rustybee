@@ -6,8 +6,9 @@ data class GatewayState(
     val connection: ConnectionState = ConnectionState.STOPPED,
     val lastError: String? = null,
     val outbox: Int = 0,
-    val sendsToday: Int = 0,
-    val receivesToday: Int = 0,
+    /** The notification's period and its counts (spec 016). */
+    val period: StatsPeriod = StatsPeriod.TODAY,
+    val counts: Counts = Counts(),
     /** The `filters_rev` of the config the phone holds. */
     val filtersRev: Long = 0,
     val forwardingSave: ForwardingSave = ForwardingSave.Idle,

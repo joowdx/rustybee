@@ -54,6 +54,11 @@
             android:label="Network" />
 
         <activity
+            android:name=".ui.NotificationActivity"
+            android:exported="false"
+            android:label="Notification" />
+
+        <activity
             android:name=".ui.LogsActivity"
             android:exported="false"
             android:label="Logs" />
