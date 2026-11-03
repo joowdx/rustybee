@@ -59,6 +59,14 @@ export async function mockApi(page: Page, overrides: MockApiOverrides = {}) {
     if (path === '/gateway/send-sms' || path === '/gateway/send-bulk-sms')
       return json(route, { data: { success: true } })
 
+    const wake = path.match(/\/gateway\/devices\/([^/]+)\/wake/)
+    if (wake) {
+      if (!devicesCopy.some((d) => d._id === wake[1])) {
+        return json(route, { error: 'Device not found' }, 404)
+      }
+      return json(route, { data: { sent: true } })
+    }
+
     const setDefault = path.match(/\/gateway\/devices\/([^/]+)\/set-default/)
     if (setDefault) {
       const device = devicesCopy.find((d) => d._id === setDefault[1])

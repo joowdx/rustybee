@@ -144,6 +144,15 @@ export function useSetDefaultDevice() {
   })
 }
 
+// Asks the phone to report a heartbeat now. Nothing in the device list
+// changes, so there is no cache to invalidate.
+export function useWakeDevice() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      httpBrowserClient.post(ApiEndpoints.gateway.wakeDevice(id)),
+  })
+}
+
 // ---------- api keys ----------
 
 export function useApiKeys(

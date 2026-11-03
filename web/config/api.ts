@@ -28,6 +28,7 @@ export const ApiEndpoints = {
     listDevices: () => '/gateway/devices',
     deleteDevice: (id: string) => `/gateway/devices/${id}`,
     setDefaultDevice: (id: string) => `/gateway/devices/${id}/set-default`,
+    wakeDevice: (id: string) => `/gateway/devices/${id}/wake`,
     // Device-agnostic: the id now travels in the body, optionally, and the API
     // falls back to the account's default device when it is absent.
     sendSMS: () => '/gateway/send-sms',
