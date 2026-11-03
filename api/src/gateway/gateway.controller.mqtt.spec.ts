@@ -18,7 +18,7 @@ describe('GatewayController mqtt-credentials', () => {
     const mqttService = {
       rotateDeviceCredentials: jest.fn().mockResolvedValue(credentials),
     }
-    const controller = new GatewayController({} as any, mqttService as any)
+    const controller = new GatewayController({} as any, mqttService as any, {} as any)
 
     await expect(controller.rotateMqttCredentials(deviceId)).resolves.toEqual({
       data: credentials,
@@ -34,7 +34,7 @@ describe('GatewayController mqtt-credentials', () => {
           new HttpException({ error: 'MQTT is not enabled on this server' }, HttpStatus.CONFLICT),
         ),
     }
-    const controller = new GatewayController({} as any, mqttService as any)
+    const controller = new GatewayController({} as any, mqttService as any, {} as any)
 
     await expect(controller.rotateMqttCredentials(deviceId)).rejects.toMatchObject({
       status: 409,

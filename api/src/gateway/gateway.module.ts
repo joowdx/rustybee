@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose'
 import { Device, DeviceSchema } from './schemas/device.schema'
 import { DeviceTombstone, DeviceTombstoneSchema } from './schemas/device-tombstone.schema'
 import { GatewayController } from './gateway.controller'
+import { DeviceWakeService } from './device-wake.service'
 import { GatewayService } from './gateway.service'
 import { AuthModule } from '../auth/auth.module'
 import { UsersModule } from '../users/users.module'
@@ -82,6 +83,7 @@ import {
     FcmTransport,
     MqttTransport,
     DeviceTransportService,
+    DeviceWakeService,
     DevicePresenceService,
     MqttUplinkHandler,
   ],
