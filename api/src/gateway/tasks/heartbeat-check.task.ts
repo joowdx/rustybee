@@ -5,39 +5,9 @@ import { Model, Types } from 'mongoose'
 import { Device, DeviceDocument } from '../schemas/device.schema'
 import { heartbeatAndroidConfig } from '../fcm-push-options'
 import { Delivery, DeviceTransportService } from '../transport/device-transport'
+import { isPermanentFcmTokenError } from '../fcm-token-error'
 
 const FCM_BATCH_SIZE = 500
-
-function isPermanentFcmTokenError(
-  error: { code?: string; message?: string } | null | undefined,
-): boolean {
-  if (!error) {
-    return false
-  }
-
-  const normalizedCode = String(error.code || '')
-    .toLowerCase()
-    .replace(/^messaging\//, '')
-  const normalizedMessage = String(error.message || '').toLowerCase()
-
-  if (
-    normalizedCode === 'registration-token-not-registered' ||
-    normalizedCode === 'unregistered' ||
-    normalizedCode === 'invalid-registration-token'
-  ) {
-    return true
-  }
-
-  if (
-    normalizedMessage.includes('requested entity was not found') ||
-    normalizedMessage.includes('not registered') ||
-    normalizedMessage.includes('registration token is not a valid')
-  ) {
-    return true
-  }
-
-  return false
-}
 
 @Injectable()
 export class HeartbeatCheckTask {

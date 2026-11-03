@@ -49,6 +49,7 @@ import {
   MqttCredentialsResponseDTO,
 } from './gateway.dto'
 import { GatewayService } from './gateway.service'
+import { DeviceWakeService } from './device-wake.service'
 import { CanModifyDevice } from './guards/can-modify-device.guard'
 import { parseMessageQuery } from './message-query'
 import { MqttService } from '../mqtt/mqtt.service'
@@ -95,6 +96,7 @@ export class GatewayController {
   constructor(
     private readonly gatewayService: GatewayService,
     private readonly mqttService: MqttService,
+    private readonly deviceWakeService: DeviceWakeService,
   ) {}
 
   @UseGuards(AuthGuard)
@@ -312,6 +314,32 @@ export class GatewayController {
   @HttpCode(HttpStatus.OK)
   async setDefaultDevice(@Param('id') deviceId: string) {
     const data = await this.gatewayService.setDefaultDevice(deviceId)
+    return { data }
+  }
+
+  @ApiOperation({
+    summary: 'Wake a device',
+    description:
+      'Sends a high-priority push asking the device to report a heartbeat now. Limited to once every 30 seconds per device.',
+  })
+  @ApiParam(DEVICE_ID_PARAM)
+  @ApiResponse({ status: 200, description: 'The wake push was sent.' })
+  @ApiResponse(INVALID_DEVICE_ID_RESPONSE)
+  @ApiResponse(UNAUTHORIZED_RESPONSE)
+  @ApiResponse(DEVICE_NOT_FOUND_RESPONSE)
+  @ApiResponse({
+    status: 409,
+    description: 'The device has no valid push token.',
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'The device was woken less than 30 seconds ago.',
+  })
+  @UseGuards(AuthGuard, CanModifyDevice)
+  @Post('/devices/:id/wake')
+  @HttpCode(HttpStatus.OK)
+  async wakeDevice(@Param('id') deviceId: string) {
+    const data = await this.deviceWakeService.wake(deviceId)
     return { data }
   }
 
