@@ -52,6 +52,9 @@ export const handlers = [
   http.get(url(ApiEndpoints.gateway.listDevices()), () =>
     dataEnvelope(mockDevices)
   ),
+  http.post(url(ApiEndpoints.gateway.wakeDevice(':id')), () =>
+    dataEnvelope({ sent: true })
+  ),
   http.get(url(ApiEndpoints.gateway.getStats()), () =>
     dataEnvelope(mockStats)
   ),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { TestProviders } from '@/test/render'
 import { API_BASE_URL, mockDevices, mockSubscription, mockUser } from '@/test/fixtures'
@@ -9,6 +9,7 @@ import {
   useCurrentUser,
   useDevices,
   useSubscription,
+  useWakeDevice,
   useWebhookNotifications,
 } from './hooks'
 
@@ -21,6 +22,23 @@ describe('data hooks', () => {
     const { result } = renderHook(() => useCurrentUser(), { wrapper })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(result.current.data?.email).toBe(mockUser.email)
+  })
+
+  it('useWakeDevice posts to the device wake route', async () => {
+    const paths: string[] = []
+    server.use(
+      http.post(`${API_BASE_URL}/gateway/devices/:id/wake`, ({ request }) => {
+        paths.push(request.url)
+        return HttpResponse.json({ data: { sent: true } })
+      })
+    )
+
+    const { result } = renderHook(() => useWakeDevice(), { wrapper })
+    await act(() => result.current.mutateAsync(mockDevices[0]._id))
+
+    expect(paths).toEqual([
+      `${API_BASE_URL}/gateway/devices/${mockDevices[0]._id}/wake`,
+    ])
   })
 
   it('useSubscription returns the raw body', async () => {

@@ -27,6 +27,7 @@ import {
   useDevices,
   useSetDefaultDevice,
   useSubscription,
+  useWakeDevice,
 } from '@/lib/api'
 import EmptyState from '@/components/shared/empty-state'
 import ErrorState from '@/components/shared/error-state'
@@ -91,6 +92,7 @@ export default function DeviceList() {
   const { mutate: deleteDevice, isPending: isDeletingDevice } = useDeleteDevice()
   const { mutate: setDefaultDevice, isPending: isSettingDefaultDevice } =
     useSetDefaultDevice()
+  const { mutate: wakeDevice, isPending: isWakingDevice } = useWakeDevice()
 
   const handleDeleteDevice = (id: string) =>
     deleteDevice(id, {
@@ -116,6 +118,23 @@ export default function DeviceList() {
         toast({
           variant: 'destructive',
           title: 'Error setting default device',
+          description: errorMessage(err),
+        })
+      },
+    })
+
+  const handleWakeDevice = (id: string) =>
+    wakeDevice(id, {
+      onSuccess: () => {
+        toast({
+          title: 'Wake sent',
+          description: 'The phone should check in within a few seconds.',
+        })
+      },
+      onError: (err: unknown) => {
+        toast({
+          variant: 'destructive',
+          title: 'Error waking device',
           description: errorMessage(err),
         })
       },
@@ -366,6 +385,14 @@ export default function DeviceList() {
                           onClick={() => handleSetDefaultDevice(device._id)}
                         >
                           Set as default
+                        </DropdownMenuItem>
+                      )}
+                      {device.enabled && (
+                        <DropdownMenuItem
+                          disabled={isWakingDevice}
+                          onClick={() => handleWakeDevice(device._id)}
+                        >
+                          Wake device
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuItem
